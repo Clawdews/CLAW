@@ -1,7 +1,8 @@
 -- CLAW's public distribution contains no GitHub token or private timing data.
 local environment = getgenv and getgenv() or _G
-local distributionURL = environment.CLAW_DIST_URL
-	or "https://raw.githubusercontent.com/Clawdews/CLAW/main/dist/ClawMark.lua"
+local HttpService = game:GetService("HttpService")
+local repository = "Clawdews/CLAW"
+local fallbackRef = "53e1eabf15cbdea20b9c25a7068bbb252df5b17b"
 
 local function traceback(message)
 	local handler = debug and debug.traceback
@@ -18,10 +19,40 @@ local function notify(title, message)
 	end)
 end
 
+local function cacheBust(url)
+	local separator = string.find(url, "?", 1, true) and "&" or "?"
+	return url .. separator .. "claw_cache=" .. HttpService:GenerateGUID(false)
+end
+
+local function resolveDistribution()
+	if type(environment.CLAW_DIST_URL) == "string" and environment.CLAW_DIST_URL ~= "" then
+		return cacheBust(environment.CLAW_DIST_URL), "override"
+	end
+
+	local referenceURL = "https://api.github.com/repos/" .. repository .. "/git/ref/heads/main"
+	local okReference, referenceBody = pcall(function()
+		return game:HttpGet(cacheBust(referenceURL))
+	end)
+	if okReference and type(referenceBody) == "string" then
+		local okDecode, reference = pcall(HttpService.JSONDecode, HttpService, referenceBody)
+		local sha = okDecode and reference and reference.object and reference.object.sha
+		if type(sha) == "string" and #sha == 40 and string.match(sha, "^%x+$") then
+			return "https://raw.githubusercontent.com/" .. repository .. "/" .. sha .. "/dist/ClawMark.lua", sha
+		end
+	end
+
+	-- This immutable fallback is the first build that passed the official
+	-- Luau compiler after the UI was split below the 200-register limit.
+	return "https://raw.githubusercontent.com/" .. repository .. "/" .. fallbackRef .. "/dist/ClawMark.lua", fallbackRef
+end
+
+local resolvedRef
+local downloadedBytes = 0
 local success, result = xpcall(function()
-	local separator = string.find(distributionURL, "?", 1, true) and "&" or "?"
-	local resolvedURL = distributionURL .. separator .. "claw_cache=" .. tostring(os.time())
+	local resolvedURL
+	resolvedURL, resolvedRef = resolveDistribution()
 	local source = game:HttpGet(resolvedURL)
+	downloadedBytes = type(source) == "string" and #source or 0
 	assert(type(source) == "string" and #source > 1024, "CLAW bundle download was empty or incomplete")
 
 	local chunk, compileError = loadstring(source, "@CLAW/ClawMark.lua")
@@ -33,11 +64,13 @@ environment.CLAW_BOOT_STATUS = {
 	ok = success,
 	timestamp = os.time(),
 	detail = success and "loaded" or tostring(result),
+	ref = resolvedRef,
+	bytes = downloadedBytes,
 }
 
 if success then
-	print("[CLAW] CLAW MARK loader completed")
-	notify("CLAW MARK", "Newest public build loaded.")
+	print("[CLAW] CLAW MARK loader completed", resolvedRef, downloadedBytes)
+	notify("CLAW MARK", "Build " .. string.sub(resolvedRef or "unknown", 1, 7) .. " loaded.")
 	return result
 end
 
