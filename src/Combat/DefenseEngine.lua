@@ -108,16 +108,32 @@ function DefenseEngine:_unknownAnimationProfile(event)
 	end
 
 	local default = self:_defaultAction()
+	local weapon = DynamicWeaponResolver.weaponInfo(event)
+	local speed = 1
+	pcall(function()
+		speed = math.max(0.05, math.abs(event.track.Speed))
+	end)
 	default.name = "Generic " .. default.kind .. ": " .. event.id
-	default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
-	default.ignoreHitbox = true
+	default.delay = self.Settings:get("Defense.UnknownAnimationDelay") / speed
+	default.ignoreHitbox = weapon == nil
+	default.metadata.preserveDelay = weapon ~= nil
 	local profile = TimingProfile.new({
 		id = event.id,
-		name = "Unindexed animation " .. event.id,
+		name = (weapon and "Unindexed weapon attack " or "Unindexed animation ") .. event.id,
 		detector = "animation",
-		tag = "Undefined",
-		maxDistance = math.min(self.Settings:get("Targeting.MaxDistance"), 100),
-		facingHitbox = false,
+		tag = weapon and "M1" or "Undefined",
+		maxDistance = math.min(
+			self.Settings:get("Targeting.MaxDistance"),
+			weapon and math.max(64, weapon.length * 4) or 100
+		),
+		delayUntilHitbox = weapon ~= nil,
+		facingHitbox = weapon ~= nil,
+		pastHitbox = weapon ~= nil,
+		predictFacing = weapon ~= nil,
+		historySeconds = weapon and self.Settings:get("Validation.PastHitboxSeconds") or 0,
+		predictionSeconds = weapon and self.Settings:get("Validation.PredictionSeconds") or 0,
+		sourceModule = weapon and "WeaponTest" or "",
+		maxAnimationTime = 2,
 		punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
 		afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
 		actions = { default },
@@ -149,13 +165,14 @@ function DefenseEngine:_dynamicAction(action, event)
 end
 
 function DefenseEngine:_reject(reason)
+	local detail = tostring(reason)
 	self.State:increment("Rejected")
 	self.State.LastReject = {
-		reason = tostring(reason),
+		reason = detail,
 		at = os.clock(),
 	}
 	self.State:emit("action-rejected", reason)
-	return false
+	return false, detail
 end
 
 function DefenseEngine:_waitForHitbox(key, event, profile, target, action)
@@ -382,6 +399,8 @@ function DefenseEngine:handle(event)
 		self.State.LastPlan = {
 			kind = scheduledAction.kind,
 			name = scheduledAction.name,
+			profile = profile.name,
+			distance = target.Distance,
 			delay = delay,
 			at = os.clock(),
 		}

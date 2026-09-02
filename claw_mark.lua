@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.6
+--  CLAW MARK v0.3.7
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.6",
+	"CLAW MARK v0.3.7",
 	8,
 	0,
 	170,
@@ -7453,7 +7453,7 @@ bind(RunService.Heartbeat, function(delta)
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -7472,7 +7472,8 @@ bind(RunService.Heartbeat, function(delta)
 		metrics.Cancelled or 0,
 		lastDetection and (lastDetection.detector .. ":" .. lastDetection.id) or "none",
 		lastReject and lastReject.reason or "none",
-		lastPlan and string.format("%s @ %.3fs", lastPlan.kind, lastPlan.delay) or "none",
+		lastPlan and string.format("%s @ %.3fs d=%.1f", lastPlan.kind, lastPlan.delay, lastPlan.distance or 0) or "none",
+		lastPlan and string.sub(lastPlan.name or lastPlan.profile or "unknown", 1, 38) or "none",
 		lastAction and (lastAction.kind .. ":" .. (lastAction.ok and (lastAction.backend or "sent") or lastAction.reason)) or "none",
 		lastFailure and string.sub(lastFailure.reason, 1, 44) or "none",
 		targetStage.averageMs or 0,
@@ -8077,5 +8078,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.6 online"
+	"[CLAW] CLAW MARK v0.3.7 online"
 )

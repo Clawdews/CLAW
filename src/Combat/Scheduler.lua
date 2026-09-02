@@ -41,11 +41,15 @@ function Scheduler:schedule(identifier, delaySeconds, windows, callback, ...)
 		end
 
 		scheduled.status = "running"
-		local ok, result = pcall(callback, table.unpack(arguments, 1, arguments.n))
+		local callbackResults = table.pack(pcall(callback, table.unpack(arguments, 1, arguments.n)))
+		local ok = callbackResults[1]
+		local result = callbackResults[2]
+		local detail = callbackResults[3]
 		scheduled.status = ok and result ~= false and "completed" or "failed"
 		scheduled.result = result
+		scheduled.detail = detail
 		scheduled.error = scheduled.status == "failed"
-			and (ok and "scheduled callback returned false" or tostring(result))
+			and (ok and tostring(detail or "scheduled callback returned false") or tostring(result))
 			or nil
 		scheduled.completedAt = self.clock()
 		if scheduled.status == "completed" then

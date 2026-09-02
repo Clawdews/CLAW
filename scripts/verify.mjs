@@ -64,6 +64,8 @@ check(
 );
 check(dynamicWeaponSource.includes("WeaponTest = \"M1\""), "dynamic M1 weapon resolver is missing");
 check(dynamicWeaponSource.includes("WeaponFlourishTest = \"Flourish\""), "dynamic flourish resolver is missing");
+check(dynamicWeaponSource.includes("function DynamicWeaponResolver.weaponInfo"), "unknown weapon inspection is missing");
+check(dynamicWeaponSource.includes("action.metadata.preserveDelay"), "unknown weapon delay preservation is missing");
 check(!/delay\s*=\s*delay\s*\/\s*math\.abs\(speed\)/.test(timingResolverSource), "static timing delays are being divided by animation speed");
 check(/local scheduled\s+scheduled\s*=\s*self\.Scheduler:schedule/.test(defenseSource), "scheduled defense callback does not capture a predeclared task handle");
 check(schedulerSource.includes('self.state:increment("Failed")'), "scheduler failures are not counted");
@@ -74,6 +76,8 @@ check(fallbackSource.includes('self.Settings:get("Defense.DodgeFallback")'), "do
 check(detectorHubSource.includes('settings:get("Detection.UnknownAnimations")'), "unknown-animation defense is not explicitly gated");
 check(defenseSource.includes("native:isBusy()"), "generic defense does not guard the active native-input window");
 check(defenseSource.includes("generic defense rearm"), "generic defense has no post-detection rearm guard");
+check(defenseSource.includes('sourceModule = weapon and "WeaponTest"'), "unknown weapon animations do not use the dynamic hitbox resolver");
+check(schedulerSource.includes("scheduled.detail = detail"), "scheduled validation failure detail is discarded");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");

@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.6"
+	environment.CLAW.Version = "0.3.7"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -1628,11 +1628,15 @@ do
 			end
 
 			scheduled.status = "running"
-			local ok, result = pcall(callback, table.unpack(arguments, 1, arguments.n))
+			local callbackResults = table.pack(pcall(callback, table.unpack(arguments, 1, arguments.n)))
+			local ok = callbackResults[1]
+			local result = callbackResults[2]
+			local detail = callbackResults[3]
 			scheduled.status = ok and result ~= false and "completed" or "failed"
 			scheduled.result = result
+			scheduled.detail = detail
 			scheduled.error = scheduled.status == "failed"
-				and (ok and "scheduled callback returned false" or tostring(result))
+				and (ok and tostring(detail or "scheduled callback returned false") or tostring(result))
 				or nil
 			scheduled.completedAt = self.clock()
 			if scheduled.status == "completed" then
@@ -3568,6 +3572,10 @@ do
 		}
 	end
 
+	function DynamicWeaponResolver.weaponInfo(event)
+		return weaponData(event and event.entity)
+	end
+
 	local function inferredWeaponType(profile)
 		local name = string.lower(tostring(profile and profile.name or ""))
 		for _, candidate in ipairs({
@@ -3774,7 +3782,7 @@ do
 		local action = template and template:clone() or Action.new({ kind = "Parry" })
 		action.kind = "Parry"
 		action.name = string.format("Dynamic %s (%s)", label, weaponType)
-		action.delay = math.max(0, delay)
+		action.delay = action.metadata.preserveDelay == true and action.delay or math.max(0, delay)
 		action.hitbox = hitbox
 		action.metadata.dynamicWeapon = label
 		action.metadata.weaponType = weaponType
@@ -5419,16 +5427,32 @@ do
 		end
 
 		local default = self:_defaultAction()
+		local weapon = DynamicWeaponResolver.weaponInfo(event)
+		local speed = 1
+		pcall(function()
+			speed = math.max(0.05, math.abs(event.track.Speed))
+		end)
 		default.name = "Generic " .. default.kind .. ": " .. event.id
-		default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
-		default.ignoreHitbox = true
+		default.delay = self.Settings:get("Defense.UnknownAnimationDelay") / speed
+		default.ignoreHitbox = weapon == nil
+		default.metadata.preserveDelay = weapon ~= nil
 		local profile = TimingProfile.new({
 			id = event.id,
-			name = "Unindexed animation " .. event.id,
+			name = (weapon and "Unindexed weapon attack " or "Unindexed animation ") .. event.id,
 			detector = "animation",
-			tag = "Undefined",
-			maxDistance = math.min(self.Settings:get("Targeting.MaxDistance"), 100),
-			facingHitbox = false,
+			tag = weapon and "M1" or "Undefined",
+			maxDistance = math.min(
+				self.Settings:get("Targeting.MaxDistance"),
+				weapon and math.max(64, weapon.length * 4) or 100
+			),
+			delayUntilHitbox = weapon ~= nil,
+			facingHitbox = weapon ~= nil,
+			pastHitbox = weapon ~= nil,
+			predictFacing = weapon ~= nil,
+			historySeconds = weapon and self.Settings:get("Validation.PastHitboxSeconds") or 0,
+			predictionSeconds = weapon and self.Settings:get("Validation.PredictionSeconds") or 0,
+			sourceModule = weapon and "WeaponTest" or "",
+			maxAnimationTime = 2,
 			punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
 			afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
 			actions = { default },
@@ -5460,13 +5484,14 @@ do
 	end
 
 	function DefenseEngine:_reject(reason)
+		local detail = tostring(reason)
 		self.State:increment("Rejected")
 		self.State.LastReject = {
-			reason = tostring(reason),
+			reason = detail,
 			at = os.clock(),
 		}
 		self.State:emit("action-rejected", reason)
-		return false
+		return false, detail
 	end
 
 	function DefenseEngine:_waitForHitbox(key, event, profile, target, action)
@@ -5693,6 +5718,8 @@ do
 			self.State.LastPlan = {
 				kind = scheduledAction.kind,
 				name = scheduledAction.name,
+				profile = profile.name,
+				distance = target.Distance,
 				delay = delay,
 				at = os.clock(),
 			}
@@ -6147,7 +6174,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.3.6
+--  CLAW MARK v0.3.7
 --
 --  TABS
 --    BURSTER
@@ -9602,7 +9629,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.6",
+	"CLAW MARK v0.3.7",
 	8,
 	0,
 	170,
@@ -13601,7 +13628,7 @@ bind(RunService.Heartbeat, function(delta)
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -13620,7 +13647,8 @@ bind(RunService.Heartbeat, function(delta)
 		metrics.Cancelled or 0,
 		lastDetection and (lastDetection.detector .. ":" .. lastDetection.id) or "none",
 		lastReject and lastReject.reason or "none",
-		lastPlan and string.format("%s @ %.3fs", lastPlan.kind, lastPlan.delay) or "none",
+		lastPlan and string.format("%s @ %.3fs d=%.1f", lastPlan.kind, lastPlan.delay, lastPlan.distance or 0) or "none",
+		lastPlan and string.sub(lastPlan.name or lastPlan.profile or "unknown", 1, 38) or "none",
 		lastAction and (lastAction.kind .. ":" .. (lastAction.ok and (lastAction.backend or "sent") or lastAction.reason)) or "none",
 		lastFailure and string.sub(lastFailure.reason, 1, 44) or "none",
 		targetStage.averageMs or 0,
@@ -14225,7 +14253,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.6 online"
+	"[CLAW] CLAW MARK v0.3.7 online"
 )
 
 -- END ENTRY: claw_mark.lua

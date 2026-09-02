@@ -59,6 +59,10 @@ local function weaponData(entity)
 	}
 end
 
+function DynamicWeaponResolver.weaponInfo(event)
+	return weaponData(event and event.entity)
+end
+
 local function inferredWeaponType(profile)
 	local name = string.lower(tostring(profile and profile.name or ""))
 	for _, candidate in ipairs({
@@ -265,7 +269,7 @@ local function resolvedAction(template, label, delay, hitbox, weaponType)
 	local action = template and template:clone() or Action.new({ kind = "Parry" })
 	action.kind = "Parry"
 	action.name = string.format("Dynamic %s (%s)", label, weaponType)
-	action.delay = math.max(0, delay)
+	action.delay = action.metadata.preserveDelay == true and action.delay or math.max(0, delay)
 	action.hitbox = hitbox
 	action.metadata.dynamicWeapon = label
 	action.metadata.weaponType = weaponType
