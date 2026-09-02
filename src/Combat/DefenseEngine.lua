@@ -339,8 +339,7 @@ function DefenseEngine:handle(event)
 	for index, action in ipairs(actions) do
 		local resolved, probabilityReason = self.Probability:resolve(self:_dynamicAction(action, event), profile)
 		if not resolved then
-			self.State:increment("Rejected")
-			self.State:emit("action-rejected", probabilityReason)
+			self:_reject(probabilityReason)
 			continue
 		end
 
@@ -350,14 +349,12 @@ function DefenseEngine:handle(event)
 		if not valid then
 			resolved = self.Fallbacks:resolve(resolved, validationReason, profile)
 			if not resolved then
-				self.State:increment("Rejected")
-				self.State:emit("action-rejected", validationReason)
+				self:_reject(validationReason)
 				continue
 			end
 			local fallbackValid, fallbackReason = self.Validator:validate(event, profile, target, resolved)
 			if not fallbackValid then
-				self.State:increment("Rejected")
-				self.State:emit("action-rejected", fallbackReason)
+				self:_reject(fallbackReason)
 				continue
 			end
 		end

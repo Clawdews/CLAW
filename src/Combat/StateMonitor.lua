@@ -47,8 +47,26 @@ end
 
 function StateMonitor:_has(character, names)
 	for _, name in ipairs(names) do
-		if character:GetAttribute(name) == true or character:FindFirstChild(name, true) then
+		if character:GetAttribute(name) == true then
 			return true
+		end
+		local state = character:FindFirstChild(name, true)
+		if state then
+			if state:IsA("BoolValue") then
+				if state.Value then
+					return true
+				end
+			elseif state:IsA("NumberValue") or state:IsA("IntValue") then
+				if state.Value ~= 0 then
+					return true
+				end
+			elseif state:IsA("ObjectValue") then
+				if state.Value ~= nil then
+					return true
+				end
+			else
+				return true
+			end
 		end
 	end
 	return false

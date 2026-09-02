@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.2
+--  CLAW MARK v0.3.3
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.2",
+	"CLAW MARK v0.3.3",
 	8,
 	0,
 	170,
@@ -5937,7 +5937,9 @@ local function combatToggle(
 	path,
 	x,
 	y,
-	width
+	width,
+	enabledColor,
+	disabledColor
 )
 	local button =
 		mkButton(
@@ -5961,8 +5963,8 @@ local function combatToggle(
 
 		button.BackgroundColor3 =
 			enabled
-			and COLORS.GREEN
-			or COLORS.RED
+			and (enabledColor or COLORS.GREEN)
+			or (disabledColor or COLORS.RED)
 	end
 
 	CombatRefreshers[#CombatRefreshers + 1] =
@@ -7358,27 +7360,29 @@ combatToggle(debugControls, "DIAGNOSTICS", "Diagnostics.Enabled", 8, 28, 148)
 combatToggle(debugControls, "DETECT TRACE", "Diagnostics.TraceDetectors", 164, 28, 148)
 combatToggle(debugControls, "SCHED TRACE", "Diagnostics.TraceScheduler", 8, 57, 148)
 combatToggle(debugControls, "HITBOX VIEW", "Diagnostics.VisualizeHitboxes", 164, 57, 148)
-combatToggle(debugControls, "BLOCK PARRY", "DebugState.BlockParry", 8, 96, 148)
-combatToggle(debugControls, "BLOCK DODGE", "DebugState.BlockDodge", 164, 96, 148)
-combatToggle(debugControls, "BLOCK VENT", "DebugState.BlockVent", 8, 125, 148)
-combatToggle(debugControls, "NO BLOCKING", "DebugState.NoBlocking", 164, 125, 148)
-combatNumber(debugControls, "BUDGET MS", "Diagnostics.PerformanceBudgetMs", 8, 164, 0.1, 16)
-combatNumber(debugControls, "EVENT BUFFER", "Diagnostics.MaxEvents", 8, 191, 10, 2000)
+local blockerWarning = mkLabel(debugControls, "FAULT INJECTION - KEEP THESE OFF", 8, 84, 304, 18, 9)
+blockerWarning.TextColor3 = COLORS.RED
+combatToggle(debugControls, "DISABLE PARRY", "DebugState.BlockParry", 8, 106, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE DODGE", "DebugState.BlockDodge", 164, 106, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE VENT", "DebugState.BlockVent", 8, 135, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE BLOCK", "DebugState.NoBlocking", 164, 135, 148, COLORS.RED, COLORS.GREEN)
+combatNumber(debugControls, "BUDGET MS", "Diagnostics.PerformanceBudgetMs", 8, 174, 0.1, 16)
+combatNumber(debugControls, "EVENT BUFFER", "Diagnostics.MaxEvents", 8, 201, 10, 2000)
 
 local clearDiagnostics =
-	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 230, 304, 25)
+	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 240, 304, 25)
 
 local copyDiagnostics =
-	mkButton(debugControls, "COPY TIMING DATABASE", 8, 263, 304, 25)
+	mkButton(debugControls, "COPY TIMING DATABASE", 8, 273, 304, 25)
 
 local testParry =
-	mkButton(debugControls, "TEST PARRY", 8, 300, 148, 25)
+	mkButton(debugControls, "TEST PARRY", 8, 310, 148, 25)
 
 local testDodge =
-	mkButton(debugControls, "TEST DODGE", 164, 300, 148, 25)
+	mkButton(debugControls, "TEST DODGE", 164, 310, 148, 25)
 
 local InputTestStatus =
-	mkLabel(debugControls, "INPUT SELF-TEST: not run", 8, 333, 304, 55, 9)
+	mkLabel(debugControls, "INPUT SELF-TEST: not run", 8, 343, 304, 45, 9)
 
 InputTestStatus.TextWrapped = true
 InputTestStatus.TextYAlignment = Enum.TextYAlignment.Top
@@ -8069,5 +8073,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.2 online"
+	"[CLAW] CLAW MARK v0.3.3 online"
 )

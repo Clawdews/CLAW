@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.2"
+	environment.CLAW.Version = "0.3.3"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -232,7 +232,7 @@ do
 		},
 		Validation = {
 			Hitbox = true,
-			Facing = true,
+			Facing = false,
 			Visibility = false,
 			Stun = true,
 			Cooldown = true,
@@ -242,11 +242,11 @@ do
 			PredictionSeconds = 0.10,
 			HistorySeconds = 3,
 			PastHitboxSeconds = 0.20,
-			MinAnimationSpeed = 0.05,
+			MinAnimationSpeed = 0,
 			AnimationSanity = true,
-			MaxAnimationSpeed = 6,
+			MaxAnimationSpeed = 1000,
 			MinAnimationLength = 0,
-			MaxAnimationLength = 30,
+			MaxAnimationLength = 0,
 		},
 		Filters = {
 			M1 = false,
@@ -361,6 +361,7 @@ do
 		"Filters.HoldingBlock",
 		"Filters.ChimeCountdown",
 		"Filters.SightlessBeam",
+		"Validation.Facing",
 		"Validation.IFrames",
 		"Validation.AutoParryFrames",
 		"AttackAssistance.AutoFeint",
@@ -516,7 +517,7 @@ do
 	function Persistence.new(path)
 		return setmetatable({
 			path = path or "CLAW/combat-settings.json",
-			version = 2,
+			version = 3,
 		}, Persistence)
 	end
 
@@ -2220,6 +2221,7 @@ do
 	local SoundDetector = assert(modules["src/Combat/Detection/SoundDetector.lua"])
 	local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
 	local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
+	local Players = game:GetService("Players")
 
 	local DetectorHub = {}
 	DetectorHub.__index = DetectorHub
@@ -2247,7 +2249,20 @@ do
 			local maximum = settings:get("Defense.UnknownAnimationMaxLength")
 			return length <= 0 or length <= maximum
 		end
-		local function accept(category, id, _, track)
+		local function accept(category, id, instance, track)
+			-- Lycoris never sends the local character's animation tracks into the
+			-- defense pipeline. Local attack assistance has its own animator hook,
+			-- so rejecting them here removes misleading defense events without
+			-- affecting action rolling, feints, or animation-speed assistance.
+			local localCharacter = Players.LocalPlayer.Character
+			if
+				category == "animation"
+				and localCharacter
+				and instance
+				and instance:IsDescendantOf(localCharacter)
+			then
+				return false
+			end
 			if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
 				return true
 			end
@@ -3487,30 +3502,20 @@ do
 		then
 			return false, "low-weight-animation"
 		end
-		if speed < validation.MinAnimationSpeed or speed > validation.MaxAnimationSpeed then
+		if
+			speed < validation.MinAnimationSpeed
+			or (validation.MaxAnimationSpeed > 0 and speed >= validation.MaxAnimationSpeed)
+		then
 			return false, "animation-speed"
 		end
-		if length > 0 and (length < validation.MinAnimationLength or length > validation.MaxAnimationLength) then
+		if
+			length > 0
+			and (
+				length < validation.MinAnimationLength
+				or (validation.MaxAnimationLength > 0 and length > validation.MaxAnimationLength)
+			)
+		then
 			return false, "animation-length"
-		end
-		if event.instance and event.instance:IsA("Animator") then
-			local duplicates = 0
-			local okPlaying, playingTracks = pcall(event.instance.GetPlayingAnimationTracks, event.instance)
-			if not okPlaying then
-				return false, "animation-tracks"
-			end
-			for _, playing in ipairs(playingTracks) do
-				if
-					playing.Animation
-					and event.track.Animation
-					and playing.Animation.AnimationId == event.track.Animation.AnimationId
-				then
-					duplicates = duplicates + 1
-					if duplicates > 1 then
-						return false, "duplicate-animation"
-					end
-				end
-			end
 		end
 		return true
 	end
@@ -3535,18 +3540,23 @@ do
 		end
 
 		local half = hitbox * 0.5
-		local function contains(frame)
-			local relative = source:PointToObjectSpace(frame.Position)
-			local shiftedZ = relative.Z + profile.hitboxOffset
+		local function contains(sourceFrame, targetFrame)
+			local relative = sourceFrame:PointToObjectSpace(targetFrame.Position)
+			-- Lycoris's fhb is a hitbox-center offset, not a directional
+			-- validation switch. hso is positive backwards and negative forwards.
+			local shiftedZ = relative.Z + (profile.facingHitbox and half.Z or 0) - profile.hitboxOffset
 			return math.abs(relative.X) <= half.X and math.abs(relative.Y) <= half.Y and math.abs(shiftedZ) <= half.Z
 		end
 
-		local inside = contains(localFrame)
+		local inside = contains(source, localFrame)
 		if not inside and profile.pastHitbox then
 			local seconds = profile.historySeconds > 0 and profile.historySeconds
 				or self.Settings:get("Validation.PastHitboxSeconds")
-			inside = self.History:anyRecent(self.State.Character, seconds, function(record)
-				return contains(record.cframe)
+			-- Past-hitbox detection replays the attacker's recent hitboxes against
+			-- our current position. Replaying our own history against the current
+			-- attacker position reverses the intended test.
+			inside = self.History:anyRecent(event.entity, seconds, function(record)
+				return contains(record.cframe, localFrame)
 			end)
 		end
 		return inside, inside and nil or "outside-hitbox"
@@ -3557,7 +3567,7 @@ do
 	end
 
 	function ValidationEngine:_facing(event, profile)
-		if not self.Settings:get("Validation.Facing") or not profile.facingHitbox then
+		if not self.Settings:get("Validation.Facing") then
 			return true
 		end
 		local source = self:_sourceCFrame(event, profile)
@@ -4207,8 +4217,26 @@ do
 
 	function StateMonitor:_has(character, names)
 		for _, name in ipairs(names) do
-			if character:GetAttribute(name) == true or character:FindFirstChild(name, true) then
+			if character:GetAttribute(name) == true then
 				return true
+			end
+			local state = character:FindFirstChild(name, true)
+			if state then
+				if state:IsA("BoolValue") then
+					if state.Value then
+						return true
+					end
+				elseif state:IsA("NumberValue") or state:IsA("IntValue") then
+					if state.Value ~= 0 then
+						return true
+					end
+				elseif state:IsA("ObjectValue") then
+					if state.Value ~= nil then
+						return true
+					end
+				else
+					return true
+				end
 			end
 		end
 		return false
@@ -4309,7 +4337,7 @@ do
 			Enabled = true,
 			Defense = { Enabled = true },
 			Targeting = { ScanInterval = 0.05, MaxTargets = 2, MaxDistance = 65 },
-			Validation = { Hitbox = true, Facing = true, Prediction = true, Visibility = false },
+			Validation = { Hitbox = true, Facing = false, Prediction = true, Visibility = false },
 			Probability = { Enabled = true, AllowFailure = true, FailureRate = 3 },
 			Diagnostics = { PerformanceBudgetMs = 2, AdaptiveScan = true },
 		},
@@ -4317,7 +4345,7 @@ do
 			Enabled = true,
 			Defense = { Enabled = true },
 			Targeting = { ScanInterval = 0.025, MaxTargets = 4, MaxDistance = 90 },
-			Validation = { Hitbox = true, Facing = true, Prediction = true },
+			Validation = { Hitbox = true, Facing = false, Prediction = true },
 			Probability = { Enabled = false },
 			Diagnostics = { PerformanceBudgetMs = 3, AdaptiveScan = true },
 		},
@@ -5146,8 +5174,7 @@ do
 		for index, action in ipairs(actions) do
 			local resolved, probabilityReason = self.Probability:resolve(self:_dynamicAction(action, event), profile)
 			if not resolved then
-				self.State:increment("Rejected")
-				self.State:emit("action-rejected", probabilityReason)
+				self:_reject(probabilityReason)
 				continue
 			end
 
@@ -5157,14 +5184,12 @@ do
 			if not valid then
 				resolved = self.Fallbacks:resolve(resolved, validationReason, profile)
 				if not resolved then
-					self.State:increment("Rejected")
-					self.State:emit("action-rejected", validationReason)
+					self:_reject(validationReason)
 					continue
 				end
 				local fallbackValid, fallbackReason = self.Validator:validate(event, profile, target, resolved)
 				if not fallbackValid then
-					self.State:increment("Rejected")
-					self.State:emit("action-rejected", fallbackReason)
+					self:_reject(fallbackReason)
 					continue
 				end
 			end
@@ -5618,7 +5643,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.3.2
+--  CLAW MARK v0.3.3
 --
 --  TABS
 --    BURSTER
@@ -9073,7 +9098,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.2",
+	"CLAW MARK v0.3.3",
 	8,
 	0,
 	170,
@@ -11556,7 +11581,9 @@ local function combatToggle(
 	path,
 	x,
 	y,
-	width
+	width,
+	enabledColor,
+	disabledColor
 )
 	local button =
 		mkButton(
@@ -11580,8 +11607,8 @@ local function combatToggle(
 
 		button.BackgroundColor3 =
 			enabled
-			and COLORS.GREEN
-			or COLORS.RED
+			and (enabledColor or COLORS.GREEN)
+			or (disabledColor or COLORS.RED)
 	end
 
 	CombatRefreshers[#CombatRefreshers + 1] =
@@ -12977,27 +13004,29 @@ combatToggle(debugControls, "DIAGNOSTICS", "Diagnostics.Enabled", 8, 28, 148)
 combatToggle(debugControls, "DETECT TRACE", "Diagnostics.TraceDetectors", 164, 28, 148)
 combatToggle(debugControls, "SCHED TRACE", "Diagnostics.TraceScheduler", 8, 57, 148)
 combatToggle(debugControls, "HITBOX VIEW", "Diagnostics.VisualizeHitboxes", 164, 57, 148)
-combatToggle(debugControls, "BLOCK PARRY", "DebugState.BlockParry", 8, 96, 148)
-combatToggle(debugControls, "BLOCK DODGE", "DebugState.BlockDodge", 164, 96, 148)
-combatToggle(debugControls, "BLOCK VENT", "DebugState.BlockVent", 8, 125, 148)
-combatToggle(debugControls, "NO BLOCKING", "DebugState.NoBlocking", 164, 125, 148)
-combatNumber(debugControls, "BUDGET MS", "Diagnostics.PerformanceBudgetMs", 8, 164, 0.1, 16)
-combatNumber(debugControls, "EVENT BUFFER", "Diagnostics.MaxEvents", 8, 191, 10, 2000)
+local blockerWarning = mkLabel(debugControls, "FAULT INJECTION - KEEP THESE OFF", 8, 84, 304, 18, 9)
+blockerWarning.TextColor3 = COLORS.RED
+combatToggle(debugControls, "DISABLE PARRY", "DebugState.BlockParry", 8, 106, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE DODGE", "DebugState.BlockDodge", 164, 106, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE VENT", "DebugState.BlockVent", 8, 135, 148, COLORS.RED, COLORS.GREEN)
+combatToggle(debugControls, "DISABLE BLOCK", "DebugState.NoBlocking", 164, 135, 148, COLORS.RED, COLORS.GREEN)
+combatNumber(debugControls, "BUDGET MS", "Diagnostics.PerformanceBudgetMs", 8, 174, 0.1, 16)
+combatNumber(debugControls, "EVENT BUFFER", "Diagnostics.MaxEvents", 8, 201, 10, 2000)
 
 local clearDiagnostics =
-	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 230, 304, 25)
+	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 240, 304, 25)
 
 local copyDiagnostics =
-	mkButton(debugControls, "COPY TIMING DATABASE", 8, 263, 304, 25)
+	mkButton(debugControls, "COPY TIMING DATABASE", 8, 273, 304, 25)
 
 local testParry =
-	mkButton(debugControls, "TEST PARRY", 8, 300, 148, 25)
+	mkButton(debugControls, "TEST PARRY", 8, 310, 148, 25)
 
 local testDodge =
-	mkButton(debugControls, "TEST DODGE", 164, 300, 148, 25)
+	mkButton(debugControls, "TEST DODGE", 164, 310, 148, 25)
 
 local InputTestStatus =
-	mkLabel(debugControls, "INPUT SELF-TEST: not run", 8, 333, 304, 55, 9)
+	mkLabel(debugControls, "INPUT SELF-TEST: not run", 8, 343, 304, 45, 9)
 
 InputTestStatus.TextWrapped = true
 InputTestStatus.TextYAlignment = Enum.TextYAlignment.Top
@@ -13688,7 +13717,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.2 online"
+	"[CLAW] CLAW MARK v0.3.3 online"
 )
 
 -- END ENTRY: claw_mark.lua

@@ -5,6 +5,7 @@ local AnimationDetector = assert(modules["src/Combat/Detection/AnimationDetector
 local SoundDetector = assert(modules["src/Combat/Detection/SoundDetector.lua"])
 local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
 local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
+local Players = game:GetService("Players")
 
 local DetectorHub = {}
 DetectorHub.__index = DetectorHub
@@ -32,7 +33,20 @@ function DetectorHub.new(settings, timings, options)
 		local maximum = settings:get("Defense.UnknownAnimationMaxLength")
 		return length <= 0 or length <= maximum
 	end
-	local function accept(category, id, _, track)
+	local function accept(category, id, instance, track)
+		-- Lycoris never sends the local character's animation tracks into the
+		-- defense pipeline. Local attack assistance has its own animator hook,
+		-- so rejecting them here removes misleading defense events without
+		-- affecting action rolling, feints, or animation-speed assistance.
+		local localCharacter = Players.LocalPlayer.Character
+		if
+			category == "animation"
+			and localCharacter
+			and instance
+			and instance:IsDescendantOf(localCharacter)
+		then
+			return false
+		end
 		if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
 			return true
 		end

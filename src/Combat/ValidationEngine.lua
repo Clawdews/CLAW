@@ -133,30 +133,20 @@ function ValidationEngine:_trackValid(event)
 	then
 		return false, "low-weight-animation"
 	end
-	if speed < validation.MinAnimationSpeed or speed > validation.MaxAnimationSpeed then
+	if
+		speed < validation.MinAnimationSpeed
+		or (validation.MaxAnimationSpeed > 0 and speed >= validation.MaxAnimationSpeed)
+	then
 		return false, "animation-speed"
 	end
-	if length > 0 and (length < validation.MinAnimationLength or length > validation.MaxAnimationLength) then
+	if
+		length > 0
+		and (
+			length < validation.MinAnimationLength
+			or (validation.MaxAnimationLength > 0 and length > validation.MaxAnimationLength)
+		)
+	then
 		return false, "animation-length"
-	end
-	if event.instance and event.instance:IsA("Animator") then
-		local duplicates = 0
-		local okPlaying, playingTracks = pcall(event.instance.GetPlayingAnimationTracks, event.instance)
-		if not okPlaying then
-			return false, "animation-tracks"
-		end
-		for _, playing in ipairs(playingTracks) do
-			if
-				playing.Animation
-				and event.track.Animation
-				and playing.Animation.AnimationId == event.track.Animation.AnimationId
-			then
-				duplicates = duplicates + 1
-				if duplicates > 1 then
-					return false, "duplicate-animation"
-				end
-			end
-		end
 	end
 	return true
 end
@@ -181,18 +171,23 @@ function ValidationEngine:_insideHitbox(event, profile, action)
 	end
 
 	local half = hitbox * 0.5
-	local function contains(frame)
-		local relative = source:PointToObjectSpace(frame.Position)
-		local shiftedZ = relative.Z + profile.hitboxOffset
+	local function contains(sourceFrame, targetFrame)
+		local relative = sourceFrame:PointToObjectSpace(targetFrame.Position)
+		-- Lycoris's fhb is a hitbox-center offset, not a directional
+		-- validation switch. hso is positive backwards and negative forwards.
+		local shiftedZ = relative.Z + (profile.facingHitbox and half.Z or 0) - profile.hitboxOffset
 		return math.abs(relative.X) <= half.X and math.abs(relative.Y) <= half.Y and math.abs(shiftedZ) <= half.Z
 	end
 
-	local inside = contains(localFrame)
+	local inside = contains(source, localFrame)
 	if not inside and profile.pastHitbox then
 		local seconds = profile.historySeconds > 0 and profile.historySeconds
 			or self.Settings:get("Validation.PastHitboxSeconds")
-		inside = self.History:anyRecent(self.State.Character, seconds, function(record)
-			return contains(record.cframe)
+		-- Past-hitbox detection replays the attacker's recent hitboxes against
+		-- our current position. Replaying our own history against the current
+		-- attacker position reverses the intended test.
+		inside = self.History:anyRecent(event.entity, seconds, function(record)
+			return contains(record.cframe, localFrame)
 		end)
 	end
 	return inside, inside and nil or "outside-hitbox"
@@ -203,7 +198,7 @@ function ValidationEngine:insideHitbox(event, profile, action)
 end
 
 function ValidationEngine:_facing(event, profile)
-	if not self.Settings:get("Validation.Facing") or not profile.facingHitbox then
+	if not self.Settings:get("Validation.Facing") then
 		return true
 	end
 	local source = self:_sourceCFrame(event, profile)
