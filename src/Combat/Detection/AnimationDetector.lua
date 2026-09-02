@@ -15,6 +15,7 @@ function AnimationDetector.new(options)
 		Detected = Signal.new(),
 		_source = options.source,
 		_ignoreTrack = options.ignoreTrack,
+		_accept = options.accept,
 		_connections = {},
 		_animators = setmetatable({}, { __mode = "k" }),
 		_running = false,
@@ -38,6 +39,9 @@ function AnimationDetector:_emit(animator, track)
 	local animation = track.Animation
 	local id = cleanID(animation and animation.AnimationId)
 	if id == "" then
+		return
+	end
+	if type(self._accept) == "function" and not self._accept("animation", id, animator) then
 		return
 	end
 

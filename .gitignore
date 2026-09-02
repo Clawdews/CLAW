@@ -1,6 +1,8 @@
-# CLAW contains Animation Lab only. Keep the unrelated runtime private.
+# CLAW MARK keeps unrelated local runtimes and research material private.
 project_rain_with_loot.lua
 references/
+.tools/
+generated/
 
 # Local configuration and secrets must never be committed.
 .env

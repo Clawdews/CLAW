@@ -14,6 +14,8 @@ function SoundDetector.new(options)
 	return setmetatable({
 		Detected = Signal.new(),
 		_source = options.source,
+		_accept = options.accept,
+		_activeSource = nil,
 		_connections = {},
 		_sounds = setmetatable({}, { __mode = "k" }),
 		_running = false,
@@ -23,6 +25,9 @@ end
 function SoundDetector:_emit(sound)
 	local id = cleanID(sound.SoundId)
 	if id == "" then
+		return
+	end
+	if type(self._accept) == "function" and not self._accept("sound", id, sound) then
 		return
 	end
 
@@ -38,6 +43,10 @@ end
 
 function SoundDetector:_hook(sound)
 	if self._sounds[sound] then
+		return
+	end
+	local id = cleanID(sound.SoundId)
+	if type(self._accept) == "function" and not self._accept("sound", id, sound) then
 		return
 	end
 
@@ -62,6 +71,7 @@ function SoundDetector:start()
 		or self._source
 		or workspace:FindFirstChild("Live")
 		or workspace
+	self._activeSource = source
 
 	for _, descendant in ipairs(source:GetDescendants()) do
 		if descendant:IsA("Sound") then
@@ -77,6 +87,17 @@ function SoundDetector:start()
 	self._connections[#self._connections + 1] = connection
 end
 
+function SoundDetector:refresh()
+	if not self._running or not self._activeSource then
+		return
+	end
+	for _, descendant in ipairs(self._activeSource:GetDescendants()) do
+		if descendant:IsA("Sound") then
+			self:_hook(descendant)
+		end
+	end
+end
+
 function SoundDetector:stop()
 	if not self._running then
 		return
@@ -89,6 +110,7 @@ function SoundDetector:stop()
 	end
 	table.clear(self._connections)
 	table.clear(self._sounds)
+	self._activeSource = nil
 end
 
 function SoundDetector:Destroy()

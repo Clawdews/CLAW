@@ -59,14 +59,20 @@ function ActionExecutor:execute(action, context)
 	end
 	local success, result
 
-	if KEY_BINDINGS[kind] then
+	if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.DirectRoll") then
+		success, result = self.Input:custom("DirectDodge", action, context)
+		if not success then
+			success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
+		end
+	elseif KEY_BINDINGS[kind] then
 		success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
 	elseif kind == "Feint" then
 		success, result = self.Input:tapMouse(1, duration)
 	elseif kind == "M1" then
 		success, result = self.Input:tapMouse(0, duration)
 	else
-		success, result = self.Input:custom(kind, action, context)
+		local customName = action.metadata.customName or kind
+		success, result = self.Input:custom(customName, action, context)
 	end
 
 	if not success then

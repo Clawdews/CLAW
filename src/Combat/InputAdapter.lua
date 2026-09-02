@@ -4,6 +4,11 @@ local UserInputService = game:GetService("UserInputService")
 local InputAdapter = {}
 InputAdapter.__index = InputAdapter
 
+local KEY_CODES = {}
+for _, keyCode in ipairs(Enum.KeyCode:GetEnumItems()) do
+	KEY_CODES[string.lower(keyCode.Name)] = keyCode
+end
+
 function InputAdapter.new(options)
 	options = options or {}
 	local virtualInput
@@ -14,19 +19,28 @@ function InputAdapter.new(options)
 	return setmetatable({
 		VirtualInput = virtualInput,
 		Custom = options.custom or {},
+		Settings = options.settings,
 	}, InputAdapter)
+end
+
+local function keyCodeFromName(name)
+	return KEY_CODES[string.lower(name)]
+end
+
+function InputAdapter:_binding(name)
+	if not self.Settings then
+		return nil
+	end
+	local value = self.Settings:get("Bindings." .. tostring(name))
+	if type(value) ~= "string" or value == "" then
+		return nil
+	end
+	return value
 end
 
 function InputAdapter:key(keyCode, isDown)
 	if self.VirtualInput then
-		local ok = pcall(
-			self.VirtualInput.SendKeyEvent,
-			self.VirtualInput,
-			isDown,
-			keyCode,
-			false,
-			game
-		)
+		local ok = pcall(self.VirtualInput.SendKeyEvent, self.VirtualInput, isDown, keyCode, false, game)
 		if ok then
 			return true
 		end
@@ -86,18 +100,33 @@ end
 
 function InputAdapter:custom(name, ...)
 	local callback = self.Custom[name]
-	if type(callback) ~= "function" then
-		return false, "no custom input handler for " .. tostring(name)
+	if type(callback) == "function" then
+		local ok, success, result = pcall(callback, ...)
+		if not ok then
+			return false, success
+		end
+		if success == false then
+			return false, result
+		end
+		return true, success
 	end
 
-	local ok, success, result = pcall(callback, ...)
-	if not ok then
-		return false, success
+	local binding = self:_binding(name)
+	if not binding then
+		return false, "no callback or key binding for " .. tostring(name)
 	end
-	if success == false then
-		return false, result
+	local normalized = string.lower(binding)
+	if normalized == "mouse1" or normalized == "mousebutton1" then
+		return self:tapMouse(0)
+	elseif normalized == "mouse2" or normalized == "mousebutton2" then
+		return self:tapMouse(1)
 	end
-	return true, success
+
+	local keyCode = keyCodeFromName(binding)
+	if not keyCode or keyCode == Enum.KeyCode.Unknown then
+		return false, "invalid key binding for " .. tostring(name)
+	end
+	return self:tapKey(keyCode)
 end
 
 return InputAdapter

@@ -20,12 +20,17 @@ function Action.new(values)
 	local kind = values.kind or "Parry"
 	assert(VALID_KINDS[kind], "unsupported combat action: " .. tostring(kind))
 
+	local hitbox = values.hitbox
+	if type(hitbox) == "table" then
+		hitbox = Vector3.new(hitbox.X or 0, hitbox.Y or 0, hitbox.Z or 0)
+	end
+
 	return setmetatable({
 		kind = kind,
 		name = values.name or kind,
 		delay = math.max(0, tonumber(values.delay) or 0),
 		duration = math.max(0, tonumber(values.duration) or 0),
-		hitbox = typeof(values.hitbox) == "Vector3" and values.hitbox or Vector3.zero,
+		hitbox = typeof(hitbox) == "Vector3" and hitbox or Vector3.zero,
 		ignoreHitbox = values.ignoreHitbox == true,
 		chance = math.clamp(tonumber(values.chance) or 100, 0, 100),
 		metadata = type(values.metadata) == "table" and values.metadata or {},
@@ -37,15 +42,19 @@ function Action:clone()
 end
 
 function Action:serialize()
+	local metadata = {}
+	for key, value in pairs(self.metadata) do
+		metadata[key] = value
+	end
 	return {
 		kind = self.kind,
 		name = self.name,
 		delay = self.delay,
 		duration = self.duration,
-		hitbox = self.hitbox,
+		hitbox = { X = self.hitbox.X, Y = self.hitbox.Y, Z = self.hitbox.Z },
 		ignoreHitbox = self.ignoreHitbox,
 		chance = self.chance,
-		metadata = self.metadata,
+		metadata = metadata,
 	}
 end
 

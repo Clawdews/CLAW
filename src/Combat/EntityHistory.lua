@@ -14,16 +14,19 @@ end
 
 function EntityHistory:_prune(history, now)
 	local cutoff = now - self._maxSeconds
-	local firstValid = 1
-
-	while firstValid <= #history and history[firstValid].at < cutoff do
-		firstValid = firstValid + 1
+	local records = history.records
+	while history.head <= #records and records[history.head].at < cutoff do
+		history.head = history.head + 1
 	end
 
-	if firstValid > 1 then
-		for _ = 1, firstValid - 1 do
-			table.remove(history, 1)
+	-- Compact occasionally instead of shifting the array on every sample.
+	if history.head > 64 and history.head > (#records * 0.5) then
+		local compacted = {}
+		for index = history.head, #records do
+			compacted[#compacted + 1] = records[index]
 		end
+		history.records = compacted
+		history.head = 1
 	end
 end
 
@@ -35,11 +38,12 @@ function EntityHistory:record(entity, cframe, velocity, timestamp)
 	local now = timestamp or os.clock()
 	local history = self._records[entity]
 	if not history then
-		history = {}
+		history = { records = {}, head = 1 }
 		self._records[entity] = history
 	end
 
-	history[#history + 1] = {
+	local records = history.records
+	records[#records + 1] = {
 		at = now,
 		cframe = cframe,
 		velocity = typeof(velocity) == "Vector3" and velocity or Vector3.zero,
@@ -55,7 +59,8 @@ function EntityHistory:recent(entity, seconds, timestamp)
 
 	local cutoff = (timestamp or os.clock()) - (seconds or self._maxSeconds)
 	local result = {}
-	for _, record in ipairs(history) do
+	for index = history.head, #history.records do
+		local record = history.records[index]
 		if record.at >= cutoff then
 			result[#result + 1] = record
 		end
@@ -71,7 +76,8 @@ function EntityHistory:closest(entity, timestamp)
 
 	local closest
 	local closestDelta = math.huge
-	for _, record in ipairs(history) do
+	for index = history.head, #history.records do
+		local record = history.records[index]
 		local delta = math.abs(record.at - timestamp)
 		if delta < closestDelta then
 			closest = record
@@ -82,21 +88,42 @@ function EntityHistory:closest(entity, timestamp)
 end
 
 function EntityHistory:averageVelocity(entity, seconds)
-	local records = self:recent(entity, seconds or 0.20)
-	if #records == 0 then
+	local history = self._records[entity]
+	if not history then
 		return Vector3.zero
 	end
 
+	local cutoff = os.clock() - (seconds or 0.20)
 	local total = Vector3.zero
-	for _, record in ipairs(records) do
-		total = total + record.velocity
+	local count = 0
+	for index = history.head, #history.records do
+		local record = history.records[index]
+		if record.at >= cutoff then
+			total = total + record.velocity
+			count = count + 1
+		end
 	end
-	return total / #records
+	return count > 0 and total / count or Vector3.zero
+end
+
+function EntityHistory:anyRecent(entity, seconds, predicate)
+	local history = self._records[entity]
+	if not history then
+		return false
+	end
+	local cutoff = os.clock() - (seconds or self._maxSeconds)
+	for index = history.head, #history.records do
+		local record = history.records[index]
+		if record.at >= cutoff and predicate(record) then
+			return true
+		end
+	end
+	return false
 end
 
 function EntityHistory:predict(entity, seconds)
 	local history = self._records[entity]
-	local latest = history and history[#history]
+	local latest = history and history.records[#history.records]
 	if not latest then
 		return nil
 	end
@@ -107,12 +134,12 @@ end
 
 function EntityHistory:yawRate(entity)
 	local history = self._records[entity]
-	if not history or #history < 2 then
+	if not history or #history.records - history.head + 1 < 2 then
 		return 0
 	end
 
-	local previous = history[#history - 1]
-	local latest = history[#history]
+	local previous = history.records[#history.records - 1]
+	local latest = history.records[#history.records]
 	local deltaTime = latest.at - previous.at
 	if deltaTime <= 0.0001 then
 		return 0

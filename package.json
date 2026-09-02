@@ -1,9 +1,10 @@
 {
-  "name": "claw-animation-lab",
+  "name": "claw-mark",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs --check"
+    "check": "node scripts/build.mjs --check && node scripts/verify.mjs",
+    "convert:lycoris": "node scripts/convert-lycoris-timings.mjs"
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "CLAW",
-  "entry": "animation_lab_v6.lua",
-  "output": "dist/AnimationLab.lua",
+  "entry": "claw_mark.lua",
+  "output": "dist/ClawMark.lua",
   "modules": [
     "src/Runtime/Namespace.lua",
     "src/Runtime/Signal.lua",
@@ -14,7 +14,9 @@
     "src/Combat/Action.lua",
     "src/Combat/TimingProfile.lua",
     "src/Combat/TimingStore.lua",
+    "src/Combat/TimingPersistence.lua",
     "src/Combat/Scheduler.lua",
+    "src/Combat/Performance.lua",
     "src/Combat/Detection/DetectorEvent.lua",
     "src/Combat/Detection/AnimationDetector.lua",
     "src/Combat/Detection/SoundDetector.lua",
@@ -24,6 +26,15 @@
     "src/Combat/InputAdapter.lua",
     "src/Combat/ActionExecutor.lua",
     "src/Combat/TimingResolver.lua",
+    "src/Combat/ValidationEngine.lua",
+    "src/Combat/ProbabilityResolver.lua",
+    "src/Combat/FallbackResolver.lua",
+    "src/Combat/Diagnostics.lua",
+    "src/Combat/HitboxVisualizer.lua",
+    "src/Combat/HitboxWaiter.lua",
+    "src/Combat/StateMonitor.lua",
+    "src/Combat/PresetManager.lua",
+    "src/Combat/AssistanceEngine.lua",
     "src/Combat/DefenseEngine.lua",
     "src/Combat/init.lua"
   ]

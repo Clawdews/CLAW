@@ -1,5 +1,5 @@
 --==============================================================
---  ANIMATION LAB v6.2
+--  CLAW MARK v0.3-dev
 --
 --  TABS
 --    BURSTER
@@ -68,9 +68,13 @@ local ENV = getgenv and getgenv() or _G
 -- Destroy previous copy
 ------------------------------------------------------------
 
-if ENV.__ANIM_LAB_V6 then
+local previousRuntime =
+	ENV.__CLAW_MARK
+	or ENV.__ANIM_LAB_V6
+
+if previousRuntime then
 	pcall(function()
-		ENV.__ANIM_LAB_V6:Destroy()
+		previousRuntime:Destroy()
 	end)
 end
 
@@ -97,17 +101,22 @@ local LP =
 -- Persistent user preferences
 ------------------------------------------------------------
 
-ENV.__ANIM_LAB_PREFS =
-	ENV.__ANIM_LAB_PREFS
+ENV.__CLAW_MARK_PREFS =
+	ENV.__CLAW_MARK_PREFS
+	or ENV.__ANIM_LAB_PREFS
 	or {
 		UIKey = "RightShift",
 		WebhookURL = "",
-		WebhookUsername = "Anim Lab",
+		WebhookUsername = "CLAW MARK",
 		WebhookUserID = "",
 	}
 
 local PREFS =
-	ENV.__ANIM_LAB_PREFS
+	ENV.__CLAW_MARK_PREFS
+
+-- Compatibility alias for existing user preferences. New code uses CLAW MARK.
+ENV.__ANIM_LAB_PREFS =
+	PREFS
 
 ------------------------------------------------------------
 -- Capture available request implementation
@@ -460,7 +469,7 @@ local CONFIG = {
 
 		Username =
 			PREFS.WebhookUsername
-			or "Anim Lab",
+			or "CLAW MARK",
 
 		UserID =
 			PREFS.WebhookUserID
@@ -576,8 +585,36 @@ local State = {
 	Minimized = false,
 }
 
+ENV.__CLAW_MARK =
+	State
+
+-- Compatibility alias for scripts that were written against v6.
 ENV.__ANIM_LAB_V6 =
 	State
+
+local CombatModule =
+	ENV.__CLAW_MODULES
+	and ENV.__CLAW_MODULES[
+		"src/Combat/init.lua"
+	]
+
+if CombatModule then
+	local ok, combatOrError =
+		pcall(function()
+			local combat = CombatModule.new()
+			combat:start()
+			return combat
+		end)
+
+	if ok then
+		State.Combat = combatOrError
+		if ENV.CLAW then
+			ENV.CLAW.Combat = combatOrError
+		end
+	else
+		warn("[CLAW] Combat runtime failed to start:", combatOrError)
+	end
+end
 
 ------------------------------------------------------------
 -- UI forward reference
@@ -3224,7 +3261,7 @@ local Gui =
 	)
 
 Gui.Name =
-	"_AnimationLabV6"
+	"_ClawMark"
 
 Gui.ResetOnSpawn =
 	false
@@ -3265,8 +3302,8 @@ local Main =
 
 Main.Size =
 	UDim2.fromOffset(
-		470,
-		430
+		680,
+		520
 	)
 
 Main.Position =
@@ -3274,7 +3311,7 @@ Main.Position =
 		0,
 		24,
 		0.5,
-		-215
+		-260
 	)
 
 Main.BackgroundColor3 =
@@ -3399,7 +3436,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"ANIMATION LAB v6.2",
+	"CLAW MARK v0.3",
 	8,
 	0,
 	170,
@@ -3411,9 +3448,9 @@ local TargetButton =
 	mkButton(
 		Top,
 		"TARGET: LOCAL",
-		180,
+		188,
 		4,
-		115,
+		140,
 		22
 	)
 
@@ -3421,7 +3458,7 @@ local MenuButton =
 	mkButton(
 		Top,
 		"MENU",
-		300,
+		550,
 		4,
 		52,
 		22
@@ -3431,7 +3468,7 @@ local MinimizeButton =
 	mkButton(
 		Top,
 		"_",
-		357,
+		610,
 		4,
 		28,
 		22
@@ -3441,7 +3478,7 @@ local CloseButton =
 	mkButton(
 		Top,
 		"x",
-		390,
+		644,
 		4,
 		28,
 		22
@@ -3589,34 +3626,62 @@ local BurstTab =
 	makeTab(
 		"BURSTER",
 		0,
-		82
+		72
 	)
 
 local LogsTab =
 	makeTab(
 		"LOGGED",
-		83,
-		82
+		73,
+		68
 	)
 
 local LiveTab =
 	makeTab(
 		"LIVE",
-		166,
-		72
+		142,
+		58
 	)
 
 local GhostTab =
 	makeTab(
 		"GHOST FIRE",
-		239,
-		101
+		201,
+		82
+	)
+
+local CombatTab =
+	makeTab(
+		"COMBAT",
+		284,
+		78
+	)
+
+local TimingsTab =
+	makeTab(
+		"TIMINGS",
+		363,
+		78
+	)
+
+local AssistTab =
+	makeTab(
+		"ASSIST",
+		442,
+		74
+	)
+
+local DebugTab =
+	makeTab(
+		"DEBUG",
+		517,
+		68
 	)
 
 local WebhookTab =
 	makeTab(
 		"WEBHOOK",
-		341,
+		586,
 		86
 	)
 
@@ -3669,6 +3734,18 @@ local LivePage =
 local GhostPage =
 	makePage()
 
+local CombatPage =
+	makePage()
+
+local TimingsPage =
+	makePage()
+
+local AssistPage =
+	makePage()
+
+local DebugPage =
+	makePage()
+
 local WebhookPage =
 	makePage()
 
@@ -3684,6 +3761,18 @@ local Pages = {
 
 	[GhostTab] =
 		GhostPage,
+
+	[CombatTab] =
+		CombatPage,
+
+	[TimingsTab] =
+		TimingsPage,
+
+	[AssistTab] =
+		AssistPage,
+
+	[DebugTab] =
+		DebugPage,
 
 	[WebhookTab] =
 		WebhookPage,
@@ -3728,8 +3817,8 @@ local Status =
 		Main,
 		"",
 		8,
-		407,
-		450,
+		497,
+		660,
 		18,
 		9
 	)
@@ -3749,20 +3838,23 @@ local function refreshStatus()
 		and "GHOST:RUN"
 		or "GHOST:STOP"
 
-	local lootDetected =
-		getLootAPI()
-		and "LOOT:API"
-		or "LOOT:NO"
+	local combat = State.Combat
+	local defense = combat
+		and combat.Settings:get("Defense.Enabled")
+		and "DEF:ON"
+		or "DEF:OFF"
+	local targetCount = combat and #combat.State.Targets or 0
 
 	Status.Text =
 		string.format(
-			"target:%s  |  %s  |  log:%s  |  %s",
+			"target:%s  |  %s  |  log:%s  |  %s  |  threats:%d",
 			targetName,
 			ghost,
 			CONFIG.LoggingEnabled
 				and "ON"
 				or "OFF",
-			lootDetected
+			defense,
+			targetCount
 		)
 end
 
@@ -5370,7 +5462,7 @@ UserIDBox.Text =
 local MessageBox =
 	mkBox(
 		WebhookPage,
-		"Anim Lab test",
+		"CLAW MARK test",
 		0,
 		175,
 		350,
@@ -5760,6 +5852,1207 @@ bind(
 )
 
 --==============================================================
+-- CLAW MARK COMBAT UI
+--==============================================================
+
+local CombatRuntime =
+	State.Combat
+
+local CombatRefreshers = {}
+
+local function combatRefreshAll()
+	for _, refresh in ipairs(CombatRefreshers) do
+		pcall(refresh)
+	end
+	refreshStatus()
+end
+
+local function combatSection(
+	parent,
+	title,
+	x,
+	y,
+	width,
+	height
+)
+	local panel =
+		Instance.new("Frame")
+
+	panel.Position =
+		UDim2.fromOffset(x, y)
+
+	panel.Size =
+		UDim2.fromOffset(width, height)
+
+	panel.BackgroundColor3 =
+		Color3.fromRGB(20, 20, 24)
+
+	panel.BorderColor3 =
+		COLORS.BORDER
+
+	panel.BorderSizePixel = 1
+
+	panel.Parent =
+		parent
+
+	local heading =
+		mkLabel(
+			panel,
+			title,
+			8,
+			3,
+			width - 16,
+			20,
+			10
+		)
+
+	heading.TextColor3 =
+		COLORS.ACCENT
+
+	return panel
+end
+
+local function combatToggle(
+	parent,
+	label,
+	path,
+	x,
+	y,
+	width
+)
+	local button =
+		mkButton(
+			parent,
+			"",
+			x,
+			y,
+			width,
+			23
+		)
+
+	local function refresh()
+		local enabled =
+			CombatRuntime
+			and CombatRuntime.Settings:get(path)
+
+		button.Text =
+			label
+			.. ": "
+			.. (enabled and "ON" or "OFF")
+
+		button.BackgroundColor3 =
+			enabled
+			and COLORS.GREEN
+			or COLORS.RED
+	end
+
+	CombatRefreshers[#CombatRefreshers + 1] =
+		refresh
+
+	bind(
+		button.MouseButton1Click,
+		function()
+			if not CombatRuntime then
+				return
+			end
+			CombatRuntime:set(
+				path,
+				not CombatRuntime.Settings:get(path)
+			)
+			combatRefreshAll()
+		end
+	)
+
+	refresh()
+	return button
+end
+
+local function combatCycle(
+	parent,
+	label,
+	path,
+	values,
+	x,
+	y,
+	width
+)
+	local button =
+		mkButton(
+			parent,
+			"",
+			x,
+			y,
+			width,
+			23
+		)
+
+	local function refresh()
+		local value =
+			CombatRuntime
+			and CombatRuntime.Settings:get(path)
+			or "N/A"
+		button.Text =
+			label .. ": " .. tostring(value)
+	end
+
+	CombatRefreshers[#CombatRefreshers + 1] =
+		refresh
+
+	bind(
+		button.MouseButton1Click,
+		function()
+			if not CombatRuntime then
+				return
+			end
+			local current =
+				CombatRuntime.Settings:get(path)
+			local index =
+				table.find(values, current)
+				or 0
+			index =
+				(index % #values) + 1
+			CombatRuntime:set(path, values[index])
+			combatRefreshAll()
+		end
+	)
+
+	refresh()
+	return button
+end
+
+local function combatNumber(
+	parent,
+	label,
+	path,
+	x,
+	y,
+	minimum,
+	maximum
+)
+	mkLabel(
+		parent,
+		label,
+		x,
+		y,
+		116,
+		22,
+		9
+	)
+
+	local box =
+		mkBox(
+			parent,
+			"",
+			x + 120,
+			y,
+			72,
+			22
+		)
+
+	local function refresh()
+		local value =
+			CombatRuntime
+			and CombatRuntime.Settings:get(path)
+			or 0
+		box.Text =
+			tostring(value)
+	end
+
+	CombatRefreshers[#CombatRefreshers + 1] =
+		refresh
+
+	bind(
+		box.FocusLost,
+		function()
+			if not CombatRuntime then
+				return
+			end
+			local current =
+				CombatRuntime.Settings:get(path)
+			CombatRuntime:set(
+				path,
+				clampNumber(
+					box.Text,
+					minimum,
+					maximum,
+					current
+				)
+			)
+			refresh()
+		end
+	)
+
+	refresh()
+	return box
+end
+
+local function combatText(
+	parent,
+	label,
+	path,
+	x,
+	y,
+	labelWidth,
+	boxWidth
+)
+	mkLabel(parent, label, x, y, labelWidth, 22, 9)
+	local box =
+		mkBox(
+			parent,
+			"",
+			x + labelWidth + 4,
+			y,
+			boxWidth,
+			22
+		)
+
+	local function refresh()
+		if not CombatRuntime or box:IsFocused() then
+			return
+		end
+		box.Text = tostring(CombatRuntime.Settings:get(path) or "")
+	end
+
+	CombatRefreshers[#CombatRefreshers + 1] = refresh
+	bind(box.FocusLost, function()
+		if CombatRuntime then
+			CombatRuntime:set(path, box.Text)
+		end
+		refresh()
+	end)
+	refresh()
+	return box
+end
+
+if not CombatRuntime then
+	local unavailable =
+		mkLabel(
+			CombatPage,
+			"Combat modules did not initialize. Rebuild CLAW MARK and reload.",
+			0,
+			0,
+			650,
+			30,
+			11
+		)
+	unavailable.TextColor3 =
+		COLORS.RED
+else
+	local defensePanel =
+		combatSection(
+			CombatPage,
+			"DEFENSE",
+			0,
+			0,
+			324,
+			205
+		)
+
+	combatToggle(defensePanel, "MASTER", "Enabled", 8, 28, 148)
+	combatToggle(defensePanel, "AUTO DEF", "Defense.Enabled", 164, 28, 148)
+	combatCycle(
+		defensePanel,
+		"PRIMARY",
+		"Defense.Preferred",
+		{ "Parry", "Dodge", "Block", "FullDodge", "Jump" },
+		8,
+		57,
+		148
+	)
+	combatCycle(
+		defensePanel,
+		"FALLBACK",
+		"Defense.Fallback",
+		{ "Dodge", "Block", "Parry", "Jump" },
+		164,
+		57,
+		148
+	)
+	combatToggle(defensePanel, "BLOCK FALLBACK", "Defense.BlockFallback", 8, 86, 148)
+	combatToggle(defensePanel, "ROLL ON CD", "Defense.RollOnParryCooldown", 164, 86, 148)
+	combatToggle(defensePanel, "VENT FALLBACK", "Defense.VentFallback", 8, 115, 148)
+	combatToggle(defensePanel, "ROLL CANCEL", "Defense.RollCancel", 164, 115, 148)
+	combatToggle(defensePanel, "PARRY ONLY", "Defense.ParryOnly", 8, 144, 148)
+	combatToggle(defensePanel, "PREDICTION", "Defense.UsePredictionMantra", 164, 144, 148)
+	combatToggle(defensePanel, "PUNISHMENT", "Defense.UsePunishmentMantra", 8, 173, 148)
+	combatToggle(defensePanel, "DIRECT ROLL", "Defense.DirectRoll", 164, 173, 148)
+
+	local targetPanel =
+		combatSection(
+			CombatPage,
+			"TARGETING",
+			332,
+			0,
+			324,
+			205
+		)
+
+	combatCycle(
+		targetPanel,
+		"MODE",
+		"Targeting.Selection",
+		{ "ClosestDistance", "ClosestCrosshair", "LeastHealth", "LowestHealthRatio", "HighestThreat" },
+		8,
+		28,
+		304
+	)
+	combatNumber(targetPanel, "MAX DISTANCE", "Targeting.MaxDistance", 8, 57, 1, 10000)
+	combatNumber(targetPanel, "FOV DEGREES", "Targeting.FOVDegrees", 8, 84, 0, 360)
+	combatNumber(targetPanel, "MAX TARGETS", "Targeting.MaxTargets", 8, 111, 1, 64)
+	combatToggle(targetPanel, "IGNORE PLAYERS", "Targeting.IgnorePlayers", 205, 57, 107)
+	combatToggle(targetPanel, "IGNORE MOBS", "Targeting.IgnoreMobs", 205, 84, 107)
+	combatToggle(targetPanel, "IGNORE ALLIES", "Targeting.IgnoreAllies", 205, 111, 107)
+	combatToggle(targetPanel, "ON SCREEN", "Targeting.RequireOnScreen", 8, 144, 148)
+	combatToggle(targetPanel, "ADAPTIVE SCAN", "Diagnostics.AdaptiveScan", 164, 144, 148)
+	combatToggle(targetPanel, "MOB TARGET", "Targeting.CheckMobTarget", 8, 173, 148)
+	local targetListsButton =
+		mkButton(targetPanel, "TARGET LISTS", 164, 173, 148, 23)
+
+	local validationPanel =
+		combatSection(
+			CombatPage,
+			"VALIDATION + FILTERS",
+			0,
+			213,
+			324,
+			205
+		)
+
+	combatToggle(validationPanel, "HITBOX", "Validation.Hitbox", 8, 28, 148)
+	combatToggle(validationPanel, "FACING", "Validation.Facing", 164, 28, 148)
+	combatToggle(validationPanel, "PREDICTION", "Validation.Prediction", 8, 57, 148)
+	combatToggle(validationPanel, "VISIBILITY", "Validation.Visibility", 164, 57, 148)
+	combatToggle(validationPanel, "STUN", "Validation.Stun", 8, 86, 148)
+	combatToggle(validationPanel, "IFRAMES", "Validation.IFrames", 164, 86, 148)
+	combatToggle(validationPanel, "TEXTBOX", "Filters.TextboxFocused", 8, 115, 148)
+	combatToggle(validationPanel, "INACTIVE", "Filters.WindowInactive", 164, 115, 148)
+	combatToggle(validationPanel, "FILTER M1", "Filters.M1", 8, 144, 148)
+	combatToggle(validationPanel, "FILTER MANTRA", "Filters.Mantra", 164, 144, 148)
+	combatToggle(validationPanel, "FILTER CRIT", "Filters.Critical", 8, 173, 148)
+	combatToggle(validationPanel, "FILTER UNKNOWN", "Filters.Undefined", 164, 173, 148)
+
+	local detectionPanel =
+		combatSection(
+			CombatPage,
+			"DETECTION + PRESETS",
+			332,
+			213,
+			324,
+			205
+		)
+
+	combatToggle(detectionPanel, "ANIMATIONS", "Detection.Animations", 8, 28, 148)
+	combatToggle(detectionPanel, "SOUNDS", "Detection.Sounds", 164, 28, 148)
+	combatToggle(detectionPanel, "PARTS", "Detection.Parts", 8, 57, 148)
+	combatToggle(detectionPanel, "EFFECTS", "Detection.Effects", 164, 57, 148)
+	combatToggle(detectionPanel, "INDEXED ONLY", "Detection.OnlyConfigured", 8, 86, 304)
+
+	local presetNames =
+		CombatRuntime.Presets:names()
+
+	local selectedPreset =
+		presetNames[1]
+
+	local presetCycle =
+		mkButton(
+			detectionPanel,
+			"PRESET: " .. selectedPreset,
+			8,
+			115,
+			200,
+			23
+		)
+
+	bind(
+		presetCycle.MouseButton1Click,
+		function()
+			local index = table.find(presetNames, selectedPreset) or 0
+			selectedPreset = presetNames[(index % #presetNames) + 1]
+			presetCycle.Text = "PRESET: " .. selectedPreset
+		end
+	)
+
+	local applyPreset =
+		mkButton(detectionPanel, "APPLY", 216, 115, 96, 23)
+
+	bind(
+		applyPreset.MouseButton1Click,
+		function()
+			CombatRuntime:applyPreset(selectedPreset)
+			combatRefreshAll()
+		end
+	)
+
+	local saveCombat =
+		mkButton(detectionPanel, "SAVE SETTINGS", 8, 144, 148, 23)
+
+	local reloadCombat =
+		mkButton(detectionPanel, "RELOAD TARGETS", 164, 144, 148, 23)
+
+	bind(saveCombat.MouseButton1Click, function()
+		CombatRuntime:save()
+	end)
+
+	bind(reloadCombat.MouseButton1Click, function()
+		CombatRuntime.State:setTargets({})
+		CombatRuntime._lastScan = 0
+	end)
+
+	local advancedTuningButton =
+		mkButton(detectionPanel, "ADVANCED TUNING", 8, 173, 304, 23)
+
+	local function makeCombatModal(title, width, height)
+		local modal = Instance.new("Frame")
+		modal.Position = UDim2.fromOffset(math.floor((656 - width) / 2), math.floor((418 - height) / 2))
+		modal.Size = UDim2.fromOffset(width, height)
+		modal.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+		modal.BorderColor3 = COLORS.ACCENT
+		modal.BorderSizePixel = 1
+		modal.Visible = false
+		modal.ZIndex = 20
+		modal.Parent = CombatPage
+
+		local heading = mkLabel(modal, title, 10, 4, width - 52, 24, 11)
+		heading.TextColor3 = COLORS.ACCENT
+		local close = mkButton(modal, "X", width - 34, 5, 26, 22)
+		bind(close.MouseButton1Click, function()
+			modal.Visible = false
+		end)
+		return modal
+	end
+
+	local function raiseModal(modal)
+		for _, descendant in ipairs(modal:GetDescendants()) do
+			if descendant:IsA("GuiObject") then
+				descendant.ZIndex = 21
+			end
+		end
+	end
+
+	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 306)
+	combatToggle(tuningModal, "PROBABILITY", "Probability.Enabled", 10, 35, 198)
+	combatToggle(tuningModal, "ALLOW FAILURE", "Probability.AllowFailure", 218, 35, 202)
+	combatNumber(tuningModal, "FAILURE %", "Probability.FailureRate", 10, 64, 0, 100)
+	combatNumber(tuningModal, "DASH %", "Probability.DashInsteadOfParryRate", 218, 64, 0, 100)
+	combatNumber(tuningModal, "IGNORE END %", "Probability.IgnoreAnimationEndRate", 10, 91, 0, 100)
+	combatNumber(tuningModal, "GLOBAL OFFSET", "Timing.GlobalOffset", 218, 91, -3, 3)
+	combatNumber(tuningModal, "PING SCALE", "Timing.PingScale", 10, 118, 0, 3)
+	combatNumber(tuningModal, "PREDICT SEC", "Validation.PredictionSeconds", 218, 118, 0, 1)
+	combatToggle(tuningModal, "PING COMP", "Timing.PingCompensation", 10, 149, 198)
+	combatToggle(tuningModal, "AUTO-PARRY FRAMES", "Validation.AutoParryFrames", 218, 149, 202)
+	combatToggle(tuningModal, "HOLD-BLOCK FILTER", "Filters.HoldingBlock", 10, 178, 198)
+	combatToggle(tuningModal, "CHIME FILTER", "Filters.ChimeCountdown", 218, 178, 202)
+	combatToggle(tuningModal, "NOTIFICATIONS", "Diagnostics.Notifications", 10, 207, 198)
+	combatToggle(tuningModal, "COOLDOWN CHECK", "Validation.Cooldown", 218, 207, 202)
+	combatNumber(tuningModal, "HITBOX WAIT", "Timing.MaxHitboxWait", 10, 238, 0.1, 30)
+	combatNumber(tuningModal, "POLL SEC", "Timing.HitboxPollInterval", 218, 238, 0.01, 1)
+	combatNumber(tuningModal, "ROLL CANCEL", "Defense.RollCancelDelay", 10, 265, 0, 2)
+	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
+	raiseModal(tuningModal)
+
+	bind(advancedTuningButton.MouseButton1Click, function()
+		tuningModal.Visible = true
+		combatRefreshAll()
+	end)
+
+	local listsModal = makeCombatModal("TARGET LISTS", 500, 310)
+	local whitelistLabel = mkLabel(listsModal, "WHITELIST (ONE NAME OR USER ID PER LINE)", 12, 37, 230, 24, 9)
+	local blacklistLabel = mkLabel(listsModal, "BLACKLIST (ONE NAME OR USER ID PER LINE)", 258, 37, 230, 24, 9)
+	whitelistLabel.TextColor3 = COLORS.GREEN
+	blacklistLabel.TextColor3 = COLORS.RED
+	local whitelistBox = mkBox(listsModal, "", 12, 63, 230, 190)
+	local blacklistBox = mkBox(listsModal, "", 258, 63, 230, 190)
+	for _, box in ipairs({ whitelistBox, blacklistBox }) do
+		box.MultiLine = true
+		box.TextXAlignment = Enum.TextXAlignment.Left
+		box.TextYAlignment = Enum.TextYAlignment.Top
+	end
+
+	local function parseTargetList(value)
+		local list = {}
+		local seen = {}
+		for entry in string.gmatch(value or "", "[^,%s]+") do
+			if not seen[entry] then
+				seen[entry] = true
+				list[#list + 1] = entry
+			end
+		end
+		return list
+	end
+
+	local applyLists = mkButton(listsModal, "APPLY LISTS", 12, 267, 230, 28)
+	local clearLists = mkButton(listsModal, "CLEAR BOTH", 258, 267, 230, 28)
+	bind(applyLists.MouseButton1Click, function()
+		CombatRuntime:set("Targeting.Whitelist", parseTargetList(whitelistBox.Text))
+		CombatRuntime:set("Targeting.Blacklist", parseTargetList(blacklistBox.Text))
+		listsModal.Visible = false
+	end)
+	bind(clearLists.MouseButton1Click, function()
+		whitelistBox.Text = ""
+		blacklistBox.Text = ""
+	end)
+	bind(targetListsButton.MouseButton1Click, function()
+		whitelistBox.Text = table.concat(CombatRuntime.Settings:get("Targeting.Whitelist"), "\n")
+		blacklistBox.Text = table.concat(CombatRuntime.Settings:get("Targeting.Blacklist"), "\n")
+		listsModal.Visible = true
+	end)
+	raiseModal(listsModal)
+end
+
+--==============================================================
+-- TIMING EDITOR UI
+--==============================================================
+
+local TimingSelected
+local TimingCategory = "animation"
+local TimingAction = "Parry"
+local TimingActionChance = 100
+local TimingAdvanced = {
+	delayUntilHitbox = false,
+	preferRepeat = false,
+	allowAttacking = false,
+	facingHitbox = true,
+	noDodgeFallback = false,
+	noBlockFallback = false,
+	noVentFallback = false,
+	preferBlockFallback = false,
+	ignoreAnimationEnd = false,
+	ignoreEarlyAnimationEnd = false,
+	pastHitbox = false,
+	predictFacing = false,
+	disablePrediction = false,
+	repeatStartDelay = 0,
+	repeatDelay = 0,
+	hitboxOffset = 0,
+	historySeconds = 0,
+	predictionSeconds = 0,
+	maxAnimationTime = 0,
+}
+local refreshTimingAdvanced = function() end
+
+local TimingList,
+	TimingListLayout =
+	mkScroll(
+		TimingsPage,
+		0,
+		0,
+		240,
+		403
+	)
+
+local timingEditor =
+	combatSection(
+		TimingsPage,
+		"TIMING PROFILE EDITOR",
+		248,
+		0,
+		408,
+		403
+	)
+
+local timingCategoryButton =
+	mkButton(
+		timingEditor,
+		"TYPE: ANIMATION",
+		8,
+		28,
+		190,
+		23
+	)
+
+local timingActionButton =
+	mkButton(
+		timingEditor,
+		"ACTION: PARRY",
+		206,
+		28,
+		194,
+		23
+	)
+
+local function timingBox(label, y, x)
+	x = x or 8
+	mkLabel(timingEditor, label, x, y, 86, 22, 9)
+	return mkBox(timingEditor, "", x + 90, y, 100, 22)
+end
+
+local TimingIDBox = timingBox("ID / NAME", 59, 8)
+local TimingNameBox = timingBox("LABEL", 86, 8)
+local TimingTagBox = timingBox("TAG", 113, 8)
+local TimingDelayBox = timingBox("DELAY SEC", 140, 8)
+local TimingMinBox = timingBox("MIN DIST", 59, 206)
+local TimingMaxBox = timingBox("MAX DIST", 86, 206)
+local TimingHitXBox = timingBox("HITBOX X", 113, 206)
+local TimingHitYBox = timingBox("HITBOX Y", 140, 206)
+local TimingHitZBox = timingBox("HITBOX Z", 167, 206)
+local TimingAfterBox = timingBox("AFTER WIN", 167, 8)
+local TimingPunishBox = timingBox("PUNISH WIN", 194, 8)
+local TimingBlockBox = timingBox("BLOCK HOLD", 194, 206)
+
+local timingSaveButton =
+	mkButton(timingEditor, "ADD / UPDATE", 8, 230, 125, 25)
+
+local timingRemoveButton =
+	mkButton(timingEditor, "REMOVE", 141, 230, 82, 25)
+
+local timingCopyButton =
+	mkButton(timingEditor, "COPY JSON", 231, 230, 82, 25)
+
+local timingAdvancedButton =
+	mkButton(timingEditor, "ADVANCED", 321, 230, 79, 25)
+
+local TimingJSONBox =
+	mkBox(
+		timingEditor,
+		"",
+		8,
+		265,
+		392,
+		92
+	)
+
+TimingJSONBox.MultiLine = true
+TimingJSONBox.ClearTextOnFocus = false
+TimingJSONBox.TextXAlignment = Enum.TextXAlignment.Left
+TimingJSONBox.TextYAlignment = Enum.TextYAlignment.Top
+TimingJSONBox.PlaceholderText = "paste CLAW timing JSON here"
+
+local timingImportButton =
+	mkButton(timingEditor, "IMPORT JSON", 8, 365, 126, 25)
+
+local timingLoadButton =
+	mkButton(timingEditor, "LOAD FILE", 142, 365, 126, 25)
+
+local timingClearButton =
+	mkButton(timingEditor, "CLEAR", 276, 365, 124, 25)
+
+local function clearTimingEditor()
+	TimingSelected = nil
+	TimingIDBox.Text = ""
+	TimingNameBox.Text = ""
+	TimingTagBox.Text = "Undefined"
+	TimingDelayBox.Text = "0.15"
+	TimingMinBox.Text = "0"
+	TimingMaxBox.Text = "65"
+	TimingHitXBox.Text = "0"
+	TimingHitYBox.Text = "0"
+	TimingHitZBox.Text = "0"
+	TimingAfterBox.Text = "0.12"
+	TimingPunishBox.Text = "0.70"
+	TimingBlockBox.Text = "0.30"
+	TimingActionChance = 100
+	TimingAdvanced = {
+		delayUntilHitbox = false,
+		preferRepeat = false,
+		allowAttacking = false,
+		facingHitbox = true,
+		noDodgeFallback = false,
+		noBlockFallback = false,
+		noVentFallback = false,
+		preferBlockFallback = false,
+		ignoreAnimationEnd = false,
+		ignoreEarlyAnimationEnd = false,
+		pastHitbox = false,
+		predictFacing = false,
+		disablePrediction = false,
+		repeatStartDelay = 0,
+		repeatDelay = 0,
+		hitboxOffset = 0,
+		historySeconds = 0,
+		predictionSeconds = 0,
+		maxAnimationTime = 0,
+	}
+	refreshTimingAdvanced()
+end
+
+local function loadTimingEditor(profile)
+	TimingSelected = profile
+	TimingCategory = profile.detector
+	TimingIDBox.Text = profile.id
+	TimingNameBox.Text = profile.name
+	TimingTagBox.Text = profile.tag
+	TimingDelayBox.Text = tostring(profile.actions[1] and profile.actions[1].delay or 0)
+	TimingAction = profile.actions[1] and profile.actions[1].kind or "Parry"
+	TimingActionChance = profile.actions[1] and profile.actions[1].chance or 100
+	TimingMinBox.Text = tostring(profile.minDistance)
+	TimingMaxBox.Text = tostring(profile.maxDistance)
+	TimingHitXBox.Text = tostring(profile.hitbox.X)
+	TimingHitYBox.Text = tostring(profile.hitbox.Y)
+	TimingHitZBox.Text = tostring(profile.hitbox.Z)
+	TimingAfterBox.Text = tostring(profile.afterWindow)
+	TimingPunishBox.Text = tostring(profile.punishableWindow)
+	TimingBlockBox.Text = tostring(profile.blockFallbackHold)
+	TimingAdvanced = {
+		delayUntilHitbox = profile.delayUntilHitbox,
+		preferRepeat = profile.preferRepeat,
+		allowAttacking = profile.allowAttacking,
+		facingHitbox = profile.facingHitbox,
+		noDodgeFallback = profile.noDodgeFallback,
+		noBlockFallback = profile.noBlockFallback,
+		noVentFallback = profile.noVentFallback,
+		preferBlockFallback = profile.preferBlockFallback,
+		ignoreAnimationEnd = profile.ignoreAnimationEnd,
+		ignoreEarlyAnimationEnd = profile.ignoreEarlyAnimationEnd,
+		pastHitbox = profile.pastHitbox,
+		predictFacing = profile.predictFacing,
+		disablePrediction = profile.disablePrediction,
+		repeatStartDelay = profile.repeatStartDelay,
+		repeatDelay = profile.repeatDelay,
+		hitboxOffset = profile.hitboxOffset,
+		historySeconds = profile.historySeconds,
+		predictionSeconds = profile.predictionSeconds,
+		maxAnimationTime = profile.maxAnimationTime,
+	}
+	timingCategoryButton.Text = "TYPE: " .. string.upper(TimingCategory)
+	timingActionButton.Text = "ACTION: " .. string.upper(TimingAction)
+	refreshTimingAdvanced()
+end
+
+local timingAdvancedModal = Instance.new("Frame")
+timingAdvancedModal.Position = UDim2.fromOffset(68, 10)
+timingAdvancedModal.Size = UDim2.fromOffset(520, 382)
+timingAdvancedModal.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+timingAdvancedModal.BorderColor3 = COLORS.ACCENT
+timingAdvancedModal.BorderSizePixel = 1
+timingAdvancedModal.Visible = false
+timingAdvancedModal.ZIndex = 20
+timingAdvancedModal.Parent = TimingsPage
+
+local advancedHeading = mkLabel(timingAdvancedModal, "ADVANCED TIMING PROFILE", 10, 4, 450, 24, 11)
+advancedHeading.TextColor3 = COLORS.ACCENT
+local advancedClose = mkButton(timingAdvancedModal, "X", 484, 5, 26, 22)
+
+local advancedRefreshers = {}
+local function timingAdvancedToggle(label, key, x, y)
+	local button = mkButton(timingAdvancedModal, "", x, y, 244, 23)
+	local function refresh()
+		button.Text = label .. ": " .. (TimingAdvanced[key] and "ON" or "OFF")
+		button.BackgroundColor3 = TimingAdvanced[key] and COLORS.GREEN or COLORS.RED
+	end
+	advancedRefreshers[#advancedRefreshers + 1] = refresh
+	bind(button.MouseButton1Click, function()
+		TimingAdvanced[key] = not TimingAdvanced[key]
+		refresh()
+	end)
+	return button
+end
+
+local function timingAdvancedNumber(label, key, x, y, minimum, maximum, chance)
+	mkLabel(timingAdvancedModal, label, x, y, 120, 22, 9)
+	local box = mkBox(timingAdvancedModal, "", x + 124, y, 120, 22)
+	local function refresh()
+		box.Text = tostring(chance and TimingActionChance or TimingAdvanced[key])
+	end
+	advancedRefreshers[#advancedRefreshers + 1] = refresh
+	bind(box.FocusLost, function()
+		local current = chance and TimingActionChance or TimingAdvanced[key]
+		local value = clampNumber(box.Text, minimum, maximum, current)
+		if chance then
+			TimingActionChance = value
+		else
+			TimingAdvanced[key] = value
+		end
+		refresh()
+	end)
+	return box
+end
+
+timingAdvancedToggle("DELAY UNTIL HITBOX", "delayUntilHitbox", 10, 35)
+timingAdvancedToggle("FACING HITBOX", "facingHitbox", 266, 35)
+timingAdvancedToggle("REPEAT UNTIL END", "preferRepeat", 10, 64)
+timingAdvancedToggle("ALLOW WHILE ATTACKING", "allowAttacking", 266, 64)
+timingAdvancedToggle("NO DODGE FALLBACK", "noDodgeFallback", 10, 93)
+timingAdvancedToggle("NO BLOCK FALLBACK", "noBlockFallback", 266, 93)
+timingAdvancedToggle("NO VENT FALLBACK", "noVentFallback", 10, 122)
+timingAdvancedToggle("PREFER BLOCK FALLBACK", "preferBlockFallback", 266, 122)
+timingAdvancedToggle("IGNORE ANIMATION END", "ignoreAnimationEnd", 10, 151)
+timingAdvancedToggle("IGNORE EARLY END", "ignoreEarlyAnimationEnd", 266, 151)
+timingAdvancedToggle("PAST HITBOX", "pastHitbox", 10, 180)
+timingAdvancedToggle("PREDICT FACING", "predictFacing", 266, 180)
+timingAdvancedToggle("DISABLE PREDICTION", "disablePrediction", 10, 209)
+
+timingAdvancedNumber("REPEAT START", "repeatStartDelay", 10, 242, 0, 10)
+timingAdvancedNumber("REPEAT DELAY", "repeatDelay", 266, 242, 0, 10)
+timingAdvancedNumber("HITBOX SHIFT", "hitboxOffset", 10, 269, -1000, 1000)
+timingAdvancedNumber("HISTORY SEC", "historySeconds", 266, 269, 0, 10)
+timingAdvancedNumber("PREDICT SEC", "predictionSeconds", 10, 296, 0, 3)
+timingAdvancedNumber("MAX ANIM SEC", "maxAnimationTime", 266, 296, 0, 30)
+timingAdvancedNumber("ACTION CHANCE %", nil, 10, 323, 0, 100, true)
+
+local advancedReset = mkButton(timingAdvancedModal, "RESET ADVANCED", 266, 323, 244, 22)
+local advancedDone = mkButton(timingAdvancedModal, "DONE", 10, 352, 500, 22)
+
+refreshTimingAdvanced = function()
+	for _, refresh in ipairs(advancedRefreshers) do
+		refresh()
+	end
+end
+
+bind(advancedReset.MouseButton1Click, function()
+	TimingActionChance = 100
+	TimingAdvanced = {
+		delayUntilHitbox = false,
+		preferRepeat = false,
+		allowAttacking = false,
+		facingHitbox = true,
+		noDodgeFallback = false,
+		noBlockFallback = false,
+		noVentFallback = false,
+		preferBlockFallback = false,
+		ignoreAnimationEnd = false,
+		ignoreEarlyAnimationEnd = false,
+		pastHitbox = false,
+		predictFacing = false,
+		disablePrediction = false,
+		repeatStartDelay = 0,
+		repeatDelay = 0,
+		hitboxOffset = 0,
+		historySeconds = 0,
+		predictionSeconds = 0,
+		maxAnimationTime = 0,
+	}
+	refreshTimingAdvanced()
+end)
+
+local function closeTimingAdvanced()
+	timingAdvancedModal.Visible = false
+end
+bind(advancedClose.MouseButton1Click, closeTimingAdvanced)
+bind(advancedDone.MouseButton1Click, closeTimingAdvanced)
+bind(timingAdvancedButton.MouseButton1Click, function()
+	refreshTimingAdvanced()
+	timingAdvancedModal.Visible = true
+end)
+
+for _, descendant in ipairs(timingAdvancedModal:GetDescendants()) do
+	if descendant:IsA("GuiObject") then
+		descendant.ZIndex = 21
+	end
+end
+
+local function refreshTimingList()
+	for _, child in ipairs(TimingList:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	if not CombatRuntime then
+		return
+	end
+
+	for _, category in ipairs({ "animation", "sound", "part", "effect" }) do
+		for _, profile in ipairs(CombatRuntime.Timings:list(category)) do
+			local row = mkButton(
+				TimingList,
+				string.format("[%s] %s", string.sub(category, 1, 1), profile.name),
+				0,
+				0,
+				238,
+				24
+			)
+			row.Size = UDim2.new(1, -2, 0, 24)
+			row.TextXAlignment = Enum.TextXAlignment.Left
+			bind(row.MouseButton1Click, function()
+				loadTimingEditor(profile)
+			end)
+		end
+	end
+
+	task.defer(function()
+		TimingList.CanvasSize =
+			UDim2.fromOffset(0, TimingListLayout.AbsoluteContentSize.Y)
+	end)
+end
+
+bind(timingCategoryButton.MouseButton1Click, function()
+	local values = { "animation", "sound", "part", "effect" }
+	local index = table.find(values, TimingCategory) or 0
+	TimingCategory = values[(index % #values) + 1]
+	timingCategoryButton.Text = "TYPE: " .. string.upper(TimingCategory)
+end)
+
+bind(timingActionButton.MouseButton1Click, function()
+	local values = { "Parry", "Dodge", "FullDodge", "Block", "Jump", "Slide", "Crouch", "Teleport" }
+	local index = table.find(values, TimingAction) or 0
+	TimingAction = values[(index % #values) + 1]
+	timingActionButton.Text = "ACTION: " .. string.upper(TimingAction)
+end)
+
+bind(timingSaveButton.MouseButton1Click, function()
+	if not CombatRuntime or TimingIDBox.Text == "" then
+		return
+	end
+	local ok, result = pcall(CombatRuntime.registerTiming, CombatRuntime, {
+		id = TimingIDBox.Text,
+		name = TimingNameBox.Text ~= "" and TimingNameBox.Text or TimingIDBox.Text,
+		detector = TimingCategory,
+		tag = TimingTagBox.Text ~= "" and TimingTagBox.Text or "Undefined",
+		minDistance = tonumber(TimingMinBox.Text) or 0,
+		maxDistance = tonumber(TimingMaxBox.Text) or 65,
+		hitbox = Vector3.new(
+			tonumber(TimingHitXBox.Text) or 0,
+			tonumber(TimingHitYBox.Text) or 0,
+			tonumber(TimingHitZBox.Text) or 0
+		),
+		hitboxOffset = TimingAdvanced.hitboxOffset,
+		delayUntilHitbox = TimingAdvanced.delayUntilHitbox,
+		afterWindow = tonumber(TimingAfterBox.Text) or 0.12,
+		punishableWindow = tonumber(TimingPunishBox.Text) or 0.70,
+		repeatStartDelay = TimingAdvanced.repeatStartDelay,
+		repeatDelay = TimingAdvanced.repeatDelay,
+		preferRepeat = TimingAdvanced.preferRepeat,
+		allowAttacking = TimingAdvanced.allowAttacking,
+		facingHitbox = TimingAdvanced.facingHitbox,
+		noDodgeFallback = TimingAdvanced.noDodgeFallback,
+		noBlockFallback = TimingAdvanced.noBlockFallback,
+		noVentFallback = TimingAdvanced.noVentFallback,
+		preferBlockFallback = TimingAdvanced.preferBlockFallback,
+		ignoreAnimationEnd = TimingAdvanced.ignoreAnimationEnd,
+		ignoreEarlyAnimationEnd = TimingAdvanced.ignoreEarlyAnimationEnd,
+		pastHitbox = TimingAdvanced.pastHitbox,
+		predictFacing = TimingAdvanced.predictFacing,
+		disablePrediction = TimingAdvanced.disablePrediction,
+		historySeconds = TimingAdvanced.historySeconds,
+		predictionSeconds = TimingAdvanced.predictionSeconds,
+		maxAnimationTime = TimingAdvanced.maxAnimationTime,
+		blockFallbackHold = tonumber(TimingBlockBox.Text) or 0.30,
+		actions = {
+			{
+				kind = TimingAction,
+				delay = tonumber(TimingDelayBox.Text) or 0.15,
+				chance = TimingActionChance,
+			},
+		},
+	}, true)
+	if ok then
+		TimingJSONBox.Text = ""
+		refreshTimingList()
+	else
+		TimingJSONBox.Text = "Profile error: " .. tostring(result)
+	end
+end)
+
+bind(timingRemoveButton.MouseButton1Click, function()
+	if CombatRuntime and TimingSelected then
+		CombatRuntime:removeTiming(TimingSelected.detector, TimingSelected.id, true)
+		clearTimingEditor()
+		refreshTimingList()
+	end
+end)
+
+bind(timingCopyButton.MouseButton1Click, function()
+	if CombatRuntime then
+		CombatRuntime:exportTimings(true)
+	end
+end)
+
+bind(timingImportButton.MouseButton1Click, function()
+	if CombatRuntime and TimingJSONBox.Text ~= "" then
+		local ok, reason = CombatRuntime:importTimings(TimingJSONBox.Text)
+		if ok then
+			TimingJSONBox.Text = ""
+			refreshTimingList()
+		else
+			TimingJSONBox.Text = "Import failed: " .. tostring(reason)
+		end
+	end
+end)
+
+bind(timingLoadButton.MouseButton1Click, function()
+	if CombatRuntime then
+		local ok, reason = CombatRuntime.TimingIO:load()
+		if ok then
+			TimingJSONBox.Text = ""
+			refreshTimingList()
+		else
+			TimingJSONBox.Text = "Load failed: " .. tostring(reason)
+		end
+	end
+end)
+
+bind(timingClearButton.MouseButton1Click, clearTimingEditor)
+
+if CombatRuntime then
+	bind(CombatRuntime.Timings.Changed, refreshTimingList)
+end
+
+clearTimingEditor()
+refreshTimingList()
+
+--==============================================================
+-- ASSISTANCE UI
+--==============================================================
+
+local attackAssistPanel =
+	combatSection(AssistPage, "ATTACK ASSISTANCE", 0, 0, 324, 403)
+
+local combatAssistPanel =
+	combatSection(AssistPage, "COMBAT ASSISTANCE", 332, 0, 324, 403)
+
+combatToggle(attackAssistPanel, "AUTO FEINT", "AttackAssistance.AutoFeint", 8, 28, 148)
+combatToggle(attackAssistPanel, "DELAYED FEINT", "AttackAssistance.DelayedFeint", 164, 28, 148)
+combatCycle(
+	attackAssistPanel,
+	"FEINT MODE",
+	"AttackAssistance.AutoFeintMode",
+	{ "Passive", "Aggressive" },
+	8,
+	57,
+	304
+)
+combatNumber(attackAssistPanel, "FEINT DELAY", "AttackAssistance.FeintDelay", 8, 86, 0, 2)
+combatNumber(attackAssistPanel, "FEINT LEAD", "AttackAssistance.FeintLead", 8, 113, 0, 1)
+combatToggle(attackAssistPanel, "M1 HOLD", "AttackAssistance.HoldM1", 8, 144, 148)
+combatToggle(attackAssistPanel, "FLOURISH FEINT", "AttackAssistance.FlourishFeint", 164, 144, 148)
+combatToggle(attackAssistPanel, "ACTION ROLL", "AttackAssistance.ActionRolling", 8, 173, 304)
+combatNumber(attackAssistPanel, "ROLL COOLDOWN", "AttackAssistance.ActionRollCooldown", 8, 202, 0, 10)
+combatNumber(attackAssistPanel, "ROLL CANCEL", "AttackAssistance.ActionRollCancelDelay", 8, 229, 0, 2)
+combatToggle(attackAssistPanel, "ANIM SPEED", "AttackAssistance.AnimationSpeed.Enabled", 8, 260, 148)
+combatToggle(attackAssistPanel, "CONFIG ONLY", "AttackAssistance.AnimationSpeed.LimitToConfigured", 164, 260, 148)
+combatToggle(attackAssistPanel, "EXTREMES", "AttackAssistance.AnimationSpeed.SwitchExtremes", 8, 289, 148)
+combatNumber(attackAssistPanel, "SPEED MIN", "AttackAssistance.AnimationSpeed.Minimum", 8, 318, 0.05, 8)
+combatNumber(attackAssistPanel, "SPEED MAX", "AttackAssistance.AnimationSpeed.Maximum", 8, 345, 0.05, 8)
+
+combatToggle(combatAssistPanel, "AUTO WISP", "CombatAssistance.Wisp", 8, 28, 148)
+combatToggle(combatAssistPanel, "GOLDEN TONGUE", "CombatAssistance.GoldenTongue", 164, 28, 148)
+combatToggle(combatAssistPanel, "MANTRA FOLLOWUP", "CombatAssistance.MantraFollowUp", 8, 57, 148)
+combatToggle(combatAssistPanel, "AUTO ARDOUR", "CombatAssistance.Ardour", 164, 57, 148)
+combatToggle(combatAssistPanel, "FLOW STATE", "CombatAssistance.FlowState", 8, 86, 148)
+combatToggle(combatAssistPanel, "RHYTHM", "CombatAssistance.Rhythm", 164, 86, 148)
+combatToggle(combatAssistPanel, "RAGDOLL RECOVER", "CombatAssistance.RagdollResponse", 8, 115, 304)
+combatToggle(combatAssistPanel, "TONGUE IN COMBAT", "CombatAssistance.GoldenTongueCombatOnly", 8, 144, 304)
+combatToggle(combatAssistPanel, "FOLLOWUP REQ HIT", "CombatAssistance.MantraFollowUpRequireHit", 8, 173, 304)
+combatNumber(combatAssistPanel, "WISP DELAY", "CombatAssistance.WispDelay", 8, 204, 0, 2)
+combatNumber(combatAssistPanel, "ASSIST COOLDOWN", "CombatAssistance.AssistanceCooldown", 8, 231, 0, 5)
+
+local bindingHeading =
+	mkLabel(combatAssistPanel, "ASSIST KEY BINDINGS (BLANK = ADAPTER ONLY)", 8, 265, 304, 22, 9)
+bindingHeading.TextColor3 = COLORS.ACCENT
+
+local bindingsScroll, bindingsLayout =
+	mkScroll(combatAssistPanel, 8, 288, 304, 106)
+
+for _, binding in ipairs({
+	{ "DIRECT DODGE", "Bindings.DirectDodge" },
+	{ "PREDICTION", "Bindings.Prediction" },
+	{ "PUNISHMENT", "Bindings.Punishment" },
+	{ "VENT", "Bindings.Vent" },
+	{ "WISP", "Bindings.Wisp" },
+	{ "GOLDEN TONGUE", "Bindings.GoldenTongue" },
+	{ "MANTRA FOLLOW", "Bindings.MantraFollowUp" },
+	{ "ARDOUR", "Bindings.Ardour" },
+	{ "FLOW STATE", "Bindings.FlowState" },
+	{ "RHYTHM", "Bindings.Rhythm" },
+	{ "RAGDOLL", "Bindings.RagdollRecover" },
+	{ "TELEPORT", "Bindings.Teleport" },
+}) do
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -4, 0, 27)
+	row.BackgroundTransparency = 1
+	row.Parent = bindingsScroll
+	combatText(row, binding[1], binding[2], 4, 2, 122, 154)
+end
+
+task.defer(function()
+	bindingsScroll.CanvasSize = UDim2.fromOffset(0, bindingsLayout.AbsoluteContentSize.Y)
+end)
+
+--==============================================================
+-- DIAGNOSTICS UI
+--==============================================================
+
+local debugControls =
+	combatSection(DebugPage, "DIAGNOSTICS", 0, 0, 324, 403)
+
+local debugStats =
+	combatSection(DebugPage, "LIVE PERFORMANCE", 332, 0, 324, 403)
+
+combatToggle(debugControls, "DIAGNOSTICS", "Diagnostics.Enabled", 8, 28, 148)
+combatToggle(debugControls, "DETECT TRACE", "Diagnostics.TraceDetectors", 164, 28, 148)
+combatToggle(debugControls, "SCHED TRACE", "Diagnostics.TraceScheduler", 8, 57, 148)
+combatToggle(debugControls, "HITBOX VIEW", "Diagnostics.VisualizeHitboxes", 164, 57, 148)
+combatToggle(debugControls, "BLOCK PARRY", "DebugState.BlockParry", 8, 96, 148)
+combatToggle(debugControls, "BLOCK DODGE", "DebugState.BlockDodge", 164, 96, 148)
+combatToggle(debugControls, "BLOCK VENT", "DebugState.BlockVent", 8, 125, 148)
+combatToggle(debugControls, "NO BLOCKING", "DebugState.NoBlocking", 164, 125, 148)
+combatNumber(debugControls, "BUDGET MS", "Diagnostics.PerformanceBudgetMs", 8, 164, 0.1, 16)
+combatNumber(debugControls, "EVENT BUFFER", "Diagnostics.MaxEvents", 8, 191, 10, 2000)
+
+local clearDiagnostics =
+	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 230, 304, 25)
+
+local copyDiagnostics =
+	mkButton(debugControls, "COPY TIMING DATABASE", 8, 263, 304, 25)
+
+bind(clearDiagnostics.MouseButton1Click, function()
+	if CombatRuntime then
+		CombatRuntime.Diagnostics:clear()
+	end
+end)
+
+bind(copyDiagnostics.MouseButton1Click, function()
+	if CombatRuntime then
+		CombatRuntime:exportTimings(true)
+	end
+end)
+
+local DebugSummary =
+	mkLabel(debugStats, "", 8, 28, 304, 190, 10)
+
+DebugSummary.TextWrapped = false
+DebugSummary.TextYAlignment = Enum.TextYAlignment.Top
+
+local DebugReasons =
+	mkLabel(debugStats, "", 8, 225, 304, 160, 9)
+
+DebugReasons.TextWrapped = true
+DebugReasons.TextYAlignment = Enum.TextYAlignment.Top
+DebugReasons.TextColor3 = COLORS.MUTED
+
+local debugAccumulator = 0
+
+bind(RunService.Heartbeat, function(delta)
+	if not DebugPage.Visible or not CombatRuntime then
+		return
+	end
+	debugAccumulator = debugAccumulator + delta
+	if debugAccumulator < 0.5 then
+		return
+	end
+	debugAccumulator = 0
+
+	local snapshot = CombatRuntime.Diagnostics:snapshot()
+	local metrics = snapshot.metrics
+	local performance = snapshot.performance
+	local targetStage = performance.stages["target-scan"] or {}
+	DebugSummary.Text = string.format(
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nREJECTED     %d\nCANCELLED    %d\nSCAN AVG     %.3f ms\nSCAN PEAK    %.3f ms\nBACKOFF      %.2fx",
+		CombatRuntime.State.Running and "YES" or "NO",
+		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
+		#CombatRuntime.State.Targets,
+		CombatRuntime.Timings:count(),
+		metrics.Detected or 0,
+		metrics.Scheduled or 0,
+		metrics.Executed or 0,
+		metrics.Rejected or 0,
+		metrics.Cancelled or 0,
+		targetStage.averageMs or 0,
+		targetStage.peakMs or 0,
+		performance.backoff or 1
+	)
+
+	local reasons = {}
+	for reason, count in pairs(snapshot.reasons) do
+		reasons[#reasons + 1] = reason .. ": " .. tostring(count)
+	end
+	table.sort(reasons)
+	DebugReasons.Text = #reasons > 0
+		and ("REJECTION REASONS\n" .. table.concat(reasons, "\n"))
+		or "REJECTION REASONS\nnone recorded"
+end)
+
+--==============================================================
 -- MENU
 --==============================================================
 
@@ -5950,7 +7243,7 @@ bind(
 				0,
 				24,
 				0.5,
-				-215
+				-260
 			)
 	end
 )
@@ -6015,7 +7308,7 @@ bind(
 
 			Main.Size =
 				UDim2.fromOffset(
-					470,
+					680,
 					30
 				)
 
@@ -6040,8 +7333,8 @@ bind(
 
 			Main.Size =
 				UDim2.fromOffset(
-					470,
-					430
+					680,
+					520
 				)
 
 			TabBar.Visible =
@@ -6102,6 +7395,38 @@ bind(
 		openPage(
 			GhostPage
 		)
+	end
+)
+
+bind(
+	CombatTab.MouseButton1Click,
+	function()
+		combatRefreshAll()
+		openPage(CombatPage)
+	end
+)
+
+bind(
+	TimingsTab.MouseButton1Click,
+	function()
+		refreshTimingList()
+		openPage(TimingsPage)
+	end
+)
+
+bind(
+	AssistTab.MouseButton1Click,
+	function()
+		combatRefreshAll()
+		openPage(AssistPage)
+	end
+)
+
+bind(
+	DebugTab.MouseButton1Click,
+	function()
+		combatRefreshAll()
+		openPage(DebugPage)
 	end
 )
 
@@ -6183,6 +7508,16 @@ function State:Destroy()
 
 	stopAllGhosts()
 
+	if self.Combat then
+		pcall(function()
+			self.Combat:Destroy()
+		end)
+		if ENV.CLAW and ENV.CLAW.Combat == self.Combat then
+			ENV.CLAW.Combat = nil
+		end
+		self.Combat = nil
+	end
+
 	leaveUI()
 
 	self.Destroyed =
@@ -6238,18 +7573,16 @@ function State:Destroy()
 			Destroy()
 	end)
 
-	if
-		ENV.__ANIM_LAB_V6
-		==
-		self
-	then
+	if ENV.__CLAW_MARK == self then
+		ENV.__CLAW_MARK = nil
+	end
 
-		ENV.__ANIM_LAB_V6 =
-			nil
+	if ENV.__ANIM_LAB_V6 == self then
+		ENV.__ANIM_LAB_V6 = nil
 	end
 
 	print(
-		"[ANIM] v6.2 unloaded"
+		"[CLAW] CLAW MARK unloaded"
 	)
 end
 
@@ -6296,5 +7629,5 @@ openPage(
 )
 
 print(
-	"[ANIM] Animation Lab v6.2 online"
+	"[CLAW] CLAW MARK v0.3 online"
 )

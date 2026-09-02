@@ -12,8 +12,7 @@ function Persistence.new(path)
 end
 
 function Persistence:available()
-	return type(rawget(environment, "readfile")) == "function"
-		and type(rawget(environment, "writefile")) == "function"
+	return type(rawget(environment, "readfile")) == "function" and type(rawget(environment, "writefile")) == "function"
 end
 
 function Persistence:_ensureFolder()

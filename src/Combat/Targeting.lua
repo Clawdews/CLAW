@@ -18,6 +18,27 @@ local function listed(list, player, character)
 	return false
 end
 
+local function mobTargetsLocalPlayer(character, localCharacter)
+	local localPlayer = Players.LocalPlayer
+	local targetNames = { "Target", "CombatTarget", "CurrentTarget", "AggroTarget" }
+	for _, name in ipairs(targetNames) do
+		local object = character:FindFirstChild(name, true)
+		if object and object:IsA("ObjectValue") and object.Value ~= nil then
+			return object.Value == localCharacter or object.Value == localPlayer
+		end
+		local attribute = character:GetAttribute(name)
+		if attribute ~= nil then
+			local normalized = tostring(attribute)
+			return normalized == localCharacter.Name
+				or normalized == localPlayer.Name
+				or normalized == tostring(localPlayer.UserId)
+		end
+	end
+	-- Some entities do not replicate an aggro target. In that case, preserve the
+	-- target instead of introducing a false negative.
+	return true
+end
+
 function Targeting.new(settings, options)
 	options = options or {}
 	return setmetatable({
@@ -76,6 +97,9 @@ function Targeting:scan(localCharacter)
 			continue
 		end
 		if not player and config.IgnoreMobs then
+			continue
+		end
+		if not player and config.CheckMobTarget and not mobTargetsLocalPlayer(character, localCharacter) then
 			continue
 		end
 		if #config.Whitelist > 0 and not listed(config.Whitelist, player, character) then

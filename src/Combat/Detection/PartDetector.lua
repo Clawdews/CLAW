@@ -10,12 +10,16 @@ function PartDetector.new(options)
 	return setmetatable({
 		Detected = Signal.new(),
 		_source = options.source,
+		_accept = options.accept,
 		_connection = nil,
 		_running = false,
 	}, PartDetector)
 end
 
 function PartDetector:_emit(part)
+	if type(self._accept) == "function" and not self._accept("part", part.Name, part) then
+		return
+	end
 	self.Detected:Fire(DetectorEvent.new("part", part.Name, part, {
 		position = part.Position,
 		metadata = {
@@ -32,9 +36,7 @@ function PartDetector:start()
 	end
 	self._running = true
 
-	local source = type(self._source) == "function" and self._source()
-		or self._source
-		or workspace
+	local source = type(self._source) == "function" and self._source() or self._source or workspace
 	self._connection = source.DescendantAdded:Connect(function(descendant)
 		if descendant:IsA("BasePart") then
 			self:_emit(descendant)

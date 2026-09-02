@@ -11,6 +11,7 @@ function EffectDetector.new(options)
 	return setmetatable({
 		Detected = Signal.new(),
 		_source = options.source,
+		_accept = options.accept,
 		_connection = nil,
 		_running = false,
 	}, EffectDetector)
@@ -21,18 +22,24 @@ function EffectDetector:_emit(instance)
 		return
 	end
 
-	self.Detected:Fire(DetectorEvent.new("effect", instance.Name, instance, {
-		metadata = {
-			className = instance.ClassName,
-			tags = CollectionService:GetTags(instance),
-			attributes = instance:GetAttributes(),
-		},
-	}))
-
-	for _, tag in ipairs(CollectionService:GetTags(instance)) do
-		self.Detected:Fire(DetectorEvent.new("effect", tag, instance, {
-			metadata = { source = "tag", name = instance.Name },
+	local tags = CollectionService:GetTags(instance)
+	local acceptName = type(self._accept) ~= "function" or self._accept("effect", instance.Name, instance)
+	if acceptName then
+		self.Detected:Fire(DetectorEvent.new("effect", instance.Name, instance, {
+			metadata = {
+				className = instance.ClassName,
+				tags = tags,
+				attributes = instance:GetAttributes(),
+			},
 		}))
+	end
+
+	for _, tag in ipairs(tags) do
+		if type(self._accept) ~= "function" or self._accept("effect", tag, instance) then
+			self.Detected:Fire(DetectorEvent.new("effect", tag, instance, {
+				metadata = { source = "tag", name = instance.Name },
+			}))
+		end
 	end
 end
 

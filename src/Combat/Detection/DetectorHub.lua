@@ -9,19 +9,34 @@ local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"]
 local DetectorHub = {}
 DetectorHub.__index = DetectorHub
 
-function DetectorHub.new(settings, options)
+function DetectorHub.new(settings, timings, options)
 	options = options or {}
 	local shared = options.shared or {}
+	local function accept(category, id)
+		return not settings:get("Detection.OnlyConfigured") or timings:has(category, id)
+	end
+	local function detectorOptions(specific)
+		local combined = {}
+		for key, value in pairs(shared) do
+			combined[key] = value
+		end
+		for key, value in pairs(specific or {}) do
+			combined[key] = value
+		end
+		combined.accept = combined.accept or accept
+		return combined
+	end
 	local self = setmetatable({
 		Settings = settings,
+		Timings = timings,
 		Detected = Signal.new(),
 		Connections = {},
 		Running = false,
 		Detectors = {
-			Animations = AnimationDetector.new(options.animation or shared),
-			Sounds = SoundDetector.new(options.sound or shared),
-			Parts = PartDetector.new(options.part or shared),
-			Effects = EffectDetector.new(options.effect or shared),
+			Animations = AnimationDetector.new(detectorOptions(options.animation)),
+			Sounds = SoundDetector.new(detectorOptions(options.sound)),
+			Parts = PartDetector.new(detectorOptions(options.part)),
+			Effects = EffectDetector.new(detectorOptions(options.effect)),
 		},
 	}, DetectorHub)
 
@@ -32,6 +47,10 @@ function DetectorHub.new(settings, options)
 			end
 		end)
 	end
+
+	self.Connections[#self.Connections + 1] = timings.Changed:Connect(function()
+		self.Detectors.Sounds:refresh()
+	end)
 
 	return self
 end
@@ -53,6 +72,12 @@ function DetectorHub:stop()
 	self.Running = false
 	for _, detector in pairs(self.Detectors) do
 		detector:stop()
+	end
+end
+
+function DetectorHub:refresh()
+	if self.Running then
+		self.Detectors.Sounds:refresh()
 	end
 end
 
