@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.3
+--  CLAW MARK v0.3.4
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.3",
+	"CLAW MARK v0.3.4",
 	8,
 	0,
 	170,
@@ -7455,9 +7455,10 @@ bind(RunService.Heartbeat, function(delta)
 	local targetStage = performance.stages["target-scan"] or {}
 	local lastDetection = CombatRuntime.State.LastDetection
 	local lastReject = CombatRuntime.State.LastReject
+	local lastPlan = CombatRuntime.State.LastPlan
 	local lastAction = CombatRuntime.State.LastActionResult
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST INPUT   %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -7470,6 +7471,7 @@ bind(RunService.Heartbeat, function(delta)
 		metrics.Cancelled or 0,
 		lastDetection and (lastDetection.detector .. ":" .. lastDetection.id) or "none",
 		lastReject and lastReject.reason or "none",
+		lastPlan and string.format("%s @ %.3fs", lastPlan.kind, lastPlan.delay) or "none",
 		lastAction and (lastAction.kind .. ":" .. (lastAction.ok and (lastAction.backend or "sent") or lastAction.reason)) or "none",
 		targetStage.averageMs or 0,
 		performance.backoff or 1
@@ -8073,5 +8075,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.3 online"
+	"[CLAW] CLAW MARK v0.3.4 online"
 )

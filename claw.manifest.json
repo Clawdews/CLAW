@@ -27,6 +27,7 @@
     "src/Combat/InputAdapter.lua",
     "src/Combat/ActionExecutor.lua",
     "src/Combat/TimingResolver.lua",
+    "src/Combat/DynamicWeaponResolver.lua",
     "src/Combat/ValidationEngine.lua",
     "src/Combat/ProbabilityResolver.lua",
     "src/Combat/FallbackResolver.lua",

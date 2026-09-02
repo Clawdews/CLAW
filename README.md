@@ -22,7 +22,7 @@ CLAW is the public development repository for **CLAW MARK**, a clean combat and 
 
 The performance-sensitive path uses early detector indexes, event-driven state flags, weak entity/animator maps, a single shared hitbox waiter, a bounded hitbox-visual pool, periodic dedupe pruning, batch timing imports, and adaptive target-scan backoff.
 
-Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, optional filters/fallbacks, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master. The v0.3.3 settings migration discards earlier restrictive validation defaults once.
+Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, optional filters/fallbacks, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master. The v0.3.4 settings migration discards earlier restrictive validation defaults once.
 
 ## Build
 
@@ -44,6 +44,8 @@ npm run convert:lycoris -- references/lycoris-rewrite/Timings data/lycoris-timin
 ```
 
 The public loader fetches the attributed baseline database from the same immutable CLAW commit as the runtime. CLAW MARK then merges `CLAW/timings.json` from the executor filesystem over that baseline, so user edits win. The TIMINGS page can also load that file or import pasted JSON. If the data download fails, filtered generic animation defense remains available. For the pinned reference snapshot, the converter resolves 854 profiles after 4,235 patches into 1,040 actions, 18 repeat profiles, and two intentionally suppressed coordination-only profiles. Five profiles referencing the four absent upstream modules `EruptionCylinder`, `Gaze`, `RazorBlitzFollowup`, and `VengefulSlash` stay on an explicit generic defense fallback and are identified in Diagnostics rather than silently running guessed remote calls.
+
+The runtime preserves Lycoris's dynamic calculations for ordinary M1, flourish, running, aerial, and uppercut weapon animations. It reads the replicated weapon type, swing speed, animation speed, and weapon length at detection time instead of flattening those module-driven attacks into fixed delays.
 
 ## Loader
 

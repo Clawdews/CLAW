@@ -58,15 +58,6 @@ function TimingResolver:delay(action, event, target)
 		delay = delay - (self:pingSeconds() * timing.PingScale)
 	end
 
-	if event and event.track then
-		local ok, speed = pcall(function()
-			return event.track.Speed
-		end)
-		if ok and type(speed) == "number" and speed ~= 0 then
-			delay = delay / math.abs(speed)
-		end
-	end
-
 	return math.clamp(delay, timing.MinDelay, timing.MaxDelay)
 end
 

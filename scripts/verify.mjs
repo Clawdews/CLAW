@@ -33,6 +33,8 @@ const settingsSource = sources.get("src/Combat/Settings.lua");
 const combatSource = sources.get("src/Combat/init.lua");
 const inputSource = sources.get("src/Combat/InputAdapter.lua");
 const nativeInputSource = sources.get("src/Combat/NativeInputBridge.lua");
+const dynamicWeaponSource = sources.get("src/Combat/DynamicWeaponResolver.lua");
+const timingResolverSource = sources.get("src/Combat/TimingResolver.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -52,6 +54,9 @@ check(combatSource.includes("Settings.new(savedSettings):safeStart()"), "saved a
 check(inputSource.includes("string.byte(string.upper(name))"), "executor virtual-key conversion is missing");
 check(nativeInputSource.includes('self:_remote("Block")'), "native block remote bridge is missing");
 check(nativeInputSource.includes("self.InputData.f = active"), "native block input-state mirroring is missing");
+check(dynamicWeaponSource.includes("WeaponTest = \"M1\""), "dynamic M1 weapon resolver is missing");
+check(dynamicWeaponSource.includes("WeaponFlourishTest = \"Flourish\""), "dynamic flourish resolver is missing");
+check(!/delay\s*=\s*delay\s*\/\s*math\.abs\(speed\)/.test(timingResolverSource), "static timing delays are being divided by animation speed");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");

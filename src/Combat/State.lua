@@ -19,6 +19,7 @@ function State.new()
 	self.LastEvent = nil
 	self.LastDetection = nil
 	self.LastReject = nil
+	self.LastPlan = nil
 	self.LastActionResult = nil
 	self.Metrics = {
 		Detected = 0,
@@ -77,6 +78,7 @@ function State:resetRuntime()
 	self.LastEvent = nil
 	self.LastDetection = nil
 	self.LastReject = nil
+	self.LastPlan = nil
 	self.LastActionResult = nil
 end
 

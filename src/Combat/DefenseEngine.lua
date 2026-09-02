@@ -2,6 +2,7 @@ local environment = getgenv and getgenv() or _G
 local modules = environment.__CLAW_MODULES
 local Action = assert(modules["src/Combat/Action.lua"])
 local TimingProfile = assert(modules["src/Combat/TimingProfile.lua"])
+local DynamicWeaponResolver = assert(modules["src/Combat/DynamicWeaponResolver.lua"])
 
 local DefenseEngine = {}
 DefenseEngine.__index = DefenseEngine
@@ -323,6 +324,7 @@ function DefenseEngine:handle(event)
 
 	local actions = #profile.actions > 0 and profile.actions
 		or ((profile.preferRepeat or profile.suppressGeneric) and {} or { self:_defaultAction() })
+	actions = DynamicWeaponResolver.resolve(profile, event, actions)
 	if
 		profile.preferModule
 		and not profile.preferRepeat
@@ -361,6 +363,12 @@ function DefenseEngine:handle(event)
 
 		local delay = self.Resolver:delay(resolved, event, target)
 		local scheduledAction = resolved
+		self.State.LastPlan = {
+			kind = scheduledAction.kind,
+			name = scheduledAction.name,
+			delay = delay,
+			at = os.clock(),
+		}
 		self.State:emit("incoming-action", {
 			event = event,
 			profile = profile,
