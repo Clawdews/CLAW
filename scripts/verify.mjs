@@ -35,6 +35,8 @@ const inputSource = sources.get("src/Combat/InputAdapter.lua");
 const nativeInputSource = sources.get("src/Combat/NativeInputBridge.lua");
 const dynamicWeaponSource = sources.get("src/Combat/DynamicWeaponResolver.lua");
 const timingResolverSource = sources.get("src/Combat/TimingResolver.lua");
+const defenseSource = sources.get("src/Combat/DefenseEngine.lua");
+const schedulerSource = sources.get("src/Combat/Scheduler.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -57,6 +59,9 @@ check(nativeInputSource.includes("self.InputData.f = active"), "native block inp
 check(dynamicWeaponSource.includes("WeaponTest = \"M1\""), "dynamic M1 weapon resolver is missing");
 check(dynamicWeaponSource.includes("WeaponFlourishTest = \"Flourish\""), "dynamic flourish resolver is missing");
 check(!/delay\s*=\s*delay\s*\/\s*math\.abs\(speed\)/.test(timingResolverSource), "static timing delays are being divided by animation speed");
+check(/local scheduled\s+scheduled\s*=\s*self\.Scheduler:schedule/.test(defenseSource), "scheduled defense callback does not capture a predeclared task handle");
+check(schedulerSource.includes('self.state:increment("Failed")'), "scheduler failures are not counted");
+check(schedulerSource.includes("self.state.LastFailure"), "scheduler failures are not exposed to diagnostics");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");

@@ -377,7 +377,11 @@ function DefenseEngine:handle(event)
 			target = target,
 		})
 		local stopConnection
-		local scheduled = self.Scheduler:schedule(string.format("%s:%s:%d", event.detector, event.id, index), delay, {
+		-- Predeclare the handle so the delayed closure captures this local. In
+		-- Lua/Luau a local is not in scope inside its own initializer, which made
+		-- `scheduled` resolve to nil when the callback eventually ran.
+		local scheduled
+		scheduled = self.Scheduler:schedule(string.format("%s:%s:%d", event.detector, event.id, index), delay, {
 			punishable = profile.punishableWindow,
 			after = profile.afterWindow,
 		}, function()

@@ -21,10 +21,12 @@ function State.new()
 	self.LastReject = nil
 	self.LastPlan = nil
 	self.LastActionResult = nil
+	self.LastFailure = nil
 	self.Metrics = {
 		Detected = 0,
 		Scheduled = 0,
 		Executed = 0,
+		Failed = 0,
 		Cancelled = 0,
 		Rejected = 0,
 	}
@@ -80,6 +82,7 @@ function State:resetRuntime()
 	self.LastReject = nil
 	self.LastPlan = nil
 	self.LastActionResult = nil
+	self.LastFailure = nil
 end
 
 function State:Destroy()
