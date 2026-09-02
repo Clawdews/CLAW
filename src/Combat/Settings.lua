@@ -30,6 +30,8 @@ local DEFAULTS = {
 		Enabled = false,
 		Preferred = "Parry",
 		Fallback = "Dodge",
+		UnknownAnimationDelay = 0.16,
+		UnknownAnimationMaxLength = 10,
 		AllowParry = true,
 		AllowBlock = true,
 		AllowDodge = true,
@@ -167,6 +169,38 @@ local DEFAULTS = {
 	},
 }
 
+-- Active switches never carry across executions. Numeric tuning, targeting,
+-- bindings, filters, and selected roll targets remain saved, but CLAW MARK
+-- always boots inert until the user explicitly enables a feature.
+local SAFE_START_OFF = {
+	"Enabled",
+	"Defense.Enabled",
+	"Probability.Enabled",
+	"Probability.AllowFailure",
+	"AttackAssistance.AutoFeint",
+	"AttackAssistance.DelayedFeint",
+	"AttackAssistance.HoldM1",
+	"AttackAssistance.FlourishFeint",
+	"AttackAssistance.ActionRolling",
+	"AttackAssistance.AnimationSpeed.Enabled",
+	"CombatAssistance.Wisp",
+	"CombatAssistance.GoldenTongue",
+	"CombatAssistance.MantraFollowUp",
+	"CombatAssistance.Ardour",
+	"CombatAssistance.FlowState",
+	"CombatAssistance.Rhythm",
+	"CombatAssistance.RagdollResponse",
+	"Diagnostics.Enabled",
+	"Diagnostics.Notifications",
+	"Diagnostics.TraceDetectors",
+	"Diagnostics.TraceScheduler",
+	"Diagnostics.VisualizeHitboxes",
+	"DebugState.BlockParry",
+	"DebugState.BlockDodge",
+	"DebugState.BlockVent",
+	"DebugState.NoBlocking",
+}
+
 local function clone(value, seen)
 	if type(value) ~= "table" then
 		return value
@@ -263,6 +297,13 @@ end
 
 function Settings:load(values)
 	self._data = mergeKnown(clone(DEFAULTS), values)
+	return self
+end
+
+function Settings:safeStart()
+	for _, path in ipairs(SAFE_START_OFF) do
+		self:set(path, false)
+	end
 	return self
 end
 

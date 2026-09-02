@@ -11,6 +11,16 @@ AssistanceEngine.__index = AssistanceEngine
 
 local DELAYED_FEINT_ACTION = "CLAW_MARK_DELAYED_FEINT"
 
+-- Small, first-party bootstrap map for the local weapon animations already
+-- exposed by CLAW MARK's Burster. Assistance therefore works before a user
+-- creates or imports a timing profile.
+local LOCAL_ATTACK_TAGS = {
+	["7318254065"] = "critical",
+	["9484850093"] = "flourish",
+	["7600450739"] = "m1",
+	["7600485223"] = "m1",
+}
+
 local function cleanID(value)
 	return tostring(value or ""):match("(%d+)") or tostring(value or "")
 end
@@ -68,6 +78,9 @@ function AssistanceEngine:_ready(name, cooldown)
 end
 
 function AssistanceEngine:_custom(name, delay)
+	if not self.Settings:get("Enabled") then
+		return
+	end
 	if not self:_ready(name) then
 		return
 	end
@@ -81,6 +94,9 @@ function AssistanceEngine:_custom(name, delay)
 end
 
 function AssistanceEngine:_roll(trigger)
+	if not self.Settings:get("Enabled") then
+		return
+	end
 	local attack = self.Settings:get("AttackAssistance")
 	if not attack.ActionRolling or not includes(attack.ActionRollingActions, trigger) then
 		return
@@ -120,6 +136,9 @@ function AssistanceEngine:_speed(track, profile)
 end
 
 function AssistanceEngine:_onIncoming(payload)
+	if not self.Settings:get("Enabled") then
+		return
+	end
 	local attack = self.Settings:get("AttackAssistance")
 	local active = self.ActiveAttack
 	if not attack.AutoFeint or not active or not active.track or self.FeintedTracks[active.track] then
@@ -164,14 +183,14 @@ function AssistanceEngine:_onAnimation(track)
 	if clawMark and clawMark.OwnGhostTracks and clawMark.OwnGhostTracks[track] then
 		return
 	end
-
-	self:_speed(track, profile)
-	if not profile then
+	if not self.Settings:get("Enabled") then
 		return
 	end
 
-	local tag = string.lower(profile.tag or "")
-	local name = string.lower(profile.name or "")
+	self:_speed(track, profile)
+
+	local tag = profile and string.lower(profile.tag or "") or LOCAL_ATTACK_TAGS[id] or ""
+	local name = profile and string.lower(profile.name or "") or ""
 	local isAttack = tag == "m1" or tag == "critical" or tag == "mantra" or tag == "flourish"
 	if not isAttack then
 		return
@@ -242,6 +261,12 @@ function AssistanceEngine:_attach(character)
 end
 
 function AssistanceEngine:_onFlag(payload)
+	if not self.Settings:get("Enabled") then
+		return
+	end
+	if payload.name == "UsingMantra" and payload.value then
+		self:_roll("Cast")
+	end
 	if payload.name == "Ragdolled" and payload.value and self.Settings:get("CombatAssistance.RagdollResponse") then
 		self:_custom("RagdollRecover")
 	elseif
@@ -284,6 +309,7 @@ end
 function AssistanceEngine:_delayedFeint(_, inputState)
 	if
 		inputState ~= Enum.UserInputState.Begin
+		or not self.Settings:get("Enabled")
 		or not self.Settings:get("AttackAssistance.DelayedFeint")
 		or not self.ActiveAttack
 	then
@@ -292,7 +318,7 @@ function AssistanceEngine:_delayedFeint(_, inputState)
 
 	local profile = self.ActiveAttack.profile
 	local delay = self.Settings:get("AttackAssistance.FeintDelay")
-	if profile.actions[1] then
+	if profile and profile.actions[1] then
 		delay = math.max(0, profile.actions[1].delay - self.Settings:get("AttackAssistance.FeintLead"))
 	end
 	self.Scheduler:schedule("assist:delayed-feint", delay, {}, function()
@@ -302,6 +328,14 @@ function AssistanceEngine:_delayedFeint(_, inputState)
 end
 
 function AssistanceEngine:_onSetting(payload)
+	if not self.Settings:get("Enabled") then
+		self.ActiveAttack = nil
+		if self.HoldingM1 then
+			self.Input:mouse(0, false)
+			self.HoldingM1 = false
+		end
+		return
+	end
 	if payload.path == "CombatAssistance.Rhythm" and payload.value then
 		self:_custom("Rhythm")
 	elseif payload.path == "AttackAssistance.HoldM1" and not payload.value and self.HoldingM1 then
@@ -344,8 +378,13 @@ function AssistanceEngine:start()
 		end
 	end)
 	self:_bind(self.Connections, UserInputService.InputBegan, function(input, processed)
-		if not processed and input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if processed then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self:_roll("M1")
+		elseif input.KeyCode == Enum.KeyCode.F then
+			self:_roll("Parry")
 		end
 	end)
 	ContextActionService:BindActionAtPriority(DELAYED_FEINT_ACTION, function(...)

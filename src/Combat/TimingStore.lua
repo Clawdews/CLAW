@@ -112,6 +112,24 @@ function TimingStore:load(values)
 	return self
 end
 
+function TimingStore:merge(values)
+	for category in pairs(CATEGORIES) do
+		local profiles = type(values) == "table" and values[category] or {}
+		assert(type(profiles) == "table", "invalid timing category: " .. category)
+		for _, valuesForProfile in ipairs(profiles) do
+			assert(type(valuesForProfile) == "table", "invalid timing profile")
+			local normalized = {}
+			for key, value in pairs(valuesForProfile) do
+				normalized[key] = value
+			end
+			normalized.detector = category
+			self:register(normalized, true, true)
+		end
+	end
+	self.Changed:Fire("merged")
+	return self
+end
+
 function TimingStore:serialize()
 	local result = {}
 	for category in pairs(CATEGORIES) do

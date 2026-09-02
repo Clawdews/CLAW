@@ -56,22 +56,33 @@ function InputAdapter:key(keyCode, isDown)
 end
 
 function InputAdapter:mouse(button, isDown)
-	if not self.VirtualInput then
-		return false, "no mouse input implementation"
+	if self.VirtualInput then
+		local position = UserInputService:GetMouseLocation()
+		local ok = pcall(
+			self.VirtualInput.SendMouseButtonEvent,
+			self.VirtualInput,
+			position.X,
+			position.Y,
+			button,
+			isDown,
+			game,
+			0
+		)
+		if ok then
+			return true
+		end
 	end
 
-	local position = UserInputService:GetMouseLocation()
-	local ok, inputError = pcall(
-		self.VirtualInput.SendMouseButtonEvent,
-		self.VirtualInput,
-		position.X,
-		position.Y,
-		button,
-		isDown,
-		game,
-		0
-	)
-	return ok, inputError
+	local fallbackName = button == 0
+		and (isDown and "mouse1press" or "mouse1release")
+		or (isDown and "mouse2press" or "mouse2release")
+	local fallback = rawget(environment, fallbackName)
+	if type(fallback) == "function" then
+		local ok, inputError = pcall(fallback)
+		return ok, inputError
+	end
+
+	return false, "no mouse input implementation"
 end
 
 function InputAdapter:tapKey(keyCode, duration)

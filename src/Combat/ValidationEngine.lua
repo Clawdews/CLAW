@@ -121,7 +121,16 @@ function ValidationEngine:_trackValid(event)
 	if priority == Enum.AnimationPriority.Core then
 		return false, "core-priority-animation"
 	end
-	if event.entity and Players:GetPlayerFromCharacter(event.entity) and (tonumber(weightTarget) or 0) <= 0.05 then
+	-- AnimationPlayed can fire at weight zero during the first blend frame. Let
+	-- the scheduler accept that fresh event; execution revalidates after the
+	-- configured delay and rejects tracks that never actually blended in.
+	local eventAge = os.clock() - (event.startedAt or os.clock())
+	if
+		event.entity
+		and Players:GetPlayerFromCharacter(event.entity)
+		and (tonumber(weightTarget) or 0) <= 0.05
+		and eventAge > 0.10
+	then
 		return false, "low-weight-animation"
 	end
 	if speed < validation.MinAnimationSpeed or speed > validation.MaxAnimationSpeed then

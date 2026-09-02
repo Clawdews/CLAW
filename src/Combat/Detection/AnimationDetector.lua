@@ -41,7 +41,7 @@ function AnimationDetector:_emit(animator, track)
 	if id == "" then
 		return
 	end
-	if type(self._accept) == "function" and not self._accept("animation", id, animator) then
+	if type(self._accept) == "function" and not self._accept("animation", id, animator, track) then
 		return
 	end
 

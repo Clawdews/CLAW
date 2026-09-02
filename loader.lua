@@ -48,12 +48,29 @@ end
 
 local resolvedRef
 local downloadedBytes = 0
+local timingBytes = 0
+local timingDetail = "not attempted"
 local success, result = xpcall(function()
 	local resolvedURL
 	resolvedURL, resolvedRef = resolveDistribution()
 	local source = game:HttpGet(resolvedURL)
 	downloadedBytes = type(source) == "string" and #source or 0
 	assert(type(source) == "string" and #source > 1024, "CLAW bundle download was empty or incomplete")
+
+	environment.CLAW_DISTRIBUTION_REF = resolvedRef
+	environment.CLAW_TIMINGS_JSON = nil
+	local timingURL = "https://raw.githubusercontent.com/" .. repository .. "/" .. resolvedRef .. "/data/lycoris-timings.json"
+	local timingOK, timingResult = pcall(function()
+		return game:HttpGet(cacheBust(timingURL))
+	end)
+	if timingOK and type(timingResult) == "string" and #timingResult > 1024 then
+		environment.CLAW_TIMINGS_JSON = timingResult
+		timingBytes = #timingResult
+		timingDetail = "loaded"
+	else
+		timingDetail = timingOK and "empty or incomplete" or tostring(timingResult)
+		warn("[CLAW] timing database unavailable; generic animation defense remains active:", timingDetail)
+	end
 
 	local chunk, compileError = loadstring(source, "@CLAW/ClawMark.lua")
 	assert(chunk, compileError)
@@ -66,11 +83,18 @@ environment.CLAW_BOOT_STATUS = {
 	detail = success and "loaded" or tostring(result),
 	ref = resolvedRef,
 	bytes = downloadedBytes,
+	timingBytes = timingBytes,
+	timingDetail = timingDetail,
+	timingSource = environment.CLAW_TIMING_STATUS and environment.CLAW_TIMING_STATUS.source,
+	timingCount = environment.CLAW_TIMING_STATUS and environment.CLAW_TIMING_STATUS.count or 0,
 }
 
 if success then
-	print("[CLAW] CLAW MARK loader completed", resolvedRef, downloadedBytes)
-	notify("CLAW MARK", "Build " .. string.sub(resolvedRef or "unknown", 1, 7) .. " loaded.")
+	print("[CLAW] CLAW MARK loader completed", resolvedRef, downloadedBytes, "timings", timingBytes)
+	local timingMessage = environment.CLAW_BOOT_STATUS.timingCount > 0
+		and (tostring(environment.CLAW_BOOT_STATUS.timingCount) .. " timings ready.")
+		or "Generic defense fallback ready."
+	notify("CLAW MARK", "Build " .. string.sub(resolvedRef or "unknown", 1, 7) .. " loaded; " .. timingMessage)
 	return result
 end
 

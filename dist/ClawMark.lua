@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.0"
+	environment.CLAW.Version = "0.3.1"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -197,6 +197,8 @@ do
 			Enabled = false,
 			Preferred = "Parry",
 			Fallback = "Dodge",
+			UnknownAnimationDelay = 0.16,
+			UnknownAnimationMaxLength = 10,
 			AllowParry = true,
 			AllowBlock = true,
 			AllowDodge = true,
@@ -334,6 +336,38 @@ do
 		},
 	}
 
+	-- Active switches never carry across executions. Numeric tuning, targeting,
+	-- bindings, filters, and selected roll targets remain saved, but CLAW MARK
+	-- always boots inert until the user explicitly enables a feature.
+	local SAFE_START_OFF = {
+		"Enabled",
+		"Defense.Enabled",
+		"Probability.Enabled",
+		"Probability.AllowFailure",
+		"AttackAssistance.AutoFeint",
+		"AttackAssistance.DelayedFeint",
+		"AttackAssistance.HoldM1",
+		"AttackAssistance.FlourishFeint",
+		"AttackAssistance.ActionRolling",
+		"AttackAssistance.AnimationSpeed.Enabled",
+		"CombatAssistance.Wisp",
+		"CombatAssistance.GoldenTongue",
+		"CombatAssistance.MantraFollowUp",
+		"CombatAssistance.Ardour",
+		"CombatAssistance.FlowState",
+		"CombatAssistance.Rhythm",
+		"CombatAssistance.RagdollResponse",
+		"Diagnostics.Enabled",
+		"Diagnostics.Notifications",
+		"Diagnostics.TraceDetectors",
+		"Diagnostics.TraceScheduler",
+		"Diagnostics.VisualizeHitboxes",
+		"DebugState.BlockParry",
+		"DebugState.BlockDodge",
+		"DebugState.BlockVent",
+		"DebugState.NoBlocking",
+	}
+
 	local function clone(value, seen)
 		if type(value) ~= "table" then
 			return value
@@ -430,6 +464,13 @@ do
 
 	function Settings:load(values)
 		self._data = mergeKnown(clone(DEFAULTS), values)
+		return self
+	end
+
+	function Settings:safeStart()
+		for _, path in ipairs(SAFE_START_OFF) do
+			self:set(path, false)
+		end
 		return self
 	end
 
@@ -1368,6 +1409,24 @@ do
 		return self
 	end
 
+	function TimingStore:merge(values)
+		for category in pairs(CATEGORIES) do
+			local profiles = type(values) == "table" and values[category] or {}
+			assert(type(profiles) == "table", "invalid timing category: " .. category)
+			for _, valuesForProfile in ipairs(profiles) do
+				assert(type(valuesForProfile) == "table", "invalid timing profile")
+				local normalized = {}
+				for key, value in pairs(valuesForProfile) do
+					normalized[key] = value
+				end
+				normalized.detector = category
+				self:register(normalized, true, true)
+			end
+		end
+		self.Changed:Fire("merged")
+		return self
+	end
+
 	function TimingStore:serialize()
 		local result = {}
 		for category in pairs(CATEGORIES) do
@@ -1425,7 +1484,7 @@ do
 		})
 	end
 
-	function TimingPersistence:import(encoded)
+	function TimingPersistence:import(encoded, merge)
 		local ok, data = pcall(HttpService.JSONDecode, HttpService, encoded)
 		if not ok or type(data) ~= "table" or type(data.timings) ~= "table" then
 			return false, "invalid timing data"
@@ -1433,14 +1492,15 @@ do
 		if data.version ~= self.Version then
 			return false, "unsupported timing version"
 		end
-		local loaded, loadError = pcall(self.Store.load, self.Store, data.timings)
+		local method = merge and self.Store.merge or self.Store.load
+		local loaded, loadError = pcall(method, self.Store, data.timings)
 		if not loaded then
 			return false, tostring(loadError)
 		end
 		return true
 	end
 
-	function TimingPersistence:load()
+	function TimingPersistence:load(merge)
 		local readfile = rawget(environment, "readfile")
 		local isfile = rawget(environment, "isfile")
 		if type(readfile) ~= "function" then
@@ -1456,7 +1516,7 @@ do
 		if not ok then
 			return false, tostring(encoded)
 		end
-		return self:import(encoded)
+		return self:import(encoded, merge)
 	end
 
 	function TimingPersistence:save()
@@ -1757,7 +1817,7 @@ do
 		if id == "" then
 			return
 		end
-		if type(self._accept) == "function" and not self._accept("animation", id, animator) then
+		if type(self._accept) == "function" and not self._accept("animation", id, animator, track) then
 			return
 		end
 
@@ -2140,8 +2200,37 @@ do
 	function DetectorHub.new(settings, timings, options)
 		options = options or {}
 		local shared = options.shared or {}
-		local function accept(category, id)
-			return not settings:get("Detection.OnlyConfigured") or timings:has(category, id)
+		local function combatAnimation(track)
+			if not track then
+				return false
+			end
+			local ok, priority, looped, length = pcall(function()
+				return track.Priority, track.Looped, track.Length
+			end)
+			if not ok or looped then
+				return false
+			end
+			local actionPriority = priority == Enum.AnimationPriority.Action
+				or priority == Enum.AnimationPriority.Action2
+				or priority == Enum.AnimationPriority.Action3
+				or priority == Enum.AnimationPriority.Action4
+			if not actionPriority then
+				return false
+			end
+			local maximum = settings:get("Defense.UnknownAnimationMaxLength")
+			return length <= 0 or length <= maximum
+		end
+		local function accept(category, id, _, track)
+			if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
+				return true
+			end
+			-- Indexed-only remains strict for noisy sounds, effects, and parts. A
+			-- deliberately enabled auto-defense may still use a tightly filtered
+			-- animation fallback when the public timing store is empty.
+			return category == "animation"
+				and settings:get("Enabled")
+				and settings:get("Defense.Enabled")
+				and combatAnimation(track)
 		end
 		local function detectorOptions(specific)
 			local combined = {}
@@ -2188,8 +2277,21 @@ do
 			return
 		end
 		self.Running = true
-		for _, detector in pairs(self.Detectors) do
-			detector:start()
+		self:sync()
+	end
+
+	function DetectorHub:sync(settingName)
+		if not self.Running then
+			return
+		end
+		for name, detector in pairs(self.Detectors) do
+			if not settingName or name == settingName then
+				if self.Settings:get("Detection." .. name) then
+					detector:start()
+				else
+					detector:stop()
+				end
+			end
 		end
 	end
 
@@ -2289,22 +2391,33 @@ do
 	end
 
 	function InputAdapter:mouse(button, isDown)
-		if not self.VirtualInput then
-			return false, "no mouse input implementation"
+		if self.VirtualInput then
+			local position = UserInputService:GetMouseLocation()
+			local ok = pcall(
+				self.VirtualInput.SendMouseButtonEvent,
+				self.VirtualInput,
+				position.X,
+				position.Y,
+				button,
+				isDown,
+				game,
+				0
+			)
+			if ok then
+				return true
+			end
 		end
 
-		local position = UserInputService:GetMouseLocation()
-		local ok, inputError = pcall(
-			self.VirtualInput.SendMouseButtonEvent,
-			self.VirtualInput,
-			position.X,
-			position.Y,
-			button,
-			isDown,
-			game,
-			0
-		)
-		return ok, inputError
+		local fallbackName = button == 0
+			and (isDown and "mouse1press" or "mouse1release")
+			or (isDown and "mouse2press" or "mouse2release")
+		local fallback = rawget(environment, fallbackName)
+		if type(fallback) == "function" then
+			local ok, inputError = pcall(fallback)
+			return ok, inputError
+		end
+
+		return false, "no mouse input implementation"
 	end
 
 	function InputAdapter:tapKey(keyCode, duration)
@@ -2683,7 +2796,16 @@ do
 		if priority == Enum.AnimationPriority.Core then
 			return false, "core-priority-animation"
 		end
-		if event.entity and Players:GetPlayerFromCharacter(event.entity) and (tonumber(weightTarget) or 0) <= 0.05 then
+		-- AnimationPlayed can fire at weight zero during the first blend frame. Let
+		-- the scheduler accept that fresh event; execution revalidates after the
+		-- configured delay and rejects tracks that never actually blended in.
+		local eventAge = os.clock() - (event.startedAt or os.clock())
+		if
+			event.entity
+			and Players:GetPlayerFromCharacter(event.entity)
+			and (tonumber(weightTarget) or 0) <= 0.05
+			and eventAge > 0.10
+		then
 			return false, "low-weight-animation"
 		end
 		if speed < validation.MinAnimationSpeed or speed > validation.MaxAnimationSpeed then
@@ -3592,6 +3714,16 @@ do
 
 	local DELAYED_FEINT_ACTION = "CLAW_MARK_DELAYED_FEINT"
 
+	-- Small, first-party bootstrap map for the local weapon animations already
+	-- exposed by CLAW MARK's Burster. Assistance therefore works before a user
+	-- creates or imports a timing profile.
+	local LOCAL_ATTACK_TAGS = {
+		["7318254065"] = "critical",
+		["9484850093"] = "flourish",
+		["7600450739"] = "m1",
+		["7600485223"] = "m1",
+	}
+
 	local function cleanID(value)
 		return tostring(value or ""):match("(%d+)") or tostring(value or "")
 	end
@@ -3649,6 +3781,9 @@ do
 	end
 
 	function AssistanceEngine:_custom(name, delay)
+		if not self.Settings:get("Enabled") then
+			return
+		end
 		if not self:_ready(name) then
 			return
 		end
@@ -3662,6 +3797,9 @@ do
 	end
 
 	function AssistanceEngine:_roll(trigger)
+		if not self.Settings:get("Enabled") then
+			return
+		end
 		local attack = self.Settings:get("AttackAssistance")
 		if not attack.ActionRolling or not includes(attack.ActionRollingActions, trigger) then
 			return
@@ -3701,6 +3839,9 @@ do
 	end
 
 	function AssistanceEngine:_onIncoming(payload)
+		if not self.Settings:get("Enabled") then
+			return
+		end
 		local attack = self.Settings:get("AttackAssistance")
 		local active = self.ActiveAttack
 		if not attack.AutoFeint or not active or not active.track or self.FeintedTracks[active.track] then
@@ -3745,14 +3886,14 @@ do
 		if clawMark and clawMark.OwnGhostTracks and clawMark.OwnGhostTracks[track] then
 			return
 		end
-
-		self:_speed(track, profile)
-		if not profile then
+		if not self.Settings:get("Enabled") then
 			return
 		end
 
-		local tag = string.lower(profile.tag or "")
-		local name = string.lower(profile.name or "")
+		self:_speed(track, profile)
+
+		local tag = profile and string.lower(profile.tag or "") or LOCAL_ATTACK_TAGS[id] or ""
+		local name = profile and string.lower(profile.name or "") or ""
 		local isAttack = tag == "m1" or tag == "critical" or tag == "mantra" or tag == "flourish"
 		if not isAttack then
 			return
@@ -3823,6 +3964,12 @@ do
 	end
 
 	function AssistanceEngine:_onFlag(payload)
+		if not self.Settings:get("Enabled") then
+			return
+		end
+		if payload.name == "UsingMantra" and payload.value then
+			self:_roll("Cast")
+		end
 		if payload.name == "Ragdolled" and payload.value and self.Settings:get("CombatAssistance.RagdollResponse") then
 			self:_custom("RagdollRecover")
 		elseif
@@ -3865,6 +4012,7 @@ do
 	function AssistanceEngine:_delayedFeint(_, inputState)
 		if
 			inputState ~= Enum.UserInputState.Begin
+			or not self.Settings:get("Enabled")
 			or not self.Settings:get("AttackAssistance.DelayedFeint")
 			or not self.ActiveAttack
 		then
@@ -3873,7 +4021,7 @@ do
 
 		local profile = self.ActiveAttack.profile
 		local delay = self.Settings:get("AttackAssistance.FeintDelay")
-		if profile.actions[1] then
+		if profile and profile.actions[1] then
 			delay = math.max(0, profile.actions[1].delay - self.Settings:get("AttackAssistance.FeintLead"))
 		end
 		self.Scheduler:schedule("assist:delayed-feint", delay, {}, function()
@@ -3883,6 +4031,14 @@ do
 	end
 
 	function AssistanceEngine:_onSetting(payload)
+		if not self.Settings:get("Enabled") then
+			self.ActiveAttack = nil
+			if self.HoldingM1 then
+				self.Input:mouse(0, false)
+				self.HoldingM1 = false
+			end
+			return
+		end
 		if payload.path == "CombatAssistance.Rhythm" and payload.value then
 			self:_custom("Rhythm")
 		elseif payload.path == "AttackAssistance.HoldM1" and not payload.value and self.HoldingM1 then
@@ -3925,8 +4081,13 @@ do
 			end
 		end)
 		self:_bind(self.Connections, UserInputService.InputBegan, function(input, processed)
-			if not processed and input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if processed then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 then
 				self:_roll("M1")
+			elseif input.KeyCode == Enum.KeyCode.F then
+				self:_roll("Parry")
 			end
 		end)
 		ContextActionService:BindActionAtPriority(DELAYED_FEINT_ACTION, function(...)
@@ -3966,7 +4127,9 @@ do
   local moduleName = "src/Combat/DefenseEngine.lua"
   local moduleFactory = function()
 	local environment = getgenv and getgenv() or _G
-	local Action = assert(environment.__CLAW_MODULES["src/Combat/Action.lua"])
+	local modules = environment.__CLAW_MODULES
+	local Action = assert(modules["src/Combat/Action.lua"])
+	local TimingProfile = assert(modules["src/Combat/TimingProfile.lua"])
 
 	local DefenseEngine = {}
 	DefenseEngine.__index = DefenseEngine
@@ -4043,6 +4206,48 @@ do
 			preferred = self.Settings:get("Defense.Fallback")
 		end
 		return Action.new({ kind = preferred })
+	end
+
+	function DefenseEngine:_unknownAnimationProfile(event)
+		if event.detector ~= "animation" or not event.track or event.entity == self.State.Character then
+			return nil, "not an enemy animation"
+		end
+
+		local ok, priority, looped, length = pcall(function()
+			return event.track.Priority, event.track.Looped, event.track.Length
+		end)
+		if not ok then
+			return nil, "animation properties unavailable"
+		end
+		local actionPriority = priority == Enum.AnimationPriority.Action
+			or priority == Enum.AnimationPriority.Action2
+			or priority == Enum.AnimationPriority.Action3
+			or priority == Enum.AnimationPriority.Action4
+		if not actionPriority then
+			return nil, "non-combat animation priority"
+		end
+		if looped then
+			return nil, "non-combat animation playback"
+		end
+		if length > 0 and length > self.Settings:get("Defense.UnknownAnimationMaxLength") then
+			return nil, "animation is too long"
+		end
+
+		local default = self:_defaultAction()
+		default.name = "Generic " .. default.kind .. ": " .. event.id
+		default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
+		default.ignoreHitbox = true
+		return TimingProfile.new({
+			id = event.id,
+			name = "Unindexed animation " .. event.id,
+			detector = "animation",
+			tag = "Undefined",
+			maxDistance = self.Settings:get("Targeting.MaxDistance"),
+			facingHitbox = false,
+			punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
+			afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
+			actions = { default },
+		}), nil
 	end
 
 	function DefenseEngine:_dynamicAction(action, event)
@@ -4189,7 +4394,15 @@ do
 		end
 		local profile = self.Timings:get(event.detector, event.id)
 		if not profile then
-			return false, "no timing profile"
+			local reason
+			profile, reason = self:_unknownAnimationProfile(event)
+			if not profile then
+				return false, reason or "no timing profile"
+			end
+			self.State:emit("generic-defense", {
+				event = event,
+				profile = profile,
+			})
 		end
 		local localEvent = event.entity == self.State.Character
 		if localEvent and profile.ignoreLocalPlayer then
@@ -4355,11 +4568,29 @@ do
 	local Combat = {}
 	Combat.__index = Combat
 
+	local MASTERED_FEATURES = {
+		["Defense.Enabled"] = true,
+		["AttackAssistance.AutoFeint"] = true,
+		["AttackAssistance.DelayedFeint"] = true,
+		["AttackAssistance.HoldM1"] = true,
+		["AttackAssistance.FlourishFeint"] = true,
+		["AttackAssistance.ActionRolling"] = true,
+		["AttackAssistance.AnimationSpeed.Enabled"] = true,
+		["CombatAssistance.Wisp"] = true,
+		["CombatAssistance.GoldenTongue"] = true,
+		["CombatAssistance.MantraFollowUp"] = true,
+		["CombatAssistance.Ardour"] = true,
+		["CombatAssistance.FlowState"] = true,
+		["CombatAssistance.Rhythm"] = true,
+		["CombatAssistance.RagdollResponse"] = true,
+		["Diagnostics.Enabled"] = true,
+	}
+
 	function Combat.new(options)
 		options = options or {}
 		local persistence = Persistence.new(options.settingsPath)
 		local savedSettings = persistence:load()
-		local settings = Settings.new(savedSettings)
+		local settings = Settings.new(savedSettings):safeStart()
 		local state = State.new()
 		local history = EntityHistory.new(settings:get("Validation.HistorySeconds"))
 
@@ -4412,7 +4643,22 @@ do
 		self.Monitor = StateMonitor.new(state)
 		self.Presets = PresetManager.new(settings)
 		self.TimingIO = TimingPersistence.new(self.Timings, options.timingsPath)
-		self.TimingIO:load()
+		local remoteLoaded = false
+		local remoteTimings = rawget(environment, "CLAW_TIMINGS_JSON")
+		if type(remoteTimings) == "string" and #remoteTimings > 1024 then
+			remoteLoaded = self.TimingIO:import(remoteTimings) == true
+		end
+		-- Release the 1.5 MB JSON string once it has been decoded. A local timing
+		-- file is merged afterward, so user edits override the attributed baseline.
+		environment.CLAW_TIMINGS_JSON = nil
+		local localLoaded = self.TimingIO:load(remoteLoaded) == true
+		self.TimingSource = localLoaded and (remoteLoaded and "bundled+local" or "local")
+			or (remoteLoaded and "bundled" or "generic")
+		environment.CLAW_TIMING_STATUS = {
+			source = self.TimingSource,
+			count = self.Timings:count(),
+			ref = rawget(environment, "CLAW_DISTRIBUTION_REF"),
+		}
 		self.Assistance = AssistanceEngine.new(settings, state, self.Timings, self.Scheduler, self.Input, self.Executor)
 		local detectorOptions = options.detectors
 			or {
@@ -4490,7 +4736,9 @@ do
 		self.State:setCharacter(Players.LocalPlayer.Character)
 		self.Monitor:start()
 		self.Assistance:start()
-		self.Detectors:start()
+		if self.Settings:get("Enabled") then
+			self.Detectors:start()
+		end
 		self:_bind(RunService.Heartbeat, function()
 			self:_step()
 		end)
@@ -4535,11 +4783,37 @@ do
 
 	function Combat:set(path, value, persist)
 		local result = self.Settings:set(path, value)
+		local enabledChanged = path == "Enabled"
+		if path == "Defense.Enabled" and value and not self.Settings:get("Detection.Animations") then
+			self.Settings:set("Detection.Animations", true)
+			self.State:emit("setting", { path = "Detection.Animations", value = true })
+		end
+		if MASTERED_FEATURES[path] and value and not self.Settings:get("Enabled") then
+			self.Settings:set("Enabled", true)
+			enabledChanged = true
+			self.State:emit("setting", { path = "Enabled", value = true })
+		end
 		if path == "Validation.HistorySeconds" then
 			self.History:setWindow(value)
 		end
 		if path == "Detection.OnlyConfigured" or path == "Detection.Sounds" then
 			self.Detectors:refresh()
+		end
+		local detectorName = string.match(path, "^Detection%.([^.]+)$")
+		if detectorName and self.Detectors.Detectors[detectorName] then
+			self.Detectors:sync(detectorName)
+		end
+		if enabledChanged and self.State.Running then
+			if self.Settings:get("Enabled") then
+				self._lastScan = -math.huge
+				self:_step()
+				self.Detectors:start()
+			else
+				self.Detectors:stop()
+				self.Scheduler:cancelAll("combat disabled")
+				self.Defense:reset()
+				self.State:setTargets({})
+			end
 		end
 		if persist ~= false then
 			self:queueSave()
@@ -4566,7 +4840,17 @@ do
 		local ok, reason = self.Presets:apply(name)
 		if ok then
 			self.History:setWindow(self.Settings:get("Validation.HistorySeconds"))
+			if self.State.Running then
+				if self.Settings:get("Enabled") then
+					self._lastScan = -math.huge
+					self:_step()
+					self.Detectors:start()
+				else
+					self.Detectors:stop()
+				end
+			end
 			self.Detectors:refresh()
+			self.Detectors:sync()
 			self:save()
 			self.State:emit("preset", name)
 		end
@@ -4661,8 +4945,7 @@ end
 --      visible animation plays at Visual Speed
 --
 --    Defaults:
---      Critical + Flourish ON
---      M1s OFF
+--      Burster and every rule OFF
 --
 --  GHOST FIRE
 --    • Strict serial mode
@@ -4905,7 +5188,7 @@ local CONFIG = {
 	-- Burster
 	--------------------------------------------------------
 
-	BursterMaster = true,
+	BursterMaster = false,
 
 	BurstRules = {
 
@@ -4913,7 +5196,7 @@ local CONFIG = {
 
 			name = "Critical",
 
-			enabled = true,
+			enabled = false,
 
 			-- fast hidden phase
 			fireSpeed = 3.00,
@@ -4938,7 +5221,7 @@ local CONFIG = {
 
 			name = "Flourish",
 
-			enabled = true,
+			enabled = false,
 
 			fireSpeed = 3.00,
 
@@ -4996,7 +5279,7 @@ local CONFIG = {
 	-- Inspector
 	--------------------------------------------------------
 
-	LoggingEnabled = true,
+	LoggingEnabled = false,
 
 	PollRate = 0.025,
 
@@ -8492,10 +8775,11 @@ local function refreshStatus()
 		or "GHOST:STOP"
 
 	local combat = State.Combat
-	local defense = combat
-		and combat.Settings:get("Defense.Enabled")
-		and "DEF:ON"
-		or "DEF:OFF"
+	local defense = "DEF:OFF"
+	if combat and combat.Settings:get("Defense.Enabled") then
+		local timingCount = combat.Timings:count()
+		defense = timingCount > 0 and ("DEF:ON/" .. tostring(timingCount)) or "DEF:GENERIC"
+	end
 	local targetCount = combat and #combat.State.Targets or 0
 
 	Status.Text =
@@ -10905,13 +11189,12 @@ else
 	local presetNames =
 		CombatRuntime.Presets:names()
 
-	local selectedPreset =
-		presetNames[1]
+	local selectedPreset = nil
 
 	local presetCycle =
 		mkButton(
 			detectionPanel,
-			"PRESET: " .. selectedPreset,
+			"PRESET: NONE",
 			8,
 			115,
 			200,
@@ -10921,7 +11204,7 @@ else
 	bind(
 		presetCycle.MouseButton1Click,
 		function()
-			local index = table.find(presetNames, selectedPreset) or 0
+			local index = selectedPreset and table.find(presetNames, selectedPreset) or 0
 			selectedPreset = presetNames[(index % #presetNames) + 1]
 			presetCycle.Text = "PRESET: " .. selectedPreset
 		end
@@ -10933,6 +11216,9 @@ else
 	bind(
 		applyPreset.MouseButton1Click,
 		function()
+			if not selectedPreset then
+				return
+			end
 			CombatRuntime:applyPreset(selectedPreset)
 			combatRefreshAll()
 		end
@@ -10984,7 +11270,7 @@ else
 		end
 	end
 
-	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 365)
+	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 389)
 	combatToggle(tuningModal, "PROBABILITY", "Probability.Enabled", 10, 35, 198)
 	combatToggle(tuningModal, "ALLOW FAILURE", "Probability.AllowFailure", 218, 35, 202)
 	combatNumber(tuningModal, "FAILURE %", "Probability.FailureRate", 10, 64, 0, 100)
@@ -11005,7 +11291,9 @@ else
 	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
 	combatToggle(tuningModal, "ANIM SANITY", "Validation.AnimationSanity", 10, 296, 198)
 	combatToggle(tuningModal, "SIGHTLESS FILTER", "Filters.SightlessBeam", 218, 296, 202)
-	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 327, 180, 226)
+	combatNumber(tuningModal, "UNKNOWN DELAY", "Defense.UnknownAnimationDelay", 10, 323, 0, 3)
+	combatNumber(tuningModal, "UNKNOWN MAX SEC", "Defense.UnknownAnimationMaxLength", 218, 323, 0.1, 30)
+	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 354, 180, 226)
 	raiseModal(tuningModal)
 
 	bind(advancedTuningButton.MouseButton1Click, function()
@@ -11632,7 +11920,7 @@ end
 
 local function refreshTimingList()
 	for _, child in ipairs(TimingList:GetChildren()) do
-		if child:IsA("TextButton") then
+		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
@@ -11641,8 +11929,14 @@ local function refreshTimingList()
 		return
 	end
 
+	local shown = 0
+	local maximumRows = 200
 	for _, category in ipairs({ "animation", "sound", "part", "effect" }) do
 		for _, profile in ipairs(CombatRuntime.Timings:list(category)) do
+			if shown >= maximumRows then
+				break
+			end
+			shown = shown + 1
 			local row = mkButton(
 				TimingList,
 				string.format("[%s] %s", string.sub(category, 1, 1), profile.name),
@@ -11657,6 +11951,22 @@ local function refreshTimingList()
 				loadTimingEditor(profile)
 			end)
 		end
+		if shown >= maximumRows then
+			break
+		end
+	end
+	if CombatRuntime.Timings:count() > shown then
+		local summary = mkLabel(
+			TimingList,
+			string.format("SHOWING %d / %d", shown, CombatRuntime.Timings:count()),
+			0,
+			0,
+			238,
+			24,
+			9
+		)
+		summary.Size = UDim2.new(1, -2, 0, 24)
+		summary.TextColor3 = COLORS.ACCENT
 	end
 
 	task.defer(function()
@@ -11791,11 +12101,14 @@ end)
 bind(timingClearButton.MouseButton1Click, clearTimingEditor)
 
 if CombatRuntime then
-	bind(CombatRuntime.Timings.Changed, refreshTimingList)
+	bind(CombatRuntime.Timings.Changed, function()
+		if TimingsPage.Visible then
+			refreshTimingList()
+		end
+	end)
 end
 
 clearTimingEditor()
-refreshTimingList()
 end
 buildTimingEditor()
 end
@@ -11900,11 +12213,16 @@ local function hasRollTarget(name)
 end
 
 local function refreshRollTargets()
+	local count = 0
 	for name, button in pairs(rollTargetButtons) do
 		local selected = hasRollTarget(name)
+		if selected then
+			count = count + 1
+		end
 		button.Text = name .. ": " .. (selected and "ON" or "OFF")
 		button.BackgroundColor3 = selected and COLORS.GREEN or COLORS.RED
 	end
+	rollTargetsButton.Text = "ROLL TARGETS (" .. tostring(count) .. ")"
 end
 
 for index, name in ipairs({ "M1", "Critical", "Cast", "Parry" }) do
@@ -11932,6 +12250,7 @@ end)
 bind(rollClose.MouseButton1Click, function()
 	rollTargetsModal.Visible = false
 end)
+refreshRollTargets()
 for _, descendant in ipairs(rollTargetsModal:GetDescendants()) do
 	if descendant:IsA("GuiObject") then
 		descendant.ZIndex = 21

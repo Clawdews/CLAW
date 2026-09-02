@@ -344,8 +344,9 @@ function convertTiming(source, category, moduleActions) {
 
 const timingDirectory = process.argv[2];
 const outputPath = process.argv[3];
+const sourceCommit = process.argv[4] || "unknown";
 if (!timingDirectory || !outputPath) {
-  console.error("Usage: node scripts/convert-lycoris-timings.mjs <Lycoris Timings dir> <output.json>");
+  console.error("Usage: node scripts/convert-lycoris-timings.mjs <Lycoris Timings dir> <output.json> [source commit]");
   process.exit(2);
 }
 
@@ -397,7 +398,9 @@ const output = {
   version: 1,
   provenance: {
     format: "CLAW MARK timing database",
-    source: "user-supplied Lycoris timing tree",
+    source: "Lycoris deepwoken-rewrite timing tree",
+    sourceRepository: "https://git.blastbrean.com/lycoris/deepwoken-rewrite",
+    sourceCommit,
     patchesApplied: patches.length,
     staticModuleTemplates: [...moduleActionMap.values()].filter((actions) => actions.length > 0).length,
     dynamicModuleTemplates: Object.keys(DYNAMIC_MODULES).length,

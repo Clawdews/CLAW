@@ -1,5 +1,7 @@
 local environment = getgenv and getgenv() or _G
-local Action = assert(environment.__CLAW_MODULES["src/Combat/Action.lua"])
+local modules = environment.__CLAW_MODULES
+local Action = assert(modules["src/Combat/Action.lua"])
+local TimingProfile = assert(modules["src/Combat/TimingProfile.lua"])
 
 local DefenseEngine = {}
 DefenseEngine.__index = DefenseEngine
@@ -76,6 +78,48 @@ function DefenseEngine:_defaultAction()
 		preferred = self.Settings:get("Defense.Fallback")
 	end
 	return Action.new({ kind = preferred })
+end
+
+function DefenseEngine:_unknownAnimationProfile(event)
+	if event.detector ~= "animation" or not event.track or event.entity == self.State.Character then
+		return nil, "not an enemy animation"
+	end
+
+	local ok, priority, looped, length = pcall(function()
+		return event.track.Priority, event.track.Looped, event.track.Length
+	end)
+	if not ok then
+		return nil, "animation properties unavailable"
+	end
+	local actionPriority = priority == Enum.AnimationPriority.Action
+		or priority == Enum.AnimationPriority.Action2
+		or priority == Enum.AnimationPriority.Action3
+		or priority == Enum.AnimationPriority.Action4
+	if not actionPriority then
+		return nil, "non-combat animation priority"
+	end
+	if looped then
+		return nil, "non-combat animation playback"
+	end
+	if length > 0 and length > self.Settings:get("Defense.UnknownAnimationMaxLength") then
+		return nil, "animation is too long"
+	end
+
+	local default = self:_defaultAction()
+	default.name = "Generic " .. default.kind .. ": " .. event.id
+	default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
+	default.ignoreHitbox = true
+	return TimingProfile.new({
+		id = event.id,
+		name = "Unindexed animation " .. event.id,
+		detector = "animation",
+		tag = "Undefined",
+		maxDistance = self.Settings:get("Targeting.MaxDistance"),
+		facingHitbox = false,
+		punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
+		afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
+		actions = { default },
+	}), nil
 end
 
 function DefenseEngine:_dynamicAction(action, event)
@@ -222,7 +266,15 @@ function DefenseEngine:handle(event)
 	end
 	local profile = self.Timings:get(event.detector, event.id)
 	if not profile then
-		return false, "no timing profile"
+		local reason
+		profile, reason = self:_unknownAnimationProfile(event)
+		if not profile then
+			return false, reason or "no timing profile"
+		end
+		self.State:emit("generic-defense", {
+			event = event,
+			profile = profile,
+		})
 	end
 	local localEvent = event.entity == self.State.Character
 	if localEvent and profile.ignoreLocalPlayer then

@@ -19,7 +19,7 @@ function TimingPersistence:export()
 	})
 end
 
-function TimingPersistence:import(encoded)
+function TimingPersistence:import(encoded, merge)
 	local ok, data = pcall(HttpService.JSONDecode, HttpService, encoded)
 	if not ok or type(data) ~= "table" or type(data.timings) ~= "table" then
 		return false, "invalid timing data"
@@ -27,14 +27,15 @@ function TimingPersistence:import(encoded)
 	if data.version ~= self.Version then
 		return false, "unsupported timing version"
 	end
-	local loaded, loadError = pcall(self.Store.load, self.Store, data.timings)
+	local method = merge and self.Store.merge or self.Store.load
+	local loaded, loadError = pcall(method, self.Store, data.timings)
 	if not loaded then
 		return false, tostring(loadError)
 	end
 	return true
 end
 
-function TimingPersistence:load()
+function TimingPersistence:load(merge)
 	local readfile = rawget(environment, "readfile")
 	local isfile = rawget(environment, "isfile")
 	if type(readfile) ~= "function" then
@@ -50,7 +51,7 @@ function TimingPersistence:load()
 	if not ok then
 		return false, tostring(encoded)
 	end
-	return self:import(encoded)
+	return self:import(encoded, merge)
 end
 
 function TimingPersistence:save()

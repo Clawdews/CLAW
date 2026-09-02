@@ -27,8 +27,7 @@
 --      visible animation plays at Visual Speed
 --
 --    Defaults:
---      Critical + Flourish ON
---      M1s OFF
+--      Burster and every rule OFF
 --
 --  GHOST FIRE
 --    • Strict serial mode
@@ -271,7 +270,7 @@ local CONFIG = {
 	-- Burster
 	--------------------------------------------------------
 
-	BursterMaster = true,
+	BursterMaster = false,
 
 	BurstRules = {
 
@@ -279,7 +278,7 @@ local CONFIG = {
 
 			name = "Critical",
 
-			enabled = true,
+			enabled = false,
 
 			-- fast hidden phase
 			fireSpeed = 3.00,
@@ -304,7 +303,7 @@ local CONFIG = {
 
 			name = "Flourish",
 
-			enabled = true,
+			enabled = false,
 
 			fireSpeed = 3.00,
 
@@ -362,7 +361,7 @@ local CONFIG = {
 	-- Inspector
 	--------------------------------------------------------
 
-	LoggingEnabled = true,
+	LoggingEnabled = false,
 
 	PollRate = 0.025,
 
@@ -3858,10 +3857,11 @@ local function refreshStatus()
 		or "GHOST:STOP"
 
 	local combat = State.Combat
-	local defense = combat
-		and combat.Settings:get("Defense.Enabled")
-		and "DEF:ON"
-		or "DEF:OFF"
+	local defense = "DEF:OFF"
+	if combat and combat.Settings:get("Defense.Enabled") then
+		local timingCount = combat.Timings:count()
+		defense = timingCount > 0 and ("DEF:ON/" .. tostring(timingCount)) or "DEF:GENERIC"
+	end
 	local targetCount = combat and #combat.State.Targets or 0
 
 	Status.Text =
@@ -6271,13 +6271,12 @@ else
 	local presetNames =
 		CombatRuntime.Presets:names()
 
-	local selectedPreset =
-		presetNames[1]
+	local selectedPreset = nil
 
 	local presetCycle =
 		mkButton(
 			detectionPanel,
-			"PRESET: " .. selectedPreset,
+			"PRESET: NONE",
 			8,
 			115,
 			200,
@@ -6287,7 +6286,7 @@ else
 	bind(
 		presetCycle.MouseButton1Click,
 		function()
-			local index = table.find(presetNames, selectedPreset) or 0
+			local index = selectedPreset and table.find(presetNames, selectedPreset) or 0
 			selectedPreset = presetNames[(index % #presetNames) + 1]
 			presetCycle.Text = "PRESET: " .. selectedPreset
 		end
@@ -6299,6 +6298,9 @@ else
 	bind(
 		applyPreset.MouseButton1Click,
 		function()
+			if not selectedPreset then
+				return
+			end
 			CombatRuntime:applyPreset(selectedPreset)
 			combatRefreshAll()
 		end
@@ -6350,7 +6352,7 @@ else
 		end
 	end
 
-	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 365)
+	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 389)
 	combatToggle(tuningModal, "PROBABILITY", "Probability.Enabled", 10, 35, 198)
 	combatToggle(tuningModal, "ALLOW FAILURE", "Probability.AllowFailure", 218, 35, 202)
 	combatNumber(tuningModal, "FAILURE %", "Probability.FailureRate", 10, 64, 0, 100)
@@ -6371,7 +6373,9 @@ else
 	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
 	combatToggle(tuningModal, "ANIM SANITY", "Validation.AnimationSanity", 10, 296, 198)
 	combatToggle(tuningModal, "SIGHTLESS FILTER", "Filters.SightlessBeam", 218, 296, 202)
-	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 327, 180, 226)
+	combatNumber(tuningModal, "UNKNOWN DELAY", "Defense.UnknownAnimationDelay", 10, 323, 0, 3)
+	combatNumber(tuningModal, "UNKNOWN MAX SEC", "Defense.UnknownAnimationMaxLength", 218, 323, 0.1, 30)
+	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 354, 180, 226)
 	raiseModal(tuningModal)
 
 	bind(advancedTuningButton.MouseButton1Click, function()
@@ -6998,7 +7002,7 @@ end
 
 local function refreshTimingList()
 	for _, child in ipairs(TimingList:GetChildren()) do
-		if child:IsA("TextButton") then
+		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
@@ -7007,8 +7011,14 @@ local function refreshTimingList()
 		return
 	end
 
+	local shown = 0
+	local maximumRows = 200
 	for _, category in ipairs({ "animation", "sound", "part", "effect" }) do
 		for _, profile in ipairs(CombatRuntime.Timings:list(category)) do
+			if shown >= maximumRows then
+				break
+			end
+			shown = shown + 1
 			local row = mkButton(
 				TimingList,
 				string.format("[%s] %s", string.sub(category, 1, 1), profile.name),
@@ -7023,6 +7033,22 @@ local function refreshTimingList()
 				loadTimingEditor(profile)
 			end)
 		end
+		if shown >= maximumRows then
+			break
+		end
+	end
+	if CombatRuntime.Timings:count() > shown then
+		local summary = mkLabel(
+			TimingList,
+			string.format("SHOWING %d / %d", shown, CombatRuntime.Timings:count()),
+			0,
+			0,
+			238,
+			24,
+			9
+		)
+		summary.Size = UDim2.new(1, -2, 0, 24)
+		summary.TextColor3 = COLORS.ACCENT
 	end
 
 	task.defer(function()
@@ -7157,11 +7183,14 @@ end)
 bind(timingClearButton.MouseButton1Click, clearTimingEditor)
 
 if CombatRuntime then
-	bind(CombatRuntime.Timings.Changed, refreshTimingList)
+	bind(CombatRuntime.Timings.Changed, function()
+		if TimingsPage.Visible then
+			refreshTimingList()
+		end
+	end)
 end
 
 clearTimingEditor()
-refreshTimingList()
 end
 buildTimingEditor()
 end
@@ -7266,11 +7295,16 @@ local function hasRollTarget(name)
 end
 
 local function refreshRollTargets()
+	local count = 0
 	for name, button in pairs(rollTargetButtons) do
 		local selected = hasRollTarget(name)
+		if selected then
+			count = count + 1
+		end
 		button.Text = name .. ": " .. (selected and "ON" or "OFF")
 		button.BackgroundColor3 = selected and COLORS.GREEN or COLORS.RED
 	end
+	rollTargetsButton.Text = "ROLL TARGETS (" .. tostring(count) .. ")"
 end
 
 for index, name in ipairs({ "M1", "Critical", "Cast", "Parry" }) do
@@ -7298,6 +7332,7 @@ end)
 bind(rollClose.MouseButton1Click, function()
 	rollTargetsModal.Visible = false
 end)
+refreshRollTargets()
 for _, descendant in ipairs(rollTargetsModal:GetDescendants()) do
 	if descendant:IsA("GuiObject") then
 		descendant.ZIndex = 21

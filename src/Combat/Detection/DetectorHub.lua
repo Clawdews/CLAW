@@ -12,8 +12,37 @@ DetectorHub.__index = DetectorHub
 function DetectorHub.new(settings, timings, options)
 	options = options or {}
 	local shared = options.shared or {}
-	local function accept(category, id)
-		return not settings:get("Detection.OnlyConfigured") or timings:has(category, id)
+	local function combatAnimation(track)
+		if not track then
+			return false
+		end
+		local ok, priority, looped, length = pcall(function()
+			return track.Priority, track.Looped, track.Length
+		end)
+		if not ok or looped then
+			return false
+		end
+		local actionPriority = priority == Enum.AnimationPriority.Action
+			or priority == Enum.AnimationPriority.Action2
+			or priority == Enum.AnimationPriority.Action3
+			or priority == Enum.AnimationPriority.Action4
+		if not actionPriority then
+			return false
+		end
+		local maximum = settings:get("Defense.UnknownAnimationMaxLength")
+		return length <= 0 or length <= maximum
+	end
+	local function accept(category, id, _, track)
+		if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
+			return true
+		end
+		-- Indexed-only remains strict for noisy sounds, effects, and parts. A
+		-- deliberately enabled auto-defense may still use a tightly filtered
+		-- animation fallback when the public timing store is empty.
+		return category == "animation"
+			and settings:get("Enabled")
+			and settings:get("Defense.Enabled")
+			and combatAnimation(track)
 	end
 	local function detectorOptions(specific)
 		local combined = {}
@@ -60,8 +89,21 @@ function DetectorHub:start()
 		return
 	end
 	self.Running = true
-	for _, detector in pairs(self.Detectors) do
-		detector:start()
+	self:sync()
+end
+
+function DetectorHub:sync(settingName)
+	if not self.Running then
+		return
+	end
+	for name, detector in pairs(self.Detectors) do
+		if not settingName or name == settingName then
+			if self.Settings:get("Detection." .. name) then
+				detector:start()
+			else
+				detector:stop()
+			end
+		end
 	end
 end
 

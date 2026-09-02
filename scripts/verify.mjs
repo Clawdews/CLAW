@@ -29,13 +29,30 @@ for (const relativePath of [manifest.entry, "loader.lua", ...manifest.modules]) 
 }
 const combined = [...sources.values()].join("\n");
 const entry = sources.get(manifest.entry);
+const settingsSource = sources.get("src/Combat/Settings.lua");
+const combatSource = sources.get("src/Combat/init.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
+const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
+const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
+const timingActions = timingProfiles.flatMap((profile) => profile.actions ?? []);
+const validActionKinds = new Set(["Parry", "Block", "Dodge", "FullDodge", "Jump", "Slide", "Crouch", "Teleport", "Feint", "M1", "Custom"]);
 
 check(!/Animation Lab/i.test(combined), "visible legacy Animation Lab branding remains");
 check(!/project_rain_with_loot|references[\\/]lycoris-rewrite/i.test(bundle), "private local source leaked into bundle");
 check(!/(?:ghp_|github_pat_)[A-Za-z0-9_]+/.test(combined), "GitHub credential-like token found");
 check(!/https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(combined), "Discord webhook URL found");
 check(combined.includes('environment.CLAW.Version = "' + packageJson.version + '"'), "runtime/package versions differ");
+check(/BursterMaster\s*=\s*false/.test(entry), "Burster must start disabled");
+check(/LoggingEnabled\s*=\s*false/.test(entry), "animation logging must start disabled");
+check(!/name\s*=\s*"(?:Critical|Flourish)"[\s\S]{0,80}?enabled\s*=\s*true/.test(entry), "a built-in burst rule starts enabled");
+check(settingsSource.includes("function Settings:safeStart()"), "safe-start settings reset is missing");
+check(combatSource.includes("Settings.new(savedSettings):safeStart()"), "saved active switches can bypass safe start");
+check(timingDatabase.version === 1, "timing database version is invalid");
+check(timingProfiles.length >= 800, "attributed timing database is incomplete");
+check(timingActions.length >= 1000, "attributed timing actions are incomplete");
+check(timingActions.every((action) => validActionKinds.has(action.kind)), "timing database contains an unsupported action kind");
+check(timingDatabase.provenance?.sourceRepository === "https://git.blastbrean.com/lycoris/deepwoken-rewrite", "timing attribution source is missing");
+check(/^[a-f0-9]{40}$/.test(timingDatabase.provenance?.sourceCommit ?? ""), "timing source commit is not pinned");
 check(bundle.includes(`-- BEGIN ENTRY: ${manifest.entry}`), "bundle entry marker is missing");
 const colorBlock = entry.match(/local COLORS\s*=\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
 const definedColors = new Set([...colorBlock.matchAll(/^\s*([A-Z][A-Z0-9_]*)\s*=/gm)].map((match) => match[1]));

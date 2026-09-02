@@ -32,11 +32,29 @@ local UserInputService = game:GetService("UserInputService")
 local Combat = {}
 Combat.__index = Combat
 
+local MASTERED_FEATURES = {
+	["Defense.Enabled"] = true,
+	["AttackAssistance.AutoFeint"] = true,
+	["AttackAssistance.DelayedFeint"] = true,
+	["AttackAssistance.HoldM1"] = true,
+	["AttackAssistance.FlourishFeint"] = true,
+	["AttackAssistance.ActionRolling"] = true,
+	["AttackAssistance.AnimationSpeed.Enabled"] = true,
+	["CombatAssistance.Wisp"] = true,
+	["CombatAssistance.GoldenTongue"] = true,
+	["CombatAssistance.MantraFollowUp"] = true,
+	["CombatAssistance.Ardour"] = true,
+	["CombatAssistance.FlowState"] = true,
+	["CombatAssistance.Rhythm"] = true,
+	["CombatAssistance.RagdollResponse"] = true,
+	["Diagnostics.Enabled"] = true,
+}
+
 function Combat.new(options)
 	options = options or {}
 	local persistence = Persistence.new(options.settingsPath)
 	local savedSettings = persistence:load()
-	local settings = Settings.new(savedSettings)
+	local settings = Settings.new(savedSettings):safeStart()
 	local state = State.new()
 	local history = EntityHistory.new(settings:get("Validation.HistorySeconds"))
 
@@ -89,7 +107,22 @@ function Combat.new(options)
 	self.Monitor = StateMonitor.new(state)
 	self.Presets = PresetManager.new(settings)
 	self.TimingIO = TimingPersistence.new(self.Timings, options.timingsPath)
-	self.TimingIO:load()
+	local remoteLoaded = false
+	local remoteTimings = rawget(environment, "CLAW_TIMINGS_JSON")
+	if type(remoteTimings) == "string" and #remoteTimings > 1024 then
+		remoteLoaded = self.TimingIO:import(remoteTimings) == true
+	end
+	-- Release the 1.5 MB JSON string once it has been decoded. A local timing
+	-- file is merged afterward, so user edits override the attributed baseline.
+	environment.CLAW_TIMINGS_JSON = nil
+	local localLoaded = self.TimingIO:load(remoteLoaded) == true
+	self.TimingSource = localLoaded and (remoteLoaded and "bundled+local" or "local")
+		or (remoteLoaded and "bundled" or "generic")
+	environment.CLAW_TIMING_STATUS = {
+		source = self.TimingSource,
+		count = self.Timings:count(),
+		ref = rawget(environment, "CLAW_DISTRIBUTION_REF"),
+	}
 	self.Assistance = AssistanceEngine.new(settings, state, self.Timings, self.Scheduler, self.Input, self.Executor)
 	local detectorOptions = options.detectors
 		or {
@@ -167,7 +200,9 @@ function Combat:start()
 	self.State:setCharacter(Players.LocalPlayer.Character)
 	self.Monitor:start()
 	self.Assistance:start()
-	self.Detectors:start()
+	if self.Settings:get("Enabled") then
+		self.Detectors:start()
+	end
 	self:_bind(RunService.Heartbeat, function()
 		self:_step()
 	end)
@@ -212,11 +247,37 @@ end
 
 function Combat:set(path, value, persist)
 	local result = self.Settings:set(path, value)
+	local enabledChanged = path == "Enabled"
+	if path == "Defense.Enabled" and value and not self.Settings:get("Detection.Animations") then
+		self.Settings:set("Detection.Animations", true)
+		self.State:emit("setting", { path = "Detection.Animations", value = true })
+	end
+	if MASTERED_FEATURES[path] and value and not self.Settings:get("Enabled") then
+		self.Settings:set("Enabled", true)
+		enabledChanged = true
+		self.State:emit("setting", { path = "Enabled", value = true })
+	end
 	if path == "Validation.HistorySeconds" then
 		self.History:setWindow(value)
 	end
 	if path == "Detection.OnlyConfigured" or path == "Detection.Sounds" then
 		self.Detectors:refresh()
+	end
+	local detectorName = string.match(path, "^Detection%.([^.]+)$")
+	if detectorName and self.Detectors.Detectors[detectorName] then
+		self.Detectors:sync(detectorName)
+	end
+	if enabledChanged and self.State.Running then
+		if self.Settings:get("Enabled") then
+			self._lastScan = -math.huge
+			self:_step()
+			self.Detectors:start()
+		else
+			self.Detectors:stop()
+			self.Scheduler:cancelAll("combat disabled")
+			self.Defense:reset()
+			self.State:setTargets({})
+		end
 	end
 	if persist ~= false then
 		self:queueSave()
@@ -243,7 +304,17 @@ function Combat:applyPreset(name)
 	local ok, reason = self.Presets:apply(name)
 	if ok then
 		self.History:setWindow(self.Settings:get("Validation.HistorySeconds"))
+		if self.State.Running then
+			if self.Settings:get("Enabled") then
+				self._lastScan = -math.huge
+				self:_step()
+				self.Detectors:start()
+			else
+				self.Detectors:stop()
+			end
+		end
 		self.Detectors:refresh()
+		self.Detectors:sync()
 		self:save()
 		self.State:emit("preset", name)
 	end
