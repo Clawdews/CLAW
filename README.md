@@ -2,6 +2,8 @@
 
 CLAW is the public development repository for **CLAW MARK**, a clean combat and animation toolkit. The source is split into focused modules and built into one runnable Lua bundle.
 
+See the [product specification](docs/PRODUCT_SPEC.md) and [phased roadmap](ROADMAP.md) for the acceptance criteria and planned Lycoris-informed work.
+
 ## Boundaries
 
 - `claw_mark.lua` is the current CLAW MARK entry point and UI shell.
@@ -22,7 +24,7 @@ CLAW is the public development repository for **CLAW MARK**, a clean combat and 
 
 The performance-sensitive path uses early detector indexes, event-driven state flags, weak entity/animator maps, a single shared hitbox waiter, a bounded hitbox-visual pool, periodic dedupe pruning, batch timing imports, and adaptive target-scan backoff.
 
-Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, optional filters/fallbacks, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master. The current v0.3.8 build includes the settings migration that discards earlier restrictive validation defaults once. Unknown animation defense is exposed separately from indexed detection and is rearm-limited so newly introduced weapon animations remain usable without treating immediate post-parry reactions as fresh attacks. Unknown animations with resolvable weapon data use animation-speed correction, Lycoris weapon reach, prediction/history, and delayed-hitbox validation instead of a fixed position-blind plan. Parry fallback now consults the game's replicated `ParryCool`, `NoRoll`, and stun effects instead of relying only on CLAW's local timer. Direct dodge and roll cancel use Lycoris-compatible `Dodge`/`StopDodge` transitions, with a state-aware mouse-input fallback when an executor cannot expose the native input table.
+Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, optional filters/fallbacks, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master. The current v0.3.9 build adds a deterministic known-good Stable preset, an input-releasing panic reset, searchable/paged access to every timing, a functional logger switch, a shareable diagnostic report, and a structured Ghost experiment ledger. It also makes transient cooldown/fallback decisions at the scheduled impact time, isolates simultaneous hitbox waits, cancels stale roll-cancel jobs, and guarantees that disabling Auto Defense quiesces pending actions. Unknown animation defense remains separately gated and rearm-limited. Parry fallback consults the game's replicated `ParryCool`, `NoRoll`, and stun effects, while direct dodge and roll cancel use Lycoris-compatible `Dodge`/`StopDodge` transitions with a state-aware mouse fallback when native input state is unavailable.
 
 ## Build
 

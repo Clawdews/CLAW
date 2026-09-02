@@ -108,9 +108,7 @@ function AssistanceEngine:_roll(trigger)
 	local action = Action.new({ kind = "Dodge", name = "Action Roll: " .. trigger })
 	local ok, reason = self.Executor:execute(action, { trigger = trigger })
 	if ok and attack.ActionRollCancelDelay >= 0 then
-		task.delay(attack.ActionRollCancelDelay, function()
-			self.Input:tapMouse(1, 0.035)
-		end)
+		self.Input:scheduleDodgeCancel(attack.ActionRollCancelDelay, false)
 	elseif not ok then
 		self.State:emit("assistance-unavailable", { name = "ActionRoll", reason = reason })
 	end

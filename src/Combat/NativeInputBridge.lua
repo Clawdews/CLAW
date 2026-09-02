@@ -499,6 +499,28 @@ function NativeInputBridge:stopDodge(direct)
 	return fired, fired and "LycorisNativeStopDodge" or fireReason
 end
 
+function NativeInputBridge:releaseAll(reason)
+	local detail = reason or "safe reset"
+	local blocking = self:_hasEffect("Blocking")
+	local shouldUnblock = blocking or not self.ReleaseSent or next(self.Queue) ~= nil
+
+	if self.InputData then
+		self.InputData.f = false
+	end
+	table.clear(self.Queue)
+	self.NextBlockRetry = 0
+	self.BlockRetryCount = 0
+
+	local ok, releaseReason = true, nil
+	if shouldUnblock and self.Ready then
+		ok, releaseReason = self:_sendUnblock(detail)
+	end
+	self.ReleaseSent = true
+	self.LastTransition = ok and ("released: " .. detail)
+		or ("release failed: " .. tostring(releaseReason))
+	return ok, releaseReason or detail
+end
+
 function NativeInputBridge:_updateQueue()
 	local now = os.clock()
 	local hadEntries = next(self.Queue) ~= nil

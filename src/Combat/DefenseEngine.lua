@@ -197,6 +197,9 @@ function DefenseEngine:_waitForHitbox(key, event, profile, target, action)
 end
 
 function DefenseEngine:_execute(key, event, profile, target, action, hitboxReady)
+	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
+		return self:_reject("defense disabled before execution")
+	end
 	local currentTarget = self:_targetFor(event.entity, event.position) or target
 	if not currentTarget or not currentTarget.Root or not currentTarget.Root.Parent then
 		return self:_reject("target-lost")
@@ -380,6 +383,7 @@ function DefenseEngine:handle(event)
 
 		local valid, validationReason = self.Validator:validate(event, profile, target, resolved, {
 			skipHitbox = profile.delayUntilHitbox,
+			skipTransient = true,
 		})
 		if not valid then
 			resolved = self.Fallbacks:resolve(resolved, validationReason, profile)
@@ -424,7 +428,8 @@ function DefenseEngine:handle(event)
 				stopConnection:Disconnect()
 				stopConnection = nil
 			end
-			return self:_execute(scheduled.identifier, event, profile, target, scheduledAction)
+			local executionKey = scheduled.identifier .. ":" .. tostring(scheduled.id)
+			return self:_execute(executionKey, event, profile, target, scheduledAction)
 		end)
 
 		if event.track and not profile.ignoreAnimationEnd and not scheduledAction.metadata.ignoreAnimationEnd then

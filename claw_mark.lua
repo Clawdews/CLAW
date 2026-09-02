@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.8
+--  CLAW MARK v0.3.9
 --
 --  TABS
 --    BURSTER
@@ -105,6 +105,9 @@ ENV.__CLAW_MARK_PREFS =
 	or ENV.__ANIM_LAB_PREFS
 	or {
 		UIKey = "RightShift",
+		UIPosition = nil,
+		ActivePage = "BURSTER",
+		SelectedAnimation = "7318254065",
 		WebhookURL = "",
 		WebhookUsername = "CLAW MARK",
 		WebhookUserID = "",
@@ -507,7 +510,9 @@ local State = {
 	--------------------------------------------------------
 
 	Selected =
-		"7318254065",
+		type(PREFS.SelectedAnimation) == "string"
+			and string.match(PREFS.SelectedAnimation, "%d+")
+			or "7318254065",
 
 	Profiles = {},
 
@@ -571,6 +576,10 @@ local State = {
 
 	LastGhostDiagnostic = nil,
 
+	GhostExperiments = {},
+
+	GhostExperimentSequence = 0,
+
 	--------------------------------------------------------
 	-- UI
 	--------------------------------------------------------
@@ -582,6 +591,10 @@ local State = {
 	OldMouseBehavior = nil,
 
 	Minimized = false,
+
+	ActivePage = nil,
+
+	StatusNotice = nil,
 }
 
 ENV.__CLAW_MARK =
@@ -2113,8 +2126,21 @@ local function ghostFire(id)
 		State.ActiveGhosts[track] =
 			nil
 
-		State.LastGhostDiagnostic = {
+		State.GhostExperimentSequence += 1
+		local diagnostic = {
+			sequence = State.GhostExperimentSequence,
+			id = id,
+			at = os.clock(),
 			priority = params.priority,
+			speed = params.speed,
+			lifetime = params.lifetime,
+			fade = params.fade,
+			targetWeight = params.weight,
+			visibleCap = CONFIG.Ghost.VisibleCap,
+			maxWeight = maximumWeight,
+			timePosition = position,
+			visualGuard = guarded,
+			legGuard = CONFIG.Ghost.LegGuard,
 
 			joint =
 				poseGuard
@@ -2128,9 +2154,17 @@ local function ghostFire(id)
 
 			rotation =
 				poseGuard
-				and poseGuard.maxRotation
-				or 0,
+					and poseGuard.maxRotation
+					or 0,
+
+			visualResult = "unrated",
+			remoteResult = "unrated",
 		}
+		State.LastGhostDiagnostic = diagnostic
+		table.insert(State.GhostExperiments, diagnostic)
+		while #State.GhostExperiments > 40 do
+			table.remove(State.GhostExperiments, 1)
+		end
 
 		if
 			not State.Destroyed
@@ -3324,13 +3358,17 @@ Main.Size =
 		520
 	)
 
+local savedUIPosition = PREFS.UIPosition
+
 Main.Position =
-	UDim2.new(
-		0,
-		24,
-		0.5,
-		-260
-	)
+	type(savedUIPosition) == "table"
+		and UDim2.new(
+			tonumber(savedUIPosition.xScale) or 0,
+			tonumber(savedUIPosition.xOffset) or 24,
+			tonumber(savedUIPosition.yScale) or 0.5,
+			tonumber(savedUIPosition.yOffset) or -260
+		)
+		or UDim2.new(0, 24, 0.5, -260)
 
 Main.BackgroundColor3 =
 	COLORS.BG
@@ -3454,7 +3492,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.8",
+	"CLAW MARK v0.3.9",
 	8,
 	0,
 	170,
@@ -3549,8 +3587,18 @@ do
 				Enum.UserInputType.MouseButton1
 			then
 
-				dragging =
-					false
+				local wasDragging = dragging
+
+				dragging = false
+
+				if wasDragging then
+					PREFS.UIPosition = {
+						xScale = Main.Position.X.Scale,
+						xOffset = Main.Position.X.Offset,
+						yScale = Main.Position.Y.Scale,
+						yOffset = Main.Position.Y.Offset,
+					}
+				end
 			end
 		end
 	)
@@ -3796,7 +3844,26 @@ local Pages = {
 		WebhookPage,
 }
 
+local PageNames = {
+	[BurstPage] = "BURSTER",
+	[LogsPage] = "LOGGED",
+	[LivePage] = "LIVE",
+	[GhostPage] = "GHOST FIRE",
+	[CombatPage] = "COMBAT",
+	[TimingsPage] = "TIMINGS",
+	[AssistPage] = "ASSIST",
+	[DebugPage] = "DEBUG",
+	[WebhookPage] = "WEBHOOK",
+}
+
+local PagesByName = {}
+for page, name in pairs(PageNames) do
+	PagesByName[name] = page
+end
+
 local function openPage(target)
+	State.ActivePage = target
+	PREFS.ActivePage = PageNames[target] or "BURSTER"
 
 	for tab, page
 		in pairs(Pages)
@@ -3845,6 +3912,14 @@ Status.TextColor3 =
 	COLORS.MUTED
 
 local function refreshStatus()
+	local notice = State.StatusNotice
+	if notice and os.clock() < notice.expires then
+		Status.Text = notice.text
+		Status.TextColor3 = notice.color or COLORS.ACCENT
+		return
+	end
+	State.StatusNotice = nil
+	Status.TextColor3 = COLORS.MUTED
 
 	local targetName =
 		State.TargetPlayer
@@ -3857,10 +3932,12 @@ local function refreshStatus()
 		or "GHOST:STOP"
 
 	local combat = State.Combat
-	local defense = "DEF:OFF"
-	if combat and combat.Settings:get("Defense.Enabled") then
+	local defense = "SAFE/OFF"
+	if combat and combat.Settings:get("Defense.Enabled") and not combat.Settings:get("Enabled") then
+		defense = "MASTER:OFF / DEF:ARMED"
+	elseif combat and combat.Settings:get("Defense.Enabled") then
 		local timingCount = combat.Timings:count()
-		defense = timingCount > 0 and ("DEF:ON/" .. tostring(timingCount)) or "DEF:GENERIC"
+		defense = timingCount > 0 and ("DEF:READY/" .. tostring(timingCount)) or "DEF:GENERIC"
 	end
 	local targetCount = combat and #combat.State.Targets or 0
 
@@ -3875,6 +3952,22 @@ local function refreshStatus()
 			defense,
 			targetCount
 		)
+end
+
+local function showStatus(message, color, duration)
+	local notice = {
+		text = tostring(message),
+		color = color or COLORS.ACCENT,
+		expires = os.clock() + (duration or 3),
+	}
+	State.StatusNotice = notice
+	refreshStatus()
+	task.delay(duration or 3, function()
+		if not State.Destroyed and State.StatusNotice == notice then
+			State.StatusNotice = nil
+			refreshStatus()
+		end
+	end)
 end
 
 --==============================================================
@@ -3933,6 +4026,16 @@ local CopyID =
 		209,
 		48,
 		70,
+		24
+	)
+
+local BurstMasterPage =
+	mkButton(
+		BurstPage,
+		"MASTER: OFF",
+		286,
+		48,
+		140,
 		24
 	)
 
@@ -4111,7 +4214,17 @@ UI.RefreshBurst =
 		BurstEnable.BackgroundColor3 =
 			rule.enabled
 			and COLORS.GREEN
-			or COLORS.RED
+			or COLORS.PANEL2
+
+		BurstMasterPage.Text =
+			CONFIG.BursterMaster
+				and "MASTER: ON"
+				or "MASTER: OFF"
+
+		BurstMasterPage.BackgroundColor3 =
+			CONFIG.BursterMaster
+				and COLORS.GREEN
+				or COLORS.PANEL2
 
 		ReplayToggle.Text =
 			rule.visualReplay
@@ -4174,6 +4287,21 @@ bind(
 			not rule.enabled
 
 		UI.RefreshBurst()
+	end
+)
+
+bind(
+	BurstMasterPage.MouseButton1Click,
+	function()
+		CONFIG.BursterMaster = not CONFIG.BursterMaster
+		UI.RefreshBurst()
+		if UI.RefreshBurstMasterMenu then
+			UI.RefreshBurstMasterMenu()
+		end
+		showStatus(
+			CONFIG.BursterMaster and "Burster master enabled" or "Burster master disabled",
+			CONFIG.BursterMaster and COLORS.GREEN or COLORS.ACCENT
+		)
 	end
 )
 
@@ -4243,6 +4371,29 @@ local ClearLogs =
 		70,
 		23
 	)
+
+local LoggingToggle =
+	mkButton(
+		LogsPage,
+		"LOGGER: OFF",
+		414,
+		0,
+		112,
+		23
+	)
+
+local LogCount =
+	mkLabel(
+		LogsPage,
+		"0 UNIQUE",
+		534,
+		0,
+		122,
+		23,
+		9
+	)
+
+LogCount.TextColor3 = COLORS.MUTED
 
 local LogScroll,
 	LogLayout =
@@ -4352,6 +4503,8 @@ local function makeLogRow(id)
 			State.Selected =
 				id
 
+			PREFS.SelectedAnimation = id
+
 			UI.RefreshBurst()
 
 			if UI.RefreshGhost then
@@ -4416,6 +4569,7 @@ UI.UpdateProfileRow =
 			)
 
 		updateLogCanvas()
+		UI.RefreshLogging()
 	end
 
 UI.ClearLogRows =
@@ -4437,6 +4591,7 @@ UI.ClearLogRows =
 		State.LogRows = {}
 
 		updateLogCanvas()
+		UI.RefreshLogging()
 	end
 
 bind(
@@ -4474,6 +4629,22 @@ bind(
 	function()
 
 		clearProfiles()
+		UI.RefreshLogging()
+		showStatus("Animation log cleared", COLORS.ACCENT)
+	end
+)
+
+bind(
+	LoggingToggle.MouseButton1Click,
+	function()
+		CONFIG.LoggingEnabled = not CONFIG.LoggingEnabled
+		UI.RefreshLogging()
+		showStatus(
+			CONFIG.LoggingEnabled
+				and "Animation logger enabled for the selected target"
+				or "Animation logger paused; existing results kept",
+			CONFIG.LoggingEnabled and COLORS.GREEN or COLORS.ACCENT
+		)
 	end
 )
 
@@ -4497,6 +4668,7 @@ bind(
 				addGhostPool(id)
 			end
 		end
+		showStatus("Visible animation results added to Ghost pool", COLORS.GREEN)
 	end
 )
 
@@ -4569,6 +4741,8 @@ local function makeLiveRow(track)
 
 				State.Selected =
 					id
+
+				PREFS.SelectedAnimation = id
 
 				UI.RefreshBurst()
 
@@ -5011,6 +5185,114 @@ local LegGuardButton =
 		22
 	)
 
+do
+local GhostLedger = Instance.new("Frame")
+GhostLedger.Position = UDim2.fromOffset(444, 0)
+GhostLedger.Size = UDim2.fromOffset(212, 403)
+GhostLedger.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+GhostLedger.BorderColor3 = COLORS.BORDER
+GhostLedger.BorderSizePixel = 1
+GhostLedger.Parent = GhostPage
+
+local GhostLedgerHeading = mkLabel(GhostLedger, "EXPERIMENT LEDGER", 8, 3, 196, 20, 10)
+GhostLedgerHeading.TextColor3 = COLORS.ACCENT
+local GhostLedgerText = mkLabel(GhostLedger, "No Ghost tests recorded.", 8, 28, 196, 210, 8)
+GhostLedgerText.TextYAlignment = Enum.TextYAlignment.Top
+GhostLedgerText.TextWrapped = false
+
+local GhostMarkClean = mkButton(GhostLedger, "VISUAL: CLEAN", 8, 248, 94, 23)
+local GhostMarkTwitch = mkButton(GhostLedger, "VISUAL: TWITCH", 110, 248, 94, 23)
+local GhostRemoteYes = mkButton(GhostLedger, "REMOTE: YES", 8, 277, 94, 23)
+local GhostRemoteNo = mkButton(GhostLedger, "REMOTE: NO", 110, 277, 94, 23)
+local GhostCopyLedger = mkButton(GhostLedger, "COPY JSON", 8, 306, 94, 23)
+local GhostClearLedger = mkButton(GhostLedger, "CLEAR", 110, 306, 94, 23)
+local GhostLedgerHint = mkLabel(
+	GhostLedger,
+	"Run one controlled test, then mark what you saw locally and whether the remote logger detected it.",
+	8,
+	337,
+	196,
+	56,
+	8
+)
+GhostLedgerHint.TextWrapped = true
+GhostLedgerHint.TextYAlignment = Enum.TextYAlignment.Top
+GhostLedgerHint.TextColor3 = COLORS.MUTED
+
+local function refreshGhostLedger()
+	local rows = {}
+	local first = math.max(1, #State.GhostExperiments - 8)
+	for index = first, #State.GhostExperiments do
+		local item = State.GhostExperiments[index]
+		rows[#rows + 1] = string.format(
+			"#%d %s W%.6f R%.2f %s/%s",
+			item.sequence or index,
+			item.id or "?",
+			item.maxWeight or 0,
+			item.rotation or 0,
+			item.visualResult == "clean" and "C" or item.visualResult == "twitch" and "T" or "?",
+			item.remoteResult == "yes" and "R+" or item.remoteResult == "no" and "R-" or "R?"
+		)
+	end
+	GhostLedgerText.Text = #rows > 0 and table.concat(rows, "\n") or "No Ghost tests recorded."
+	local last = State.LastGhostDiagnostic
+	GhostMarkClean.BackgroundColor3 = last and last.visualResult == "clean" and COLORS.GREEN or COLORS.PANEL2
+	GhostMarkTwitch.BackgroundColor3 = last and last.visualResult == "twitch" and COLORS.RED or COLORS.PANEL2
+	GhostRemoteYes.BackgroundColor3 = last and last.remoteResult == "yes" and COLORS.GREEN or COLORS.PANEL2
+	GhostRemoteNo.BackgroundColor3 = last and last.remoteResult == "no" and COLORS.RED or COLORS.PANEL2
+end
+
+local function markLast(field, value, message)
+	local last = State.LastGhostDiagnostic
+	if not last then
+		showStatus("Fire one Ghost test before recording an observation", COLORS.RED)
+		return
+	end
+	last[field] = value
+	refreshGhostLedger()
+	showStatus(message, (value == "twitch" or value == "no") and COLORS.RED or COLORS.GREEN)
+end
+
+bind(GhostMarkClean.MouseButton1Click, function()
+	markLast("visualResult", "clean", "Last Ghost test marked visually clean")
+end)
+bind(GhostMarkTwitch.MouseButton1Click, function()
+	markLast("visualResult", "twitch", "Last Ghost test marked with visible twitch")
+end)
+bind(GhostRemoteYes.MouseButton1Click, function()
+	markLast("remoteResult", "yes", "Last Ghost test marked remote-detected")
+end)
+bind(GhostRemoteNo.MouseButton1Click, function()
+	markLast("remoteResult", "no", "Last Ghost test marked not detected remotely")
+end)
+bind(GhostCopyLedger.MouseButton1Click, function()
+	local clipboard = rawget(ENV, "setclipboard")
+	if type(clipboard) ~= "function" then
+		showStatus("Clipboard API unavailable on this executor", COLORS.RED)
+		return
+	end
+	local okEncode, encoded = pcall(HttpService.JSONEncode, HttpService, {
+		version = 1,
+		clawVersion = ENV.CLAW and ENV.CLAW.Version or "unknown",
+		experiments = State.GhostExperiments,
+	})
+	local okCopy = okEncode and pcall(clipboard, encoded)
+	showStatus(
+		okCopy and ("Copied " .. tostring(#State.GhostExperiments) .. " Ghost experiments")
+			or "Could not copy the Ghost experiment ledger",
+		okCopy and COLORS.GREEN or COLORS.RED
+	)
+end)
+bind(GhostClearLedger.MouseButton1Click, function()
+	table.clear(State.GhostExperiments)
+	State.LastGhostDiagnostic = nil
+	refreshGhostLedger()
+	showStatus("Ghost experiment ledger cleared", COLORS.ACCENT)
+end)
+
+UI.RefreshGhostLedger = refreshGhostLedger
+end
+
 local function pullGhostFields()
 
 	CONFIG.Ghost.Speed =
@@ -5295,6 +5577,10 @@ UI.RefreshGhost =
 				"  "
 			)
 			or "(empty)"
+
+		if UI.RefreshGhostLedger then
+			UI.RefreshGhostLedger()
+		end
 
 		refreshStatus()
 	end
@@ -6266,12 +6552,12 @@ else
 	local presetNames =
 		CombatRuntime.Presets:names()
 
-	local selectedPreset = nil
+	local selectedPreset = table.find(presetNames, "Stable") and "Stable" or presetNames[1]
 
 	local presetCycle =
 		mkButton(
 			detectionPanel,
-			"PRESET: NONE",
+			"PRESET: " .. string.upper(selectedPreset or "NONE"),
 			8,
 			115,
 			200,
@@ -6283,7 +6569,8 @@ else
 		function()
 			local index = selectedPreset and table.find(presetNames, selectedPreset) or 0
 			selectedPreset = presetNames[(index % #presetNames) + 1]
-			presetCycle.Text = "PRESET: " .. selectedPreset
+			presetCycle.Text = "PRESET: " .. string.upper(selectedPreset)
+			showStatus(CombatRuntime.Presets:describe(selectedPreset), COLORS.ACCENT, 4)
 		end
 	)
 
@@ -6296,8 +6583,12 @@ else
 			if not selectedPreset then
 				return
 			end
-			CombatRuntime:applyPreset(selectedPreset)
+			local ok, reason = CombatRuntime:applyPreset(selectedPreset)
 			combatRefreshAll()
+			showStatus(
+				ok and ("Applied " .. selectedPreset .. " preset") or ("Preset failed: " .. tostring(reason)),
+				ok and COLORS.GREEN or COLORS.RED
+			)
 		end
 	)
 
@@ -6308,12 +6599,14 @@ else
 		mkButton(detectionPanel, "RELOAD TARGETS", 164, 144, 148, 23)
 
 	bind(saveCombat.MouseButton1Click, function()
-		CombatRuntime:save()
+		local ok, reason = CombatRuntime:save()
+		showStatus(ok and "Combat settings saved" or ("Save failed: " .. tostring(reason)), ok and COLORS.GREEN or COLORS.RED)
 	end)
 
 	bind(reloadCombat.MouseButton1Click, function()
 		CombatRuntime.State:setTargets({})
 		CombatRuntime._lastScan = 0
+		showStatus("Target scan refreshed", COLORS.GREEN)
 	end)
 
 	local advancedTuningButton =
@@ -6420,6 +6713,7 @@ else
 		CombatRuntime:set("Targeting.Whitelist", parseTargetList(whitelistBox.Text))
 		CombatRuntime:set("Targeting.Blacklist", parseTargetList(blacklistBox.Text))
 		listsModal.Visible = false
+		showStatus("Target lists applied", COLORS.GREEN)
 	end)
 	bind(clearLists.MouseButton1Click, function()
 		whitelistBox.Text = ""
@@ -6493,15 +6787,30 @@ local TimingAdvanced = defaultTimingAdvanced()
 local refreshTimingAdvanced = function() end
 local refreshTimingActions = function() end
 
+local TimingBrowser = {
+	page = 1,
+	pageSize = 100,
+	filter = "all",
+}
+
+TimingBrowser.search = mkBox(TimingsPage, "", 0, 0, 140, 23)
+TimingBrowser.search.PlaceholderText = "search timings"
+TimingBrowser.filterButton = mkButton(TimingsPage, "TYPE: ALL", 146, 0, 94, 23)
+
 local TimingList,
 	TimingListLayout =
 	mkScroll(
 		TimingsPage,
 		0,
-		0,
+		31,
 		240,
-		403
+		336
 	)
+
+TimingBrowser.previous = mkButton(TimingsPage, "< PREV", 0, 375, 55, 23)
+TimingBrowser.pageLabel = mkLabel(TimingsPage, "PAGE 1/1", 59, 375, 122, 23, 9)
+TimingBrowser.pageLabel.TextXAlignment = Enum.TextXAlignment.Center
+TimingBrowser.next = mkButton(TimingsPage, "NEXT >", 185, 375, 55, 23)
 
 local timingEditor =
 	combatSection(
@@ -6740,6 +7049,17 @@ local function timingAdvancedCompactNumber(label, key, x, y)
 		TimingAdvanced[key] = clampNumber(box.Text, 0, 100, TimingAdvanced[key])
 		refresh()
 	end)
+end
+
+UI.RefreshLogging = function()
+	LoggingToggle.Text = CONFIG.LoggingEnabled and "LOGGER: ON" or "LOGGER: OFF"
+	LoggingToggle.BackgroundColor3 = CONFIG.LoggingEnabled and COLORS.GREEN or COLORS.PANEL2
+	local count = 0
+	for _ in pairs(State.Profiles) do
+		count += 1
+	end
+	LogCount.Text = tostring(count) .. " UNIQUE"
+	refreshStatus()
 end
 
 timingAdvancedToggle("DELAY UNTIL HITBOX", "delayUntilHitbox", 10, 35)
@@ -7006,17 +7326,37 @@ local function refreshTimingList()
 		return
 	end
 
-	local shown = 0
-	local maximumRows = 200
+	local matches = {}
+	local query = string.lower(TimingBrowser.search.Text or "")
 	for _, category in ipairs({ "animation", "sound", "part", "effect" }) do
-		for _, profile in ipairs(CombatRuntime.Timings:list(category)) do
-			if shown >= maximumRows then
-				break
+		if TimingBrowser.filter == "all" or TimingBrowser.filter == category then
+			for _, profile in ipairs(CombatRuntime.Timings:list(category)) do
+				local searchable = string.lower(table.concat({
+					category,
+					tostring(profile.id or ""),
+					tostring(profile.name or ""),
+					tostring(profile.tag or ""),
+					tostring(profile.sourceModule or ""),
+				}, " "))
+				if query == "" or string.find(searchable, query, 1, true) then
+					matches[#matches + 1] = { category = category, profile = profile }
+				end
 			end
-			shown = shown + 1
+		end
+	end
+
+	local pageCount = math.max(1, math.ceil(#matches / TimingBrowser.pageSize))
+	TimingBrowser.page = math.clamp(TimingBrowser.page, 1, pageCount)
+	local first = ((TimingBrowser.page - 1) * TimingBrowser.pageSize) + 1
+	local last = math.min(#matches, first + TimingBrowser.pageSize - 1)
+	for index = first, last do
+		local item = matches[index]
+		if item then
+			local category = item.category
+			local profile = item.profile
 			local row = mkButton(
 				TimingList,
-				string.format("[%s] %s", string.sub(category, 1, 1), profile.name),
+				string.format("[%s] %s", string.upper(string.sub(category, 1, 1)), profile.name),
 				0,
 				0,
 				238,
@@ -7028,29 +7368,46 @@ local function refreshTimingList()
 				loadTimingEditor(profile)
 			end)
 		end
-		if shown >= maximumRows then
-			break
-		end
 	end
-	if CombatRuntime.Timings:count() > shown then
-		local summary = mkLabel(
-			TimingList,
-			string.format("SHOWING %d / %d", shown, CombatRuntime.Timings:count()),
-			0,
-			0,
-			238,
-			24,
-			9
-		)
-		summary.Size = UDim2.new(1, -2, 0, 24)
-		summary.TextColor3 = COLORS.ACCENT
-	end
+
+	TimingBrowser.pageLabel.Text = string.format(
+		"%d/%d  %d MATCH",
+		TimingBrowser.page,
+		pageCount,
+		#matches
+	)
+	TimingBrowser.previous.BackgroundColor3 = TimingBrowser.page > 1 and COLORS.BLUE or COLORS.PANEL2
+	TimingBrowser.next.BackgroundColor3 = TimingBrowser.page < pageCount and COLORS.BLUE or COLORS.PANEL2
 
 	task.defer(function()
 		TimingList.CanvasSize =
 			UDim2.fromOffset(0, TimingListLayout.AbsoluteContentSize.Y)
 	end)
 end
+
+bind(TimingBrowser.search:GetPropertyChangedSignal("Text"), function()
+	TimingBrowser.page = 1
+	refreshTimingList()
+end)
+
+bind(TimingBrowser.filterButton.MouseButton1Click, function()
+	local filters = { "all", "animation", "sound", "part", "effect" }
+	local index = table.find(filters, TimingBrowser.filter) or 0
+	TimingBrowser.filter = filters[(index % #filters) + 1]
+	TimingBrowser.filterButton.Text = "TYPE: " .. string.upper(TimingBrowser.filter)
+	TimingBrowser.page = 1
+	refreshTimingList()
+end)
+
+bind(TimingBrowser.previous.MouseButton1Click, function()
+	TimingBrowser.page = math.max(1, TimingBrowser.page - 1)
+	refreshTimingList()
+end)
+
+bind(TimingBrowser.next.MouseButton1Click, function()
+	TimingBrowser.page += 1
+	refreshTimingList()
+end)
 
 bind(timingCategoryButton.MouseButton1Click, function()
 	local values = { "animation", "sound", "part", "effect" }
@@ -7366,7 +7723,10 @@ local clearDiagnostics =
 	mkButton(debugControls, "CLEAR DIAGNOSTICS", 8, 240, 304, 25)
 
 local copyDiagnostics =
-	mkButton(debugControls, "COPY TIMING DATABASE", 8, 273, 304, 25)
+	mkButton(debugControls, "COPY DEBUG", 8, 273, 148, 25)
+
+local copyTimingDatabase =
+	mkButton(debugControls, "COPY TIMINGS", 164, 273, 148, 25)
 
 local testParry =
 	mkButton(debugControls, "TEST PARRY", 8, 310, 148, 25)
@@ -7389,7 +7749,17 @@ end)
 
 bind(copyDiagnostics.MouseButton1Click, function()
 	if CombatRuntime then
-		CombatRuntime:exportTimings(true)
+		local ok, detail = CombatRuntime:diagnosticReport(true)
+		InputTestStatus.Text = ok and "DIAGNOSTIC REPORT: copied" or ("COPY FAILED: " .. tostring(detail))
+		InputTestStatus.TextColor3 = ok and COLORS.GREEN or COLORS.RED
+		showStatus(ok and "Diagnostic report copied" or tostring(detail), ok and COLORS.GREEN or COLORS.RED)
+	end
+end)
+
+bind(copyTimingDatabase.MouseButton1Click, function()
+	if CombatRuntime then
+		local ok, detail = CombatRuntime:exportTimings(true)
+		showStatus(ok and "Timing database copied" or tostring(detail), ok and COLORS.GREEN or COLORS.RED)
 	end
 end)
 
@@ -7507,7 +7877,7 @@ local Menu =
 Menu.Size =
 	UDim2.fromOffset(
 		185,
-		160
+		192
 	)
 
 Menu.Position =
@@ -7600,19 +7970,31 @@ local ResetPos =
 local BurstMaster =
 	mkButton(
 		Menu,
-		"BURST ON",
+		"BURST OFF",
 		94,
 		90,
 		79,
 		23
 	)
 
+local SafeReset =
+	mkButton(
+		Menu,
+		"PANIC / ALL OFF",
+		8,
+		120,
+		165,
+		25
+	)
+
+SafeReset.BackgroundColor3 = COLORS.RED
+
 local Unload =
 	mkButton(
 		Menu,
 		"UNLOAD",
 		8,
-		120,
+		152,
 		165,
 		25
 	)
@@ -7688,8 +8070,21 @@ bind(
 				0.5,
 				-260
 			)
+
+		PREFS.UIPosition = nil
+		showStatus("Window position reset", COLORS.GREEN)
 	end
 )
+
+local function refreshBurstMasterButtons()
+	BurstMaster.Text = CONFIG.BursterMaster and "BURST ON" or "BURST OFF"
+	BurstMaster.BackgroundColor3 = CONFIG.BursterMaster and COLORS.GREEN or COLORS.PANEL2
+	if UI.RefreshBurst then
+		UI.RefreshBurst()
+	end
+end
+
+UI.RefreshBurstMasterMenu = refreshBurstMasterButtons
 
 bind(
 	BurstMaster.MouseButton1Click,
@@ -7699,17 +8094,27 @@ bind(
 			not
 			CONFIG.BursterMaster
 
-		BurstMaster.Text =
-			CONFIG.BursterMaster
-			and "BURST ON"
-			or "BURST OFF"
-
-		BurstMaster.BackgroundColor3 =
-			CONFIG.BursterMaster
-			and COLORS.GREEN
-			or COLORS.RED
+		refreshBurstMasterButtons()
 	end
 )
+
+bind(SafeReset.MouseButton1Click, function()
+	stopGhostRunner()
+	CONFIG.BursterMaster = false
+	CONFIG.LoggingEnabled = false
+	if CombatRuntime then
+		CombatRuntime:panic()
+	end
+	refreshBurstMasterButtons()
+	if UI.RefreshLogging then
+		UI.RefreshLogging()
+	end
+	combatRefreshAll()
+	Menu.Visible = false
+	showStatus("PANIC COMPLETE — every active CLAW feature is off", COLORS.GREEN, 5)
+end)
+
+refreshBurstMasterButtons()
 
 --==============================================================
 -- HEADER EVENTS
@@ -7787,7 +8192,7 @@ bind(
 				true
 
 			openPage(
-				BurstPage
+				State.ActivePage or BurstPage
 			)
 		end
 	end
@@ -8053,6 +8458,8 @@ UI.RefreshBurst()
 
 UI.RefreshGhost()
 
+UI.RefreshLogging()
+
 local initialLootSync, initialLootDetail =
 	syncLootConfiguration()
 
@@ -8067,18 +8474,17 @@ refreshWebhook()
 
 refreshStatus()
 
-openPage(
-	BurstPage
-)
+local initialPage = PagesByName[PREFS.ActivePage] or BurstPage
+openPage(initialPage)
 
 assert(
 	Gui.Parent ~= nil
 		and Main.Parent == Gui
-		and BurstPage.Visible
+		and initialPage.Visible
 		and #State.Connections > 0,
 	"CLAW MARK UI startup check failed"
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.8 online"
+	"[CLAW] CLAW MARK v0.3.9 online"
 )

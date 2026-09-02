@@ -251,36 +251,42 @@ function ValidationEngine:validate(event, profile, target, action, options)
 	if settingPath and not self.Settings:get(settingPath) then
 		return false, "action-disabled"
 	end
-	if self.Settings:get("Validation.Cooldown") and not self.Executor:canExecute(action) then
-		return false, "cooldown"
-	end
-
-	-- The local executor cooldown only tells us when CLAW last sent an input.
-	-- Deepwoken's replicated effects are the authoritative answer for whether
-	-- the next parry or dodge can actually begin. Keeping this check in
-	-- validation lets the fallback resolver choose a dodge before a doomed
-	-- second Block request is sent during ParryCool.
-	local native = self.Executor.Input and self.Executor.Input.Native
-	if action.kind == "Parry" and native then
-		local canParry, parryReason = native:canParry()
-		if not canParry then
-			return false, parryReason
+	if not options.skipTransient then
+		if self.Settings:get("Validation.Cooldown") and not self.Executor:canExecute(action) then
+			return false, "cooldown"
 		end
-	elseif (action.kind == "Dodge" or action.kind == "FullDodge") and native then
-		local canDodge, dodgeReason = native:canDodge()
-		if not canDodge then
-			return false, dodgeReason
+
+		-- The local executor cooldown only tells us when CLAW last sent an input.
+		-- Deepwoken's replicated effects are the authoritative answer at the
+		-- scheduled execution moment. Planning deliberately skips this block so
+		-- a future parry does not become an immediate dodge while ParryCool is
+		-- still active at detection time.
+		local native = self.Executor.Input and self.Executor.Input.Native
+		if action.kind == "Parry" and native then
+			local canParry, parryReason = native:canParry()
+			if not canParry then
+				return false, parryReason
+			end
+		elseif (action.kind == "Dodge" or action.kind == "FullDodge") and native then
+			local canDodge, dodgeReason = native:canDodge()
+			if not canDodge then
+				return false, dodgeReason
+			end
 		end
 	end
 
 	local character = self.State.Character
 	if
+		not options.skipTransient
+		and
 		self.Settings:get("Validation.IFrames")
 		and hasState(character, { "IFrame", "Invulnerable", "Dodging", "Immortal" })
 	then
 		return false, "iframes"
 	end
 	if
+		not options.skipTransient
+		and
 		action.kind == "Parry"
 		and self.Settings:get("Validation.AutoParryFrames")
 		and self.State.Flags.AutoParryFrames
@@ -288,12 +294,14 @@ function ValidationEngine:validate(event, profile, target, action, options)
 		return false, "auto-parry-frames"
 	end
 	if
+		not options.skipTransient
+		and
 		self.Settings:get("Validation.Stun")
 		and hasState(character, { "Stun", "Stunned", "Knocked", "Unconscious", "Carried" })
 	then
 		return false, "stunned"
 	end
-	if self.State.Flags.Attacking and not profile.allowAttacking then
+	if not options.skipTransient and self.State.Flags.Attacking and not profile.allowAttacking then
 		return false, "already-attacking"
 	end
 

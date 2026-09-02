@@ -256,6 +256,11 @@ function Combat:set(path, value, persist)
 	if path == "Defense.Enabled" and value then
 		self.Input:warmup()
 	end
+	if path == "Defense.Enabled" and not value then
+		self.Scheduler:cancelAll("auto defense disabled")
+		self.Defense:reset()
+		self.Input:releaseAll("auto defense disabled")
+	end
 	if MASTERED_FEATURES[path] and value and not self.Settings:get("Enabled") then
 		self.Settings:set("Enabled", true)
 		enabledChanged = true
@@ -280,6 +285,7 @@ function Combat:set(path, value, persist)
 			self.Detectors:stop()
 			self.Scheduler:cancelAll("combat disabled")
 			self.Defense:reset()
+			self.Input:releaseAll("combat disabled")
 			self.State:setTargets({})
 		end
 	end
@@ -353,6 +359,47 @@ function Combat:exportTimings(copyToClipboard)
 		return self.TimingIO:copy()
 	end
 	return self.TimingIO:export()
+end
+
+function Combat:diagnosticReport(copyToClipboard)
+	local report = self.Diagnostics:report({
+		version = environment.CLAW and environment.CLAW.Version,
+		distributionRef = rawget(environment, "CLAW_DISTRIBUTION_REF"),
+		timingCount = self.Timings:count(),
+		timingSource = self.TimingSource,
+		native = {
+			status = self.Input.Native.Status,
+			last = self.Input.Native.LastTransition,
+			stats = self.Input.Native.Stats,
+		},
+	})
+	if not copyToClipboard then
+		return report
+	end
+	local setclipboard = rawget(environment, "setclipboard")
+	if type(setclipboard) ~= "function" then
+		return false, "clipboard API is unavailable"
+	end
+	local ok, reason = pcall(setclipboard, report)
+	return ok, ok and "diagnostic report copied" or tostring(reason)
+end
+
+function Combat:panic()
+	self.Settings:safeStart()
+	self.Detectors:stop()
+	self.Scheduler:cancelAll("safe reset")
+	self.Defense:reset()
+	self.Assistance:stop()
+	local released, releaseDetail = self.Input:releaseAll("safe reset")
+	self.State:setTargets({})
+	table.clear(self.State.Cooldowns)
+	self.History:clear()
+	if self.State.Running then
+		self.Assistance:start()
+	end
+	self:save()
+	self.State:emit("safe-reset", releaseDetail)
+	return released, releaseDetail
 end
 
 function Combat:testAction(kind)

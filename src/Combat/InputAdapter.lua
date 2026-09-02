@@ -75,6 +75,7 @@ function InputAdapter.new(options)
 		Settings = options.settings,
 		LastInput = nil,
 		Native = NativeInputBridge.new(),
+		DodgeCancelGeneration = 0,
 	}, InputAdapter)
 end
 
@@ -112,20 +113,41 @@ end
 
 function InputAdapter:scheduleDodgeCancel(delaySeconds, direct)
 	local delay = math.max(0, tonumber(delaySeconds) or 0)
+	self.DodgeCancelGeneration = self.DodgeCancelGeneration + 1
+	local generation = self.DodgeCancelGeneration
 	task.spawn(function()
 		local earliest = os.clock() + delay
+		local observed = direct == true
 		while os.clock() < earliest do
+			if generation ~= self.DodgeCancelGeneration then
+				return
+			end
+			if not direct and self.Native:isDodging() then
+				observed = true
+			end
 			task.wait()
 		end
 
 		-- A normal Q dodge is created by the game's InputClient, so wait for its
 		-- replicated roll state before cancelling. A direct remote dodge follows
 		-- Lycoris's fixed 0.15 second path and can be stopped immediately here.
-		if not direct then
+		if not direct and not observed then
 			local stateDeadline = os.clock() + 0.22
-			while os.clock() < stateDeadline and not self.Native:isDodging() do
+			while
+				generation == self.DodgeCancelGeneration
+				and os.clock() < stateDeadline
+				and not self.Native:isDodging()
+			do
 				task.wait()
 			end
+			observed = self.Native:isDodging()
+		end
+		if generation ~= self.DodgeCancelGeneration then
+			return
+		end
+		if not observed then
+			self.Native.LastTransition = "dodge cancel skipped: roll not observed"
+			return
 		end
 
 		local ok, detail = self.Native:stopDodge(direct == true)
@@ -150,6 +172,32 @@ function InputAdapter:scheduleDodgeCancel(delaySeconds, direct)
 			or ("dodge cancel failed: " .. tostring(mouseDetail or detail))
 	end)
 	return true, "dodge cancel scheduled"
+end
+
+function InputAdapter:cancelDodgeCancel(reason)
+	self.DodgeCancelGeneration = self.DodgeCancelGeneration + 1
+	self.Native.LastTransition = "dodge cancel cleared: " .. tostring(reason or "cancelled")
+end
+
+function InputAdapter:releaseAll(reason)
+	self:cancelDodgeCancel(reason or "release all")
+	local nativeOK, nativeDetail = self.Native:releaseAll(reason)
+	-- These are releases only: they cannot start a new action, but they recover
+	-- executors that were interrupted between a press and its delayed release.
+	pcall(self.mouse, self, 0, false)
+	pcall(self.mouse, self, 1, false)
+	pcall(self.key, self, Enum.KeyCode.F, false)
+	pcall(self.key, self, Enum.KeyCode.Q, false)
+	self.LastInput = {
+		kind = "release",
+		name = "All",
+		backend = nativeOK and "safe-reset" or "release-fallback",
+		isDown = false,
+		ok = nativeOK,
+		detail = nativeDetail,
+		at = os.clock(),
+	}
+	return nativeOK, nativeDetail
 end
 
 local function keyCodeFromName(name)
@@ -326,6 +374,7 @@ function InputAdapter:custom(name, ...)
 end
 
 function InputAdapter:Destroy()
+	self:cancelDodgeCancel("destroyed")
 	self.Native:Destroy()
 end
 
