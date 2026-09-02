@@ -22,7 +22,7 @@ CLAW is the public development repository for **CLAW MARK**, a clean combat and 
 
 The performance-sensitive path uses early detector indexes, event-driven state flags, weak entity/animator maps, a single shared hitbox waiter, a bounded hitbox-visual pool, periodic dedupe pruning, batch timing imports, and adaptive target-scan backoff.
 
-Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master.
+Every launch starts inert: Burster, every burst rule, animation logging, Ghost Fire, auto-defense, attack/combat assistance, probability, optional filters/fallbacks, diagnostics, and debug blocks are reset to OFF even if an older settings file saved them as enabled. Tuning values, target lists, key bindings, and explicitly selected action-roll targets remain saved. Enabling Auto Defense or an assistance feature automatically enables its required Combat master. The v0.3.2 settings migration discards the earlier restrictive v1 defaults once.
 
 ## Build
 

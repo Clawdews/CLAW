@@ -17,6 +17,9 @@ function State.new()
 	self.Cooldowns = {}
 	self.Flags = {}
 	self.LastEvent = nil
+	self.LastDetection = nil
+	self.LastReject = nil
+	self.LastActionResult = nil
 	self.Metrics = {
 		Detected = 0,
 		Scheduled = 0,
@@ -72,6 +75,9 @@ function State:resetRuntime()
 	table.clear(self.Cooldowns)
 	table.clear(self.Flags)
 	self.LastEvent = nil
+	self.LastDetection = nil
+	self.LastReject = nil
+	self.LastActionResult = nil
 end
 
 function State:Destroy()

@@ -31,6 +31,8 @@ const combined = [...sources.values()].join("\n");
 const entry = sources.get(manifest.entry);
 const settingsSource = sources.get("src/Combat/Settings.lua");
 const combatSource = sources.get("src/Combat/init.lua");
+const inputSource = sources.get("src/Combat/InputAdapter.lua");
+const nativeInputSource = sources.get("src/Combat/NativeInputBridge.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -47,6 +49,9 @@ check(/LoggingEnabled\s*=\s*false/.test(entry), "animation logging must start di
 check(!/name\s*=\s*"(?:Critical|Flourish)"[\s\S]{0,80}?enabled\s*=\s*true/.test(entry), "a built-in burst rule starts enabled");
 check(settingsSource.includes("function Settings:safeStart()"), "safe-start settings reset is missing");
 check(combatSource.includes("Settings.new(savedSettings):safeStart()"), "saved active switches can bypass safe start");
+check(inputSource.includes("string.byte(string.upper(name))"), "executor virtual-key conversion is missing");
+check(nativeInputSource.includes('self:_remote("Block")'), "native block remote bridge is missing");
+check(nativeInputSource.includes("self.InputData.f = active"), "native block input-state mirroring is missing");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");

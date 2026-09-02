@@ -23,6 +23,7 @@
     "src/Combat/Detection/PartDetector.lua",
     "src/Combat/Detection/EffectDetector.lua",
     "src/Combat/Detection/DetectorHub.lua",
+    "src/Combat/NativeInputBridge.lua",
     "src/Combat/InputAdapter.lua",
     "src/Combat/ActionExecutor.lua",
     "src/Combat/TimingResolver.lua",

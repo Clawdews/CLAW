@@ -114,7 +114,7 @@ function DefenseEngine:_unknownAnimationProfile(event)
 		name = "Unindexed animation " .. event.id,
 		detector = "animation",
 		tag = "Undefined",
-		maxDistance = self.Settings:get("Targeting.MaxDistance"),
+		maxDistance = math.min(self.Settings:get("Targeting.MaxDistance"), 100),
 		facingHitbox = false,
 		punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
 		afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
@@ -146,6 +146,10 @@ end
 
 function DefenseEngine:_reject(reason)
 	self.State:increment("Rejected")
+	self.State.LastReject = {
+		reason = tostring(reason),
+		at = os.clock(),
+	}
 	self.State:emit("action-rejected", reason)
 	return false
 end
@@ -259,6 +263,12 @@ end
 
 function DefenseEngine:handle(event)
 	self.State:increment("Detected")
+	self.State.LastDetection = {
+		detector = event.detector,
+		id = event.id,
+		entity = event.entity and event.entity.Name or "?",
+		at = os.clock(),
+	}
 	self.State:emit("detected", event)
 
 	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
@@ -269,7 +279,7 @@ function DefenseEngine:handle(event)
 		local reason
 		profile, reason = self:_unknownAnimationProfile(event)
 		if not profile then
-			return false, reason or "no timing profile"
+			return self:_reject(reason or "no timing profile")
 		end
 		self.State:emit("generic-defense", {
 			event = event,
@@ -278,13 +288,13 @@ function DefenseEngine:handle(event)
 	end
 	local localEvent = event.entity == self.State.Character
 	if localEvent and profile.ignoreLocalPlayer then
-		return false, "ignored local character event"
+		return self:_reject("ignored local character event")
 	end
 	if localEvent and not profile.allowLocalPlayer and not profile.forceLocalPlayer then
-		return false, "local character event is not allowed"
+		return self:_reject("local character event is not allowed")
 	end
 	if profile.forceLocalPlayer and not localEvent then
-		return false, "effect is not on local character"
+		return self:_reject("effect is not on local character")
 	end
 
 	local target = localEvent
@@ -295,15 +305,14 @@ function DefenseEngine:handle(event)
 			})
 		or self:_targetFor(event.entity, event.position)
 	if not target then
-		self.State:increment("Rejected")
-		return false, "event entity is not a selected target"
+		return self:_reject("event entity is not a selected target")
 	end
 
 	local dedupeKey = string.format("%s:%s:%s", event.detector, event.id, tostring(event.entity or event.instance))
 	local now = os.clock()
 	self:_prune(now)
 	if now - (self.Recent[dedupeKey] or 0) < 0.02 then
-		return false, "duplicate event"
+		return self:_reject("duplicate event")
 	end
 	self.Recent[dedupeKey] = now
 	self.State:emit("defense-profile", {
@@ -371,7 +380,7 @@ function DefenseEngine:handle(event)
 				stopConnection:Disconnect()
 				stopConnection = nil
 			end
-			self:_execute(scheduled.identifier, event, profile, target, scheduledAction)
+			return self:_execute(scheduled.identifier, event, profile, target, scheduledAction)
 		end)
 
 		if event.track and not profile.ignoreAnimationEnd and not scheduledAction.metadata.ignoreAnimationEnd then

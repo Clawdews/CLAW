@@ -64,6 +64,11 @@ function ActionExecutor:execute(action, context)
 		if not success then
 			success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
 		end
+	elseif kind == "Parry" or kind == "Block" then
+		success, result = self.Input:nativeBlock(duration, kind == "Parry")
+		if not success then
+			success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
+		end
 	elseif KEY_BINDINGS[kind] then
 		success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
 	elseif kind == "Feint" then
@@ -76,10 +81,22 @@ function ActionExecutor:execute(action, context)
 	end
 
 	if not success then
+		self.State.LastActionResult = {
+			ok = false,
+			kind = action.kind,
+			reason = tostring(result),
+			at = os.clock(),
+		}
 		return false, result
 	end
 
 	self:_markCooldown(action)
+	self.State.LastActionResult = {
+		ok = true,
+		kind = action.kind,
+		backend = tostring(result or "unknown"),
+		at = os.clock(),
+	}
 	self.State:emit("action", {
 		action = action,
 		context = context,
@@ -91,7 +108,7 @@ function ActionExecutor:execute(action, context)
 		end)
 	end
 
-	return true
+	return true, result
 end
 
 return ActionExecutor

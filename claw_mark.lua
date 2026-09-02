@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3-dev
+--  CLAW MARK v0.3.2
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3",
+	"CLAW MARK v0.3.2",
 	8,
 	0,
 	170,
@@ -7371,6 +7371,19 @@ local clearDiagnostics =
 local copyDiagnostics =
 	mkButton(debugControls, "COPY TIMING DATABASE", 8, 263, 304, 25)
 
+local testParry =
+	mkButton(debugControls, "TEST PARRY", 8, 300, 148, 25)
+
+local testDodge =
+	mkButton(debugControls, "TEST DODGE", 164, 300, 148, 25)
+
+local InputTestStatus =
+	mkLabel(debugControls, "INPUT SELF-TEST: not run", 8, 333, 304, 55, 9)
+
+InputTestStatus.TextWrapped = true
+InputTestStatus.TextYAlignment = Enum.TextYAlignment.Top
+InputTestStatus.TextColor3 = COLORS.MUTED
+
 bind(clearDiagnostics.MouseButton1Click, function()
 	if CombatRuntime then
 		CombatRuntime.Diagnostics:clear()
@@ -7383,14 +7396,38 @@ bind(copyDiagnostics.MouseButton1Click, function()
 	end
 end)
 
+local function runInputTest(kind)
+	if not CombatRuntime then
+		return
+	end
+	local ok, detail = CombatRuntime:testAction(kind)
+	local nativeStatus = CombatRuntime.Input.Native.Status
+	InputTestStatus.Text = string.format(
+		"%s: %s (%s)\nNative: %s",
+		string.upper(kind),
+		ok and "SENT" or "FAILED",
+		tostring(detail or "unknown"),
+		tostring(nativeStatus)
+	)
+	InputTestStatus.TextColor3 = ok and COLORS.GREEN or COLORS.RED
+end
+
+bind(testParry.MouseButton1Click, function()
+	runInputTest("Parry")
+end)
+
+bind(testDodge.MouseButton1Click, function()
+	runInputTest("Dodge")
+end)
+
 local DebugSummary =
-	mkLabel(debugStats, "", 8, 28, 304, 190, 10)
+	mkLabel(debugStats, "", 8, 28, 304, 232, 10)
 
 DebugSummary.TextWrapped = false
 DebugSummary.TextYAlignment = Enum.TextYAlignment.Top
 
 local DebugReasons =
-	mkLabel(debugStats, "", 8, 225, 304, 160, 9)
+	mkLabel(debugStats, "", 8, 267, 304, 118, 9)
 
 DebugReasons.TextWrapped = true
 DebugReasons.TextYAlignment = Enum.TextYAlignment.Top
@@ -7412,19 +7449,25 @@ bind(RunService.Heartbeat, function(delta)
 	local metrics = snapshot.metrics
 	local performance = snapshot.performance
 	local targetStage = performance.stages["target-scan"] or {}
+	local lastDetection = CombatRuntime.State.LastDetection
+	local lastReject = CombatRuntime.State.LastReject
+	local lastAction = CombatRuntime.State.LastActionResult
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nREJECTED     %d\nCANCELLED    %d\nSCAN AVG     %.3f ms\nSCAN PEAK    %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST INPUT   %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
 		CombatRuntime.Timings:count(),
+		tostring(CombatRuntime.Input.Native.Status),
 		metrics.Detected or 0,
 		metrics.Scheduled or 0,
 		metrics.Executed or 0,
 		metrics.Rejected or 0,
 		metrics.Cancelled or 0,
+		lastDetection and (lastDetection.detector .. ":" .. lastDetection.id) or "none",
+		lastReject and lastReject.reason or "none",
+		lastAction and (lastAction.kind .. ":" .. (lastAction.ok and (lastAction.backend or "sent") or lastAction.reason)) or "none",
 		targetStage.averageMs or 0,
-		targetStage.peakMs or 0,
 		performance.backoff or 1
 	)
 
@@ -8026,5 +8069,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3 online"
+	"[CLAW] CLAW MARK v0.3.2 online"
 )

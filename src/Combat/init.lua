@@ -2,6 +2,7 @@ local environment = getgenv and getgenv() or _G
 local modules = environment.__CLAW_MODULES
 
 local Settings = assert(modules["src/Combat/Settings.lua"])
+local Action = assert(modules["src/Combat/Action.lua"])
 local Persistence = assert(modules["src/Combat/Persistence.lua"])
 local State = assert(modules["src/Combat/State.lua"])
 local EntityHistory = assert(modules["src/Combat/EntityHistory.lua"])
@@ -252,6 +253,9 @@ function Combat:set(path, value, persist)
 		self.Settings:set("Detection.Animations", true)
 		self.State:emit("setting", { path = "Detection.Animations", value = true })
 	end
+	if path == "Defense.Enabled" and value then
+		self.Input:warmup()
+	end
 	if MASTERED_FEATURES[path] and value and not self.Settings:get("Enabled") then
 		self.Settings:set("Enabled", true)
 		enabledChanged = true
@@ -351,6 +355,14 @@ function Combat:exportTimings(copyToClipboard)
 	return self.TimingIO:export()
 end
 
+function Combat:testAction(kind)
+	local ok, reason = self.Executor:execute(Action.new({
+		kind = kind,
+		name = "Input self-test: " .. tostring(kind),
+	}))
+	return ok, reason
+end
+
 function Combat:Destroy()
 	self._saveToken = self._saveToken + 1
 	self:save()
@@ -362,6 +374,7 @@ function Combat:Destroy()
 	end
 	table.clear(self._lifetimeConnections)
 	self.Detectors:Destroy()
+	self.Input:Destroy()
 	self.Assistance:Destroy()
 	self.Monitor:Destroy()
 	self.Diagnostics:Destroy()

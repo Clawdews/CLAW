@@ -7,7 +7,7 @@ Persistence.__index = Persistence
 function Persistence.new(path)
 	return setmetatable({
 		path = path or "CLAW/combat-settings.json",
-		version = 1,
+		version = 2,
 	}, Persistence)
 end
 

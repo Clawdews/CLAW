@@ -42,10 +42,12 @@ function Scheduler:schedule(identifier, delaySeconds, windows, callback, ...)
 
 		scheduled.status = "running"
 		local ok, result = pcall(callback, table.unpack(arguments, 1, arguments.n))
-		scheduled.status = ok and "completed" or "failed"
+		scheduled.status = ok and result ~= false and "completed" or "failed"
 		scheduled.result = result
 		scheduled.completedAt = self.clock()
-		self.state:increment("Executed")
+		if scheduled.status == "completed" then
+			self.state:increment("Executed")
+		end
 		self.state:emit(scheduled.status, scheduled)
 		self._tasks[id] = nil
 		self.state.ActiveTasks[id] = nil
