@@ -31,6 +31,7 @@ function DefenseEngine.new(
 		Fallbacks = fallbacks,
 		HitboxWaiter = hitboxWaiter,
 		Recent = {},
+		GenericRecent = setmetatable({}, { __mode = "k" }),
 		Repeats = {},
 		ModuleNotified = {},
 		LastPrune = 0,
@@ -110,7 +111,7 @@ function DefenseEngine:_unknownAnimationProfile(event)
 	default.name = "Generic " .. default.kind .. ": " .. event.id
 	default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
 	default.ignoreHitbox = true
-	return TimingProfile.new({
+	local profile = TimingProfile.new({
 		id = event.id,
 		name = "Unindexed animation " .. event.id,
 		detector = "animation",
@@ -120,7 +121,9 @@ function DefenseEngine:_unknownAnimationProfile(event)
 		punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
 		afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
 		actions = { default },
-	}), nil
+	})
+	profile.genericUnknown = true
+	return profile, nil
 end
 
 function DefenseEngine:_dynamicAction(action, event)
@@ -256,6 +259,7 @@ end
 
 function DefenseEngine:reset()
 	table.clear(self.Recent)
+	table.clear(self.GenericRecent)
 	table.clear(self.Repeats)
 	table.clear(self.ModuleNotified)
 	self.HitboxWaiter:cancelAll()
@@ -286,6 +290,18 @@ function DefenseEngine:handle(event)
 			event = event,
 			profile = profile,
 		})
+	end
+	if profile.genericUnknown then
+		local now = os.clock()
+		local lastGeneric = self.GenericRecent[event.entity]
+		if lastGeneric and now - lastGeneric < 0.18 then
+			return self:_reject("generic defense rearm")
+		end
+		local native = self.Executor.Input and self.Executor.Input.Native
+		if native and native:isBusy() then
+			return self:_reject("generic event while defense input active")
+		end
+		self.GenericRecent[event.entity] = now
 	end
 	local localEvent = event.entity == self.State.Character
 	if localEvent and profile.ignoreLocalPlayer then

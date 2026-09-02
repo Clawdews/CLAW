@@ -37,6 +37,9 @@ const dynamicWeaponSource = sources.get("src/Combat/DynamicWeaponResolver.lua");
 const timingResolverSource = sources.get("src/Combat/TimingResolver.lua");
 const defenseSource = sources.get("src/Combat/DefenseEngine.lua");
 const schedulerSource = sources.get("src/Combat/Scheduler.lua");
+const nativeBridgeSource = sources.get("src/Combat/NativeInputBridge.lua");
+const fallbackSource = sources.get("src/Combat/FallbackResolver.lua");
+const detectorHubSource = sources.get("src/Combat/Detection/DetectorHub.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -55,13 +58,22 @@ check(settingsSource.includes("function Settings:safeStart()"), "safe-start sett
 check(combatSource.includes("Settings.new(savedSettings):safeStart()"), "saved active switches can bypass safe start");
 check(inputSource.includes("string.byte(string.upper(name))"), "executor virtual-key conversion is missing");
 check(nativeInputSource.includes('self:_remote("Block")'), "native block remote bridge is missing");
-check(nativeInputSource.includes("self.InputData.f = active"), "native block input-state mirroring is missing");
+check(
+  nativeInputSource.includes("self.InputData.f = true") && nativeInputSource.includes("self.InputData.f = false"),
+  "native block input-state mirroring is missing",
+);
 check(dynamicWeaponSource.includes("WeaponTest = \"M1\""), "dynamic M1 weapon resolver is missing");
 check(dynamicWeaponSource.includes("WeaponFlourishTest = \"Flourish\""), "dynamic flourish resolver is missing");
 check(!/delay\s*=\s*delay\s*\/\s*math\.abs\(speed\)/.test(timingResolverSource), "static timing delays are being divided by animation speed");
 check(/local scheduled\s+scheduled\s*=\s*self\.Scheduler:schedule/.test(defenseSource), "scheduled defense callback does not capture a predeclared task handle");
 check(schedulerSource.includes('self.state:increment("Failed")'), "scheduler failures are not counted");
 check(schedulerSource.includes("self.state.LastFailure"), "scheduler failures are not exposed to diagnostics");
+check(nativeBridgeSource.includes("self.BlockRetryCount < 1"), "native block retries are not bounded");
+check(nativeBridgeSource.includes("not self.ReleaseSent"), "native unblock is not edge-triggered");
+check(fallbackSource.includes('self.Settings:get("Defense.DodgeFallback")'), "dodge fallback is not explicitly gated");
+check(detectorHubSource.includes('settings:get("Detection.UnknownAnimations")'), "unknown-animation defense is not explicitly gated");
+check(defenseSource.includes("native:isBusy()"), "generic defense does not guard the active native-input window");
+check(defenseSource.includes("generic defense rearm"), "generic defense has no post-detection rearm guard");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");

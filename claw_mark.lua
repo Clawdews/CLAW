@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.5
+--  CLAW MARK v0.3.6
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.5",
+	"CLAW MARK v0.3.6",
 	8,
 	0,
 	170,
@@ -6182,15 +6182,7 @@ else
 		57,
 		148
 	)
-	combatCycle(
-		defensePanel,
-		"FALLBACK",
-		"Defense.Fallback",
-		{ "Dodge", "Block", "Parry", "Jump" },
-		164,
-		57,
-		148
-	)
+	combatToggle(defensePanel, "DODGE FALLBACK", "Defense.DodgeFallback", 164, 57, 148)
 	combatToggle(defensePanel, "BLOCK FALLBACK", "Defense.BlockFallback", 8, 86, 148)
 	combatToggle(defensePanel, "ROLL ON CD", "Defense.RollOnParryCooldown", 164, 86, 148)
 	combatToggle(defensePanel, "VENT FALLBACK", "Defense.VentFallback", 8, 115, 148)
@@ -6268,7 +6260,8 @@ else
 	combatToggle(detectionPanel, "SOUNDS", "Detection.Sounds", 164, 28, 148)
 	combatToggle(detectionPanel, "PARTS", "Detection.Parts", 8, 57, 148)
 	combatToggle(detectionPanel, "EFFECTS", "Detection.Effects", 164, 57, 148)
-	combatToggle(detectionPanel, "INDEXED ONLY", "Detection.OnlyConfigured", 8, 86, 304)
+	combatToggle(detectionPanel, "INDEXED ONLY", "Detection.OnlyConfigured", 8, 86, 148)
+	combatToggle(detectionPanel, "UNKNOWN ANIMS", "Detection.UnknownAnimations", 164, 86, 148)
 
 	local presetNames =
 		CombatRuntime.Presets:names()
@@ -7458,13 +7451,19 @@ bind(RunService.Heartbeat, function(delta)
 	local lastPlan = CombatRuntime.State.LastPlan
 	local lastAction = CombatRuntime.State.LastActionResult
 	local lastFailure = CombatRuntime.State.LastFailure
+	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
 		CombatRuntime.Timings:count(),
 		tostring(CombatRuntime.Input.Native.Status),
+		nativeStats.Blocks or 0,
+		nativeStats.Unblocks or 0,
+		nativeStats.Retries or 0,
+		nativeStats.Coalesced or 0,
+		string.sub(CombatRuntime.Input.Native.LastTransition or "idle", 1, 38),
 		metrics.Detected or 0,
 		metrics.Scheduled or 0,
 		metrics.Executed or 0,
@@ -8078,5 +8077,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.5 online"
+	"[CLAW] CLAW MARK v0.3.6 online"
 )

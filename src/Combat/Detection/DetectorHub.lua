@@ -47,16 +47,20 @@ function DetectorHub.new(settings, timings, options)
 		then
 			return false
 		end
-		if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
+		if timings:has(category, id) then
 			return true
 		end
-		-- Indexed-only remains strict for noisy sounds, effects, and parts. A
-		-- deliberately enabled auto-defense may still use a tightly filtered
-		-- animation fallback when the public timing store is empty.
-		return category == "animation"
+		-- Unknown animation defense is a separate, visible policy. It catches
+		-- newly introduced weapon animations without opening noisy sound, part,
+		-- or effect detectors when indexed-only detection is selected.
+		if category == "animation"
+			and settings:get("Detection.UnknownAnimations")
 			and settings:get("Enabled")
 			and settings:get("Defense.Enabled")
-			and combatAnimation(track)
+		then
+			return combatAnimation(track)
+		end
+		return not settings:get("Detection.OnlyConfigured")
 	end
 	local function detectorOptions(specific)
 		local combined = {}

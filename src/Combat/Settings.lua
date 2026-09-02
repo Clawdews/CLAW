@@ -25,6 +25,7 @@ local DEFAULTS = {
 		Effects = true,
 		Projectiles = true,
 		OnlyConfigured = true,
+		UnknownAnimations = true,
 	},
 	Defense = {
 		Enabled = false,
@@ -45,6 +46,7 @@ local DEFAULTS = {
 		RollCancelDelay = 0.08,
 		BlockFallbackHold = 0.30,
 		RollOnParryCooldown = false,
+		DodgeFallback = false,
 		VentFallback = false,
 		BlockFallback = false,
 		ParryOnly = false,
@@ -178,6 +180,7 @@ local SAFE_START_OFF = {
 	"Defense.RollCancel",
 	"Defense.DirectRoll",
 	"Defense.RollOnParryCooldown",
+	"Defense.DodgeFallback",
 	"Defense.VentFallback",
 	"Defense.BlockFallback",
 	"Defense.ParryOnly",

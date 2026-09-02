@@ -226,6 +226,16 @@ function NativeInputBridge.new()
 		Queue = {},
 		NextQueueID = 0,
 		NextRetry = 0,
+		NextBlockRetry = 0,
+		BlockRetryCount = 0,
+		ReleaseSent = true,
+		LastTransition = "idle",
+		Stats = {
+			Blocks = 0,
+			Unblocks = 0,
+			Retries = 0,
+			Coalesced = 0,
+		},
 		RenderConnection = nil,
 		CharacterConnection = nil,
 		EffectModule = nil,
@@ -374,23 +384,104 @@ function NativeInputBridge:_fire(remote, ...)
 	return ok, ok and nil or tostring(result)
 end
 
+function NativeInputBridge:_sendBlock(retry)
+	local fired, reason = self:_fire(self:_remote("Block"))
+	if fired then
+		self.Stats.Blocks = self.Stats.Blocks + 1
+		if retry then
+			self.Stats.Retries = self.Stats.Retries + 1
+		end
+		self.LastTransition = retry and "block retry" or "block sent"
+	else
+		self.LastTransition = "block failed: " .. tostring(reason)
+	end
+	return fired, reason
+end
+
+function NativeInputBridge:_sendUnblock(detail)
+	local fired, reason = self:_fire(self:_remote("Unblock"))
+	if fired then
+		self.Stats.Unblocks = self.Stats.Unblocks + 1
+		self.LastTransition = "unblock sent: " .. tostring(detail or "release")
+	else
+		self.LastTransition = "unblock failed: " .. tostring(reason)
+	end
+	return fired, reason
+end
+
+function NativeInputBridge:isBusy()
+	return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
+end
+
 function NativeInputBridge:_updateQueue()
 	local now = os.clock()
 	local hadEntries = next(self.Queue) ~= nil
 	local blocking = self:_hasEffect("Blocking")
 	for id, item in pairs(self.Queue) do
-		if now >= item.expires or (item.deflect and blocking) then
+		if now >= item.expires or (item.sent and item.deflect and blocking) then
 			self.Queue[id] = nil
 		end
 	end
 	local active = next(self.Queue) ~= nil
-	if self.InputData then
-		self.InputData.f = active
+	local hasPending = false
+	for _, item in pairs(self.Queue) do
+		if not item.sent then
+			hasPending = true
+			break
+		end
 	end
-	if not active and (blocking or hadEntries) then
-		self:_fire(self:_remote("Unblock"))
-	elseif active and not blocking and not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
-		self:_fire(self:_remote("Block"))
+
+	if active and hasPending then
+		-- A new parry arrived before the previous Blocking effect cleared. Keep
+		-- input released until the server acknowledges that release, then send one
+		-- fresh Block edge for every coalesced pending request.
+		if self.InputData then
+			self.InputData.f = false
+		end
+		if blocking then
+			if not self.ReleaseSent then
+				self:_sendUnblock("waiting for clear")
+				self.ReleaseSent = true
+			end
+		elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
+			local fired = self:_sendBlock(false)
+			if fired then
+				for _, item in pairs(self.Queue) do
+					item.sent = true
+				end
+				if self.InputData then
+					self.InputData.f = true
+				end
+				self.ReleaseSent = false
+				self.BlockRetryCount = 0
+				self.NextBlockRetry = now + 0.12
+			end
+		end
+	elseif active then
+		if self.InputData then
+			self.InputData.f = true
+		end
+		if
+			not blocking
+			and now >= self.NextBlockRetry
+			and self.BlockRetryCount < 1
+			and not self:_hasEffect("Action")
+			and not self:_hasEffect("Knocked")
+		then
+			self.BlockRetryCount = self.BlockRetryCount + 1
+			self.NextBlockRetry = now + 0.12
+			self:_sendBlock(true)
+		end
+	else
+		if self.InputData then
+			self.InputData.f = false
+		end
+		-- Release once when the queue drains. The old implementation sent this
+		-- remote every rendered frame while the Blocking effect lingered.
+		if (hadEntries or blocking) and not self.ReleaseSent then
+			self:_sendUnblock("queue drained")
+			self.ReleaseSent = true
+		end
 	end
 end
 
@@ -441,24 +532,56 @@ function NativeInputBridge:block(duration, deflect)
 		return false, "casting spell"
 	end
 	self:_removeEffect("M1Buffering")
-
-	local block = self:_remote("Block")
-	local fired, fireReason = self:_fire(block)
-	if not fired then
-		return false, fireReason
-	end
-	if self.InputData then
-		self.InputData.f = true
-	end
 	if self.SprintFunction then
 		pcall(self.SprintFunction, false)
 	end
+
+	local now = os.clock()
+	local blocking = self:_hasEffect("Blocking")
+	local hasSent = false
+	for _, item in pairs(self.Queue) do
+		if item.sent then
+			hasSent = true
+			break
+		end
+	end
 	self.NextQueueID = self.NextQueueID + 1
-	self.Queue[self.NextQueueID] = {
+	local item = {
 		deflect = deflect == true,
-		expires = os.clock()
+		expires = now
 			+ (deflect and math.max(0.20, tonumber(duration) or 0) or math.max(0.05, tonumber(duration) or 0.30)),
+		sent = false,
 	}
+	self.Queue[self.NextQueueID] = item
+
+	if blocking then
+		self.LastTransition = "queued until block clears"
+		if self.InputData then
+			self.InputData.f = false
+		end
+		return true, "LycorisNativeQueued"
+	end
+	if hasSent then
+		-- Multiple detections inside one unacknowledged parry window share the
+		-- already-sent Block edge instead of multiplying remote traffic.
+		item.sent = true
+		self.Stats.Coalesced = self.Stats.Coalesced + 1
+		self.LastTransition = "coalesced"
+		return true, "LycorisNativeCoalesced"
+	end
+
+	local fired, fireReason = self:_sendBlock(false)
+	if not fired then
+		self.Queue[self.NextQueueID] = nil
+		return false, fireReason
+	end
+	item.sent = true
+	self.ReleaseSent = false
+	self.BlockRetryCount = 0
+	self.NextBlockRetry = now + 0.12
+	if self.InputData then
+		self.InputData.f = true
+	end
 	return true, "LycorisNative"
 end
 
@@ -471,6 +594,10 @@ function NativeInputBridge:invalidate(reason)
 		self.InputData.f = false
 	end
 	table.clear(self.Queue)
+	self.NextBlockRetry = 0
+	self.BlockRetryCount = 0
+	self.ReleaseSent = true
+	self.LastTransition = "idle"
 	self.InputData = nil
 	self.SprintFunction = nil
 	self.Initialized = false
@@ -481,7 +608,7 @@ end
 
 function NativeInputBridge:Destroy()
 	if self.Ready then
-		self:_fire(self:_remote("Unblock"))
+		self:_sendUnblock("destroyed")
 	end
 	self:invalidate("destroyed")
 	if self.CharacterConnection then

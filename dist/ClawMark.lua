@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.5"
+	environment.CLAW.Version = "0.3.6"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -192,6 +192,7 @@ do
 			Effects = true,
 			Projectiles = true,
 			OnlyConfigured = true,
+			UnknownAnimations = true,
 		},
 		Defense = {
 			Enabled = false,
@@ -212,6 +213,7 @@ do
 			RollCancelDelay = 0.08,
 			BlockFallbackHold = 0.30,
 			RollOnParryCooldown = false,
+			DodgeFallback = false,
 			VentFallback = false,
 			BlockFallback = false,
 			ParryOnly = false,
@@ -345,6 +347,7 @@ do
 		"Defense.RollCancel",
 		"Defense.DirectRoll",
 		"Defense.RollOnParryCooldown",
+		"Defense.DodgeFallback",
 		"Defense.VentFallback",
 		"Defense.BlockFallback",
 		"Defense.ParryOnly",
@@ -2278,16 +2281,20 @@ do
 			then
 				return false
 			end
-			if not settings:get("Detection.OnlyConfigured") or timings:has(category, id) then
+			if timings:has(category, id) then
 				return true
 			end
-			-- Indexed-only remains strict for noisy sounds, effects, and parts. A
-			-- deliberately enabled auto-defense may still use a tightly filtered
-			-- animation fallback when the public timing store is empty.
-			return category == "animation"
+			-- Unknown animation defense is a separate, visible policy. It catches
+			-- newly introduced weapon animations without opening noisy sound, part,
+			-- or effect detectors when indexed-only detection is selected.
+			if category == "animation"
+				and settings:get("Detection.UnknownAnimations")
 				and settings:get("Enabled")
 				and settings:get("Defense.Enabled")
-				and combatAnimation(track)
+			then
+				return combatAnimation(track)
+			end
+			return not settings:get("Detection.OnlyConfigured")
 		end
 		local function detectorOptions(specific)
 			local combined = {}
@@ -2618,6 +2625,16 @@ do
 			Queue = {},
 			NextQueueID = 0,
 			NextRetry = 0,
+			NextBlockRetry = 0,
+			BlockRetryCount = 0,
+			ReleaseSent = true,
+			LastTransition = "idle",
+			Stats = {
+				Blocks = 0,
+				Unblocks = 0,
+				Retries = 0,
+				Coalesced = 0,
+			},
 			RenderConnection = nil,
 			CharacterConnection = nil,
 			EffectModule = nil,
@@ -2766,23 +2783,104 @@ do
 		return ok, ok and nil or tostring(result)
 	end
 
+	function NativeInputBridge:_sendBlock(retry)
+		local fired, reason = self:_fire(self:_remote("Block"))
+		if fired then
+			self.Stats.Blocks = self.Stats.Blocks + 1
+			if retry then
+				self.Stats.Retries = self.Stats.Retries + 1
+			end
+			self.LastTransition = retry and "block retry" or "block sent"
+		else
+			self.LastTransition = "block failed: " .. tostring(reason)
+		end
+		return fired, reason
+	end
+
+	function NativeInputBridge:_sendUnblock(detail)
+		local fired, reason = self:_fire(self:_remote("Unblock"))
+		if fired then
+			self.Stats.Unblocks = self.Stats.Unblocks + 1
+			self.LastTransition = "unblock sent: " .. tostring(detail or "release")
+		else
+			self.LastTransition = "unblock failed: " .. tostring(reason)
+		end
+		return fired, reason
+	end
+
+	function NativeInputBridge:isBusy()
+		return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
+	end
+
 	function NativeInputBridge:_updateQueue()
 		local now = os.clock()
 		local hadEntries = next(self.Queue) ~= nil
 		local blocking = self:_hasEffect("Blocking")
 		for id, item in pairs(self.Queue) do
-			if now >= item.expires or (item.deflect and blocking) then
+			if now >= item.expires or (item.sent and item.deflect and blocking) then
 				self.Queue[id] = nil
 			end
 		end
 		local active = next(self.Queue) ~= nil
-		if self.InputData then
-			self.InputData.f = active
+		local hasPending = false
+		for _, item in pairs(self.Queue) do
+			if not item.sent then
+				hasPending = true
+				break
+			end
 		end
-		if not active and (blocking or hadEntries) then
-			self:_fire(self:_remote("Unblock"))
-		elseif active and not blocking and not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
-			self:_fire(self:_remote("Block"))
+
+		if active and hasPending then
+			-- A new parry arrived before the previous Blocking effect cleared. Keep
+			-- input released until the server acknowledges that release, then send one
+			-- fresh Block edge for every coalesced pending request.
+			if self.InputData then
+				self.InputData.f = false
+			end
+			if blocking then
+				if not self.ReleaseSent then
+					self:_sendUnblock("waiting for clear")
+					self.ReleaseSent = true
+				end
+			elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
+				local fired = self:_sendBlock(false)
+				if fired then
+					for _, item in pairs(self.Queue) do
+						item.sent = true
+					end
+					if self.InputData then
+						self.InputData.f = true
+					end
+					self.ReleaseSent = false
+					self.BlockRetryCount = 0
+					self.NextBlockRetry = now + 0.12
+				end
+			end
+		elseif active then
+			if self.InputData then
+				self.InputData.f = true
+			end
+			if
+				not blocking
+				and now >= self.NextBlockRetry
+				and self.BlockRetryCount < 1
+				and not self:_hasEffect("Action")
+				and not self:_hasEffect("Knocked")
+			then
+				self.BlockRetryCount = self.BlockRetryCount + 1
+				self.NextBlockRetry = now + 0.12
+				self:_sendBlock(true)
+			end
+		else
+			if self.InputData then
+				self.InputData.f = false
+			end
+			-- Release once when the queue drains. The old implementation sent this
+			-- remote every rendered frame while the Blocking effect lingered.
+			if (hadEntries or blocking) and not self.ReleaseSent then
+				self:_sendUnblock("queue drained")
+				self.ReleaseSent = true
+			end
 		end
 	end
 
@@ -2833,24 +2931,56 @@ do
 			return false, "casting spell"
 		end
 		self:_removeEffect("M1Buffering")
-
-		local block = self:_remote("Block")
-		local fired, fireReason = self:_fire(block)
-		if not fired then
-			return false, fireReason
-		end
-		if self.InputData then
-			self.InputData.f = true
-		end
 		if self.SprintFunction then
 			pcall(self.SprintFunction, false)
 		end
+
+		local now = os.clock()
+		local blocking = self:_hasEffect("Blocking")
+		local hasSent = false
+		for _, item in pairs(self.Queue) do
+			if item.sent then
+				hasSent = true
+				break
+			end
+		end
 		self.NextQueueID = self.NextQueueID + 1
-		self.Queue[self.NextQueueID] = {
+		local item = {
 			deflect = deflect == true,
-			expires = os.clock()
+			expires = now
 				+ (deflect and math.max(0.20, tonumber(duration) or 0) or math.max(0.05, tonumber(duration) or 0.30)),
+			sent = false,
 		}
+		self.Queue[self.NextQueueID] = item
+
+		if blocking then
+			self.LastTransition = "queued until block clears"
+			if self.InputData then
+				self.InputData.f = false
+			end
+			return true, "LycorisNativeQueued"
+		end
+		if hasSent then
+			-- Multiple detections inside one unacknowledged parry window share the
+			-- already-sent Block edge instead of multiplying remote traffic.
+			item.sent = true
+			self.Stats.Coalesced = self.Stats.Coalesced + 1
+			self.LastTransition = "coalesced"
+			return true, "LycorisNativeCoalesced"
+		end
+
+		local fired, fireReason = self:_sendBlock(false)
+		if not fired then
+			self.Queue[self.NextQueueID] = nil
+			return false, fireReason
+		end
+		item.sent = true
+		self.ReleaseSent = false
+		self.BlockRetryCount = 0
+		self.NextBlockRetry = now + 0.12
+		if self.InputData then
+			self.InputData.f = true
+		end
 		return true, "LycorisNative"
 	end
 
@@ -2863,6 +2993,10 @@ do
 			self.InputData.f = false
 		end
 		table.clear(self.Queue)
+		self.NextBlockRetry = 0
+		self.BlockRetryCount = 0
+		self.ReleaseSent = true
+		self.LastTransition = "idle"
 		self.InputData = nil
 		self.SprintFunction = nil
 		self.Initialized = false
@@ -2873,7 +3007,7 @@ do
 
 	function NativeInputBridge:Destroy()
 		if self.Ready then
-			self:_fire(self:_remote("Unblock"))
+			self:_sendUnblock("destroyed")
 		end
 		self:invalidate("destroyed")
 		if self.CharacterConnection then
@@ -4130,7 +4264,11 @@ do
 		if self.Settings:get("Defense.VentFallback") and not profile.noVentFallback then
 			return Action.new({ kind = "Custom", name = "Vent", metadata = { customName = "Vent" } })
 		end
-		if not profile.noDodgeFallback and self.Settings:get("Defense.AllowDodge") then
+		if
+			self.Settings:get("Defense.DodgeFallback")
+			and not profile.noDodgeFallback
+			and self.Settings:get("Defense.AllowDodge")
+		then
 			return Action.new({ kind = "Dodge", name = action.name .. " (dodge fallback)" })
 		end
 		return nil
@@ -5204,6 +5342,7 @@ do
 			Fallbacks = fallbacks,
 			HitboxWaiter = hitboxWaiter,
 			Recent = {},
+			GenericRecent = setmetatable({}, { __mode = "k" }),
 			Repeats = {},
 			ModuleNotified = {},
 			LastPrune = 0,
@@ -5283,7 +5422,7 @@ do
 		default.name = "Generic " .. default.kind .. ": " .. event.id
 		default.delay = self.Settings:get("Defense.UnknownAnimationDelay")
 		default.ignoreHitbox = true
-		return TimingProfile.new({
+		local profile = TimingProfile.new({
 			id = event.id,
 			name = "Unindexed animation " .. event.id,
 			detector = "animation",
@@ -5293,7 +5432,9 @@ do
 			punishableWindow = self.Settings:get("Timing.DefaultPunishableWindow"),
 			afterWindow = self.Settings:get("Timing.DefaultAfterWindow"),
 			actions = { default },
-		}), nil
+		})
+		profile.genericUnknown = true
+		return profile, nil
 	end
 
 	function DefenseEngine:_dynamicAction(action, event)
@@ -5429,6 +5570,7 @@ do
 
 	function DefenseEngine:reset()
 		table.clear(self.Recent)
+		table.clear(self.GenericRecent)
 		table.clear(self.Repeats)
 		table.clear(self.ModuleNotified)
 		self.HitboxWaiter:cancelAll()
@@ -5459,6 +5601,18 @@ do
 				event = event,
 				profile = profile,
 			})
+		end
+		if profile.genericUnknown then
+			local now = os.clock()
+			local lastGeneric = self.GenericRecent[event.entity]
+			if lastGeneric and now - lastGeneric < 0.18 then
+				return self:_reject("generic defense rearm")
+			end
+			local native = self.Executor.Input and self.Executor.Input.Native
+			if native and native:isBusy() then
+				return self:_reject("generic event while defense input active")
+			end
+			self.GenericRecent[event.entity] = now
 		end
 		local localEvent = event.entity == self.State.Character
 		if localEvent and profile.ignoreLocalPlayer then
@@ -5993,7 +6147,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.3.5
+--  CLAW MARK v0.3.6
 --
 --  TABS
 --    BURSTER
@@ -9448,7 +9602,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.5",
+	"CLAW MARK v0.3.6",
 	8,
 	0,
 	170,
@@ -12176,15 +12330,7 @@ else
 		57,
 		148
 	)
-	combatCycle(
-		defensePanel,
-		"FALLBACK",
-		"Defense.Fallback",
-		{ "Dodge", "Block", "Parry", "Jump" },
-		164,
-		57,
-		148
-	)
+	combatToggle(defensePanel, "DODGE FALLBACK", "Defense.DodgeFallback", 164, 57, 148)
 	combatToggle(defensePanel, "BLOCK FALLBACK", "Defense.BlockFallback", 8, 86, 148)
 	combatToggle(defensePanel, "ROLL ON CD", "Defense.RollOnParryCooldown", 164, 86, 148)
 	combatToggle(defensePanel, "VENT FALLBACK", "Defense.VentFallback", 8, 115, 148)
@@ -12262,7 +12408,8 @@ else
 	combatToggle(detectionPanel, "SOUNDS", "Detection.Sounds", 164, 28, 148)
 	combatToggle(detectionPanel, "PARTS", "Detection.Parts", 8, 57, 148)
 	combatToggle(detectionPanel, "EFFECTS", "Detection.Effects", 164, 57, 148)
-	combatToggle(detectionPanel, "INDEXED ONLY", "Detection.OnlyConfigured", 8, 86, 304)
+	combatToggle(detectionPanel, "INDEXED ONLY", "Detection.OnlyConfigured", 8, 86, 148)
+	combatToggle(detectionPanel, "UNKNOWN ANIMS", "Detection.UnknownAnimations", 164, 86, 148)
 
 	local presetNames =
 		CombatRuntime.Presets:names()
@@ -13452,13 +13599,19 @@ bind(RunService.Heartbeat, function(delta)
 	local lastPlan = CombatRuntime.State.LastPlan
 	local lastAction = CombatRuntime.State.LastActionResult
 	local lastFailure = CombatRuntime.State.LastFailure
+	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
 		CombatRuntime.Timings:count(),
 		tostring(CombatRuntime.Input.Native.Status),
+		nativeStats.Blocks or 0,
+		nativeStats.Unblocks or 0,
+		nativeStats.Retries or 0,
+		nativeStats.Coalesced or 0,
+		string.sub(CombatRuntime.Input.Native.LastTransition or "idle", 1, 38),
 		metrics.Detected or 0,
 		metrics.Scheduled or 0,
 		metrics.Executed or 0,
@@ -14072,7 +14225,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.5 online"
+	"[CLAW] CLAW MARK v0.3.6 online"
 )
 
 -- END ENTRY: claw_mark.lua

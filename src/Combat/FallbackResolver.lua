@@ -44,7 +44,11 @@ function FallbackResolver:resolve(action, reason, profile)
 	if self.Settings:get("Defense.VentFallback") and not profile.noVentFallback then
 		return Action.new({ kind = "Custom", name = "Vent", metadata = { customName = "Vent" } })
 	end
-	if not profile.noDodgeFallback and self.Settings:get("Defense.AllowDodge") then
+	if
+		self.Settings:get("Defense.DodgeFallback")
+		and not profile.noDodgeFallback
+		and self.Settings:get("Defense.AllowDodge")
+	then
 		return Action.new({ kind = "Dodge", name = action.name .. " (dodge fallback)" })
 	end
 	return nil
