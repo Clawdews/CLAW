@@ -4,6 +4,17 @@
   "output": "dist/AnimationLab.lua",
   "modules": [
     "src/Runtime/Namespace.lua",
-    "src/Combat/FeatureCatalog.lua"
+    "src/Runtime/Signal.lua",
+    "src/Combat/FeatureCatalog.lua",
+    "src/Combat/Settings.lua",
+    "src/Combat/Persistence.lua",
+    "src/Combat/State.lua",
+    "src/Combat/EntityHistory.lua",
+    "src/Combat/Targeting.lua",
+    "src/Combat/Action.lua",
+    "src/Combat/TimingProfile.lua",
+    "src/Combat/TimingStore.lua",
+    "src/Combat/Scheduler.lua",
+    "src/Combat/init.lua"
   ]
 }

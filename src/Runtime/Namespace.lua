@@ -5,4 +5,8 @@ environment.CLAW.Version = "0.1.0-dev"
 environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
+function environment.CLAW:GetModule(name)
+	return self.Modules[name]
+end
+
 return environment.CLAW
