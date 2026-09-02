@@ -58,9 +58,14 @@ function ActionExecutor:execute(action, context)
 			or 0.035
 	end
 	local success, result
+	local nativeDirectDodge = false
 
 	if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.DirectRoll") then
-		success, result = self.Input:custom("DirectDodge", action, context)
+		success, result = self.Input:directDodge()
+		nativeDirectDodge = success
+		if not success then
+			success, result = self.Input:custom("DirectDodge", action, context)
+		end
 		if not success then
 			success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
 		end
@@ -102,10 +107,15 @@ function ActionExecutor:execute(action, context)
 		context = context,
 	})
 
-	if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.RollCancel") then
-		task.delay(self.Settings:get("Defense.RollCancelDelay"), function()
-			self.Input:tapMouse(1, 0.035)
-		end)
+	if nativeDirectDodge then
+		-- Lycoris's direct path always stops the server-side dodge after 0.15s.
+		-- An enabled Roll Cancel may deliberately shorten that window.
+		local cancelDelay = self.Settings:get("Defense.RollCancel")
+			and self.Settings:get("Defense.RollCancelDelay")
+			or 0.15
+		self.Input:scheduleDodgeCancel(cancelDelay, true)
+	elseif kind == "Dodge" and self.Settings:get("Defense.RollCancel") then
+		self.Input:scheduleDodgeCancel(self.Settings:get("Defense.RollCancelDelay"), false)
 	end
 
 	return true, result

@@ -17,8 +17,22 @@ function FallbackResolver:resolve(action, reason, profile)
 		return Action.new({ kind = "Parry", name = action.name .. " (parry-only)" })
 	end
 
-	if action.kind == "Parry" and reason == "cooldown" and self.Settings:get("Defense.RollOnParryCooldown") then
-		return Action.new({ kind = "Dodge", name = action.name .. " (cooldown roll)" })
+	local parryUnavailable = reason == "cooldown" or reason == "parry-cooldown"
+	if
+		action.kind == "Parry"
+		and parryUnavailable
+		and (
+			self.Settings:get("Defense.RollOnParryCooldown")
+			or self.Settings:get("Defense.DodgeFallback")
+		)
+		and not profile.noDodgeFallback
+		and self.Settings:get("Defense.AllowDodge")
+	then
+		return Action.new({
+			kind = "Dodge",
+			name = action.name .. " (parry unavailable roll)",
+			metadata = { fallbackReason = reason },
+		})
 	end
 	if self.Settings:get("Defense.BlockFallback") and profile.preferBlockFallback and not profile.noBlockFallback then
 		return Action.new({

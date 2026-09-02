@@ -96,6 +96,62 @@ function InputAdapter:nativeBlock(duration, deflect)
 	return ok, detail
 end
 
+function InputAdapter:directDodge()
+	local ok, detail = self.Native:directDodge()
+	self.LastInput = {
+		kind = "native",
+		name = "Dodge",
+		backend = ok and "LycorisNativeDodge" or "fallback",
+		isDown = ok,
+		ok = ok,
+		detail = detail,
+		at = os.clock(),
+	}
+	return ok, detail
+end
+
+function InputAdapter:scheduleDodgeCancel(delaySeconds, direct)
+	local delay = math.max(0, tonumber(delaySeconds) or 0)
+	task.spawn(function()
+		local earliest = os.clock() + delay
+		while os.clock() < earliest do
+			task.wait()
+		end
+
+		-- A normal Q dodge is created by the game's InputClient, so wait for its
+		-- replicated roll state before cancelling. A direct remote dodge follows
+		-- Lycoris's fixed 0.15 second path and can be stopped immediately here.
+		if not direct then
+			local stateDeadline = os.clock() + 0.22
+			while os.clock() < stateDeadline and not self.Native:isDodging() do
+				task.wait()
+			end
+		end
+
+		local ok, detail = self.Native:stopDodge(direct == true)
+		if ok then
+			self.LastInput = {
+				kind = "native",
+				name = "StopDodge",
+				backend = "LycorisNativeStopDodge",
+				isDown = false,
+				ok = true,
+				detail = detail,
+				at = os.clock(),
+			}
+			return
+		end
+
+		-- Executors that expose the hashed remotes but not InputClient's state
+		-- table can still use the game's ordinary mouse-based roll cancel.
+		local mouseOK, mouseDetail = self:tapMouse(1, 0.035)
+		self.Native.LastTransition = mouseOK
+			and "dodge cancel via mouse"
+			or ("dodge cancel failed: " .. tostring(mouseDetail or detail))
+	end)
+	return true, "dodge cancel scheduled"
+end
+
 local function keyCodeFromName(name)
 	return KEY_CODES[string.lower(name)]
 end

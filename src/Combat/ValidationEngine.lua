@@ -255,6 +255,24 @@ function ValidationEngine:validate(event, profile, target, action, options)
 		return false, "cooldown"
 	end
 
+	-- The local executor cooldown only tells us when CLAW last sent an input.
+	-- Deepwoken's replicated effects are the authoritative answer for whether
+	-- the next parry or dodge can actually begin. Keeping this check in
+	-- validation lets the fallback resolver choose a dodge before a doomed
+	-- second Block request is sent during ParryCool.
+	local native = self.Executor.Input and self.Executor.Input.Native
+	if action.kind == "Parry" and native then
+		local canParry, parryReason = native:canParry()
+		if not canParry then
+			return false, parryReason
+		end
+	elseif (action.kind == "Dodge" or action.kind == "FullDodge") and native then
+		local canDodge, dodgeReason = native:canDodge()
+		if not canDodge then
+			return false, dodgeReason
+		end
+	end
+
 	local character = self.State.Character
 	if
 		self.Settings:get("Validation.IFrames")

@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.7
+--  CLAW MARK v0.3.8
 --
 --  TABS
 --    BURSTER
@@ -3454,7 +3454,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.7",
+	"CLAW MARK v0.3.8",
 	8,
 	0,
 	170,
@@ -7453,7 +7453,7 @@ bind(RunService.Heartbeat, function(delta)
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -7463,6 +7463,8 @@ bind(RunService.Heartbeat, function(delta)
 		nativeStats.Unblocks or 0,
 		nativeStats.Retries or 0,
 		nativeStats.Coalesced or 0,
+		nativeStats.Dodges or 0,
+		nativeStats.DodgeCancels or 0,
 		string.sub(CombatRuntime.Input.Native.LastTransition or "idle", 1, 38),
 		metrics.Detected or 0,
 		metrics.Scheduled or 0,
@@ -8078,5 +8080,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.7 online"
+	"[CLAW] CLAW MARK v0.3.8 online"
 )

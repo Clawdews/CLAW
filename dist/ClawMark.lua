@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.7"
+	environment.CLAW.Version = "0.3.8"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -2638,6 +2638,8 @@ do
 				Unblocks = 0,
 				Retries = 0,
 				Coalesced = 0,
+				Dodges = 0,
+				DodgeCancels = 0,
 			},
 			RenderConnection = nil,
 			CharacterConnection = nil,
@@ -2814,6 +2816,90 @@ do
 
 	function NativeInputBridge:isBusy()
 		return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
+	end
+
+	function NativeInputBridge:canParry()
+		if self:_hasEffect("ParryCool") then
+			return false, "parry-cooldown"
+		end
+		return true
+	end
+
+	function NativeInputBridge:canDodge()
+		for _, effect in ipairs({ "NoRoll", "PreventRoll", "Dodged", "Dodge", "Stun" }) do
+			if self:_hasEffect(effect) then
+				return false, effect == "Stun" and "stunned" or "dodge-cooldown"
+			end
+		end
+		return true
+	end
+
+	function NativeInputBridge:isDodging()
+		return self:_hasEffect("ClientDodge")
+			or self:_hasEffect("Dodge")
+			or self:_hasEffect("DodgeFrame")
+			or self:_hasEffect("DodgedFrame")
+			or self:_hasEffect("Immortal")
+			or self:_hasEffect("NoRoll")
+	end
+
+	function NativeInputBridge:directDodge()
+		local ready, reason = self:initialize()
+		if not ready then
+			return false, reason
+		end
+		local canDodge, dodgeReason = self:canDodge()
+		if not canDodge then
+			return false, dodgeReason
+		end
+		if not self.InputData then
+			return false, "native input state unavailable"
+		end
+		if self:_hasEffect("Blocking") or next(self.Queue) ~= nil then
+			table.clear(self.Queue)
+			self:_sendUnblock("dodge")
+			self.ReleaseSent = true
+		end
+		local fired, fireReason = self:_fire(self:_remote("Dodge"), "roll", nil, nil, false)
+		if fired then
+			self.Stats.Dodges = self.Stats.Dodges + 1
+			self.LastTransition = "direct dodge sent"
+		else
+			self.LastTransition = "direct dodge failed: " .. tostring(fireReason)
+		end
+		return fired, fired and "LycorisNativeDodge" or fireReason
+	end
+
+	function NativeInputBridge:stopDodge(direct)
+		local ready, reason = self:initialize()
+		if not ready then
+			return false, reason
+		end
+		if not self.InputData then
+			return false, "native input state unavailable"
+		end
+		local fired, fireReason
+		if direct then
+			fired, fireReason = self:_fire(
+				self:_remote("StopDodge"),
+				self.InputData,
+				self:_hasEffect("LightAttack"),
+				true
+			)
+		else
+			fired, fireReason = self:_fire(
+				self:_remote("StopDodge"),
+				self.InputData,
+				self:_hasEffect("LightAttack")
+			)
+		end
+		if fired then
+			self.Stats.DodgeCancels = self.Stats.DodgeCancels + 1
+			self.LastTransition = "dodge cancel sent"
+		else
+			self.LastTransition = "dodge cancel failed: " .. tostring(fireReason)
+		end
+		return fired, fired and "LycorisNativeStopDodge" or fireReason
 	end
 
 	function NativeInputBridge:_updateQueue()
@@ -3128,6 +3214,62 @@ do
 		return ok, detail
 	end
 
+	function InputAdapter:directDodge()
+		local ok, detail = self.Native:directDodge()
+		self.LastInput = {
+			kind = "native",
+			name = "Dodge",
+			backend = ok and "LycorisNativeDodge" or "fallback",
+			isDown = ok,
+			ok = ok,
+			detail = detail,
+			at = os.clock(),
+		}
+		return ok, detail
+	end
+
+	function InputAdapter:scheduleDodgeCancel(delaySeconds, direct)
+		local delay = math.max(0, tonumber(delaySeconds) or 0)
+		task.spawn(function()
+			local earliest = os.clock() + delay
+			while os.clock() < earliest do
+				task.wait()
+			end
+
+			-- A normal Q dodge is created by the game's InputClient, so wait for its
+			-- replicated roll state before cancelling. A direct remote dodge follows
+			-- Lycoris's fixed 0.15 second path and can be stopped immediately here.
+			if not direct then
+				local stateDeadline = os.clock() + 0.22
+				while os.clock() < stateDeadline and not self.Native:isDodging() do
+					task.wait()
+				end
+			end
+
+			local ok, detail = self.Native:stopDodge(direct == true)
+			if ok then
+				self.LastInput = {
+					kind = "native",
+					name = "StopDodge",
+					backend = "LycorisNativeStopDodge",
+					isDown = false,
+					ok = true,
+					detail = detail,
+					at = os.clock(),
+				}
+				return
+			end
+
+			-- Executors that expose the hashed remotes but not InputClient's state
+			-- table can still use the game's ordinary mouse-based roll cancel.
+			local mouseOK, mouseDetail = self:tapMouse(1, 0.035)
+			self.Native.LastTransition = mouseOK
+				and "dodge cancel via mouse"
+				or ("dodge cancel failed: " .. tostring(mouseDetail or detail))
+		end)
+		return true, "dodge cancel scheduled"
+	end
+
 	local function keyCodeFromName(name)
 		return KEY_CODES[string.lower(name)]
 	end
@@ -3375,9 +3517,14 @@ do
 				or 0.035
 		end
 		local success, result
+		local nativeDirectDodge = false
 
 		if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.DirectRoll") then
-			success, result = self.Input:custom("DirectDodge", action, context)
+			success, result = self.Input:directDodge()
+			nativeDirectDodge = success
+			if not success then
+				success, result = self.Input:custom("DirectDodge", action, context)
+			end
 			if not success then
 				success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
 			end
@@ -3419,10 +3566,15 @@ do
 			context = context,
 		})
 
-		if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.RollCancel") then
-			task.delay(self.Settings:get("Defense.RollCancelDelay"), function()
-				self.Input:tapMouse(1, 0.035)
-			end)
+		if nativeDirectDodge then
+			-- Lycoris's direct path always stops the server-side dodge after 0.15s.
+			-- An enabled Roll Cancel may deliberately shorten that window.
+			local cancelDelay = self.Settings:get("Defense.RollCancel")
+				and self.Settings:get("Defense.RollCancelDelay")
+				or 0.15
+			self.Input:scheduleDodgeCancel(cancelDelay, true)
+		elseif kind == "Dodge" and self.Settings:get("Defense.RollCancel") then
+			self.Input:scheduleDodgeCancel(self.Settings:get("Defense.RollCancelDelay"), false)
 		end
 
 		return true, result
@@ -4104,6 +4256,24 @@ do
 			return false, "cooldown"
 		end
 
+		-- The local executor cooldown only tells us when CLAW last sent an input.
+		-- Deepwoken's replicated effects are the authoritative answer for whether
+		-- the next parry or dodge can actually begin. Keeping this check in
+		-- validation lets the fallback resolver choose a dodge before a doomed
+		-- second Block request is sent during ParryCool.
+		local native = self.Executor.Input and self.Executor.Input.Native
+		if action.kind == "Parry" and native then
+			local canParry, parryReason = native:canParry()
+			if not canParry then
+				return false, parryReason
+			end
+		elseif (action.kind == "Dodge" or action.kind == "FullDodge") and native then
+			local canDodge, dodgeReason = native:canDodge()
+			if not canDodge then
+				return false, dodgeReason
+			end
+		end
+
 		local character = self.State.Character
 		if
 			self.Settings:get("Validation.IFrames")
@@ -4245,8 +4415,22 @@ do
 			return Action.new({ kind = "Parry", name = action.name .. " (parry-only)" })
 		end
 
-		if action.kind == "Parry" and reason == "cooldown" and self.Settings:get("Defense.RollOnParryCooldown") then
-			return Action.new({ kind = "Dodge", name = action.name .. " (cooldown roll)" })
+		local parryUnavailable = reason == "cooldown" or reason == "parry-cooldown"
+		if
+			action.kind == "Parry"
+			and parryUnavailable
+			and (
+				self.Settings:get("Defense.RollOnParryCooldown")
+				or self.Settings:get("Defense.DodgeFallback")
+			)
+			and not profile.noDodgeFallback
+			and self.Settings:get("Defense.AllowDodge")
+		then
+			return Action.new({
+				kind = "Dodge",
+				name = action.name .. " (parry unavailable roll)",
+				metadata = { fallbackReason = reason },
+			})
 		end
 		if self.Settings:get("Defense.BlockFallback") and profile.preferBlockFallback and not profile.noBlockFallback then
 			return Action.new({
@@ -6174,7 +6358,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.3.7
+--  CLAW MARK v0.3.8
 --
 --  TABS
 --    BURSTER
@@ -9629,7 +9813,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.7",
+	"CLAW MARK v0.3.8",
 	8,
 	0,
 	170,
@@ -13628,7 +13812,7 @@ bind(RunService.Heartbeat, function(delta)
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -13638,6 +13822,8 @@ bind(RunService.Heartbeat, function(delta)
 		nativeStats.Unblocks or 0,
 		nativeStats.Retries or 0,
 		nativeStats.Coalesced or 0,
+		nativeStats.Dodges or 0,
+		nativeStats.DodgeCancels or 0,
 		string.sub(CombatRuntime.Input.Native.LastTransition or "idle", 1, 38),
 		metrics.Detected or 0,
 		metrics.Scheduled or 0,
@@ -14253,7 +14439,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.7 online"
+	"[CLAW] CLAW MARK v0.3.8 online"
 )
 
 -- END ENTRY: claw_mark.lua

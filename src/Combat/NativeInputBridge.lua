@@ -235,6 +235,8 @@ function NativeInputBridge.new()
 			Unblocks = 0,
 			Retries = 0,
 			Coalesced = 0,
+			Dodges = 0,
+			DodgeCancels = 0,
 		},
 		RenderConnection = nil,
 		CharacterConnection = nil,
@@ -411,6 +413,90 @@ end
 
 function NativeInputBridge:isBusy()
 	return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
+end
+
+function NativeInputBridge:canParry()
+	if self:_hasEffect("ParryCool") then
+		return false, "parry-cooldown"
+	end
+	return true
+end
+
+function NativeInputBridge:canDodge()
+	for _, effect in ipairs({ "NoRoll", "PreventRoll", "Dodged", "Dodge", "Stun" }) do
+		if self:_hasEffect(effect) then
+			return false, effect == "Stun" and "stunned" or "dodge-cooldown"
+		end
+	end
+	return true
+end
+
+function NativeInputBridge:isDodging()
+	return self:_hasEffect("ClientDodge")
+		or self:_hasEffect("Dodge")
+		or self:_hasEffect("DodgeFrame")
+		or self:_hasEffect("DodgedFrame")
+		or self:_hasEffect("Immortal")
+		or self:_hasEffect("NoRoll")
+end
+
+function NativeInputBridge:directDodge()
+	local ready, reason = self:initialize()
+	if not ready then
+		return false, reason
+	end
+	local canDodge, dodgeReason = self:canDodge()
+	if not canDodge then
+		return false, dodgeReason
+	end
+	if not self.InputData then
+		return false, "native input state unavailable"
+	end
+	if self:_hasEffect("Blocking") or next(self.Queue) ~= nil then
+		table.clear(self.Queue)
+		self:_sendUnblock("dodge")
+		self.ReleaseSent = true
+	end
+	local fired, fireReason = self:_fire(self:_remote("Dodge"), "roll", nil, nil, false)
+	if fired then
+		self.Stats.Dodges = self.Stats.Dodges + 1
+		self.LastTransition = "direct dodge sent"
+	else
+		self.LastTransition = "direct dodge failed: " .. tostring(fireReason)
+	end
+	return fired, fired and "LycorisNativeDodge" or fireReason
+end
+
+function NativeInputBridge:stopDodge(direct)
+	local ready, reason = self:initialize()
+	if not ready then
+		return false, reason
+	end
+	if not self.InputData then
+		return false, "native input state unavailable"
+	end
+	local fired, fireReason
+	if direct then
+		fired, fireReason = self:_fire(
+			self:_remote("StopDodge"),
+			self.InputData,
+			self:_hasEffect("LightAttack"),
+			true
+		)
+	else
+		fired, fireReason = self:_fire(
+			self:_remote("StopDodge"),
+			self.InputData,
+			self:_hasEffect("LightAttack")
+		)
+	end
+	if fired then
+		self.Stats.DodgeCancels = self.Stats.DodgeCancels + 1
+		self.LastTransition = "dodge cancel sent"
+	else
+		self.LastTransition = "dodge cancel failed: " .. tostring(fireReason)
+	end
+	return fired, fired and "LycorisNativeStopDodge" or fireReason
 end
 
 function NativeInputBridge:_updateQueue()
