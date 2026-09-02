@@ -5,12 +5,13 @@ local Targeting = {}
 Targeting.__index = Targeting
 
 local function listed(list, player, character)
-	local name = player and player.Name or character.Name
+	local name = string.lower(player and player.Name or character.Name)
+	local displayName = player and string.lower(player.DisplayName) or nil
 	local userID = player and tostring(player.UserId) or nil
 
 	for _, value in ipairs(list or {}) do
-		local normalized = tostring(value)
-		if normalized == name or (userID and normalized == userID) then
+		local normalized = string.lower(tostring(value))
+		if normalized == name or (displayName and normalized == displayName) or (userID and normalized == userID) then
 			return true
 		end
 	end
@@ -45,7 +46,31 @@ function Targeting.new(settings, options)
 		settings = settings,
 		isAlly = options.isAlly,
 		entitySource = options.entitySource,
+		friendCache = setmetatable({}, { __mode = "k" }),
 	}, Targeting)
+end
+
+function Targeting:_isAlly(player)
+	local localPlayer = Players.LocalPlayer
+	local allied = player.Team ~= nil and player.Team == localPlayer.Team
+	local localGuild = localPlayer:GetAttribute("Guild")
+	if not allied and type(localGuild) == "string" and localGuild ~= "" then
+		allied = player:GetAttribute("Guild") == localGuild
+	end
+	if not allied then
+		local cached = self.friendCache[player]
+		if cached == nil then
+			local ok, status = pcall(localPlayer.GetFriendStatus, localPlayer, player)
+			cached = ok and status == Enum.FriendStatus.Friend
+			self.friendCache[player] = cached
+		end
+		allied = cached
+	end
+	if type(self.isAlly) == "function" then
+		local ok, customAllied = pcall(self.isAlly, player)
+		allied = ok and customAllied or allied
+	end
+	return allied
 end
 
 function Targeting:_entities()
@@ -102,19 +127,18 @@ function Targeting:scan(localCharacter)
 		if not player and config.CheckMobTarget and not mobTargetsLocalPlayer(character, localCharacter) then
 			continue
 		end
-		if #config.Whitelist > 0 and not listed(config.Whitelist, player, character) then
+		local whitelisted = listed(config.Whitelist, player, character)
+		if config.WhitelistMode == "Only" and #config.Whitelist > 0 and not whitelisted then
+			continue
+		end
+		if config.WhitelistMode == "Exclude" and whitelisted then
 			continue
 		end
 		if listed(config.Blacklist, player, character) then
 			continue
 		end
 		if player and config.IgnoreAllies then
-			local allied = player.Team ~= nil and player.Team == Players.LocalPlayer.Team
-			if type(self.isAlly) == "function" then
-				local ok, customAllied = pcall(self.isAlly, player)
-				allied = ok and customAllied or allied
-			end
-			if allied then
+			if self:_isAlly(player) then
 				continue
 			end
 		end

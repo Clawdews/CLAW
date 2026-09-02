@@ -1,5 +1,6 @@
 local environment = getgenv and getgenv() or _G
 local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
 
 local ValidationEngine = {}
 ValidationEngine.__index = ValidationEngine
@@ -41,7 +42,7 @@ function ValidationEngine:_sourceCFrame(event, profile)
 	if event.root and event.root.Parent then
 		source = event.root.CFrame
 	elseif event.instance and event.instance:IsA("BasePart") then
-		source = event.instance.CFrame
+		source = profile and profile.useHitboxCFrame and event.instance.CFrame or CFrame.new(event.instance.Position)
 	end
 	if not source or not profile or profile.disablePrediction or not self.Settings:get("Validation.Prediction") then
 		return source
@@ -92,11 +93,14 @@ function ValidationEngine:_filtered(profile)
 	if filters.ChimeCountdown and self.State.Flags.ChimeCountdown then
 		return true, "chime-countdown"
 	end
+	if filters.SightlessBeam and self.State.Flags.SightlessBeam then
+		return true, "sightless-beam"
+	end
 	return false
 end
 
 function ValidationEngine:_trackValid(event)
-	if event.detector ~= "animation" or not event.track then
+	if not self.Settings:get("Validation.AnimationSanity") or event.detector ~= "animation" or not event.track then
 		return true
 	end
 
@@ -108,11 +112,42 @@ function ValidationEngine:_trackValid(event)
 	end
 
 	local validation = self.Settings:get("Validation")
+	local okProperties, priority, weightTarget = pcall(function()
+		return event.track.Priority, event.track.WeightTarget
+	end)
+	if not okProperties then
+		return false, "animation-properties"
+	end
+	if priority == Enum.AnimationPriority.Core then
+		return false, "core-priority-animation"
+	end
+	if event.entity and Players:GetPlayerFromCharacter(event.entity) and (tonumber(weightTarget) or 0) <= 0.05 then
+		return false, "low-weight-animation"
+	end
 	if speed < validation.MinAnimationSpeed or speed > validation.MaxAnimationSpeed then
 		return false, "animation-speed"
 	end
 	if length > 0 and (length < validation.MinAnimationLength or length > validation.MaxAnimationLength) then
 		return false, "animation-length"
+	end
+	if event.instance and event.instance:IsA("Animator") then
+		local duplicates = 0
+		local okPlaying, playingTracks = pcall(event.instance.GetPlayingAnimationTracks, event.instance)
+		if not okPlaying then
+			return false, "animation-tracks"
+		end
+		for _, playing in ipairs(playingTracks) do
+			if
+				playing.Animation
+				and event.track.Animation
+				and playing.Animation.AnimationId == event.track.Animation.AnimationId
+			then
+				duplicates = duplicates + 1
+				if duplicates > 1 then
+					return false, "duplicate-animation"
+				end
+			end
+		end
 	end
 	return true
 end

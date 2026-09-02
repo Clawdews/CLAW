@@ -135,6 +135,92 @@ const ACTION_KIND = {
   "Teleport Up": "Teleport",
 };
 
+const dynamicAction = (type, when, hitbox, metadata = {}) => ({
+  _type: type,
+  when,
+  name: `${type} (dynamic template)`,
+  hitbox: { X: hitbox[0], Y: hitbox[1], Z: hitbox[2] },
+  ihbc: false,
+  metadata,
+});
+
+const DYNAMIC_MODULES = {
+  BlindingDawn: {
+    profile: { facingHitbox: false, delayUntilHitbox: true, preferRepeat: true, repeatStartDelay: 0.5, repeatDelay: 0.15, hitbox: { X: 60, Y: 20, Z: 60 } },
+  },
+  DisplayThorns: {
+    actions: [dynamicAction("Parry", 0, [0, 0, 0], { attributeDifference: ["Time", "Window"], attributeScale: 1 })],
+    profile: { forceLocalPlayer: true },
+  },
+  ChainPull: { actions: [dynamicAction("Parry", 350, [15, 15, 40], { distanceScale: 0.01 })] },
+  CroccoTripleBite: { actions: [400, 1000, 1400].map((when) => dynamicAction("Parry", when, [25, 25, 30])) },
+  ElderPrimaSixStomp: {
+    actions: [550, 1000, 1450, 1800, 2250, 2700].map((when) => dynamicAction("Parry", when, [100, 250, 100])),
+  },
+  ElderPrimaSlam: { actions: [dynamicAction("Dodge", 1452, [80, 250, 140])] },
+  ElderPrimaStompFeint: { actions: [dynamicAction("Parry", 907.5, [80, 250, 140])] },
+  FlameBallista: { actions: [dynamicAction("Parry", 1180, [50, 50, 50], { distanceScale: 0.008 })] },
+  FlareVolley: { actions: [dynamicAction("Parry", 1, [15, 15, 100], { distanceScale: 0.008, maxDelay: 3 })] },
+  GaleLeap3: { profile: { suppressGeneric: true } },
+  GenericTelegraph: {
+    actions: [{ ...dynamicAction("Parry", 950, [0, 0, 0], { actionFromTelegraph: true }), ihbc: true }],
+    profile: { forceLocalPlayer: true },
+  },
+  IceEruption: {
+    actions: [dynamicAction("Dodge", 525, [22, 20, 30], {
+      distanceScale: 0.0135,
+      alternativeChild: "REP_SOUND_13263429067",
+      alternativeKind: "Parry",
+      alternativeDelay: 0.2,
+      alternativeHitbox: { X: 23, Y: 20, Z: 30 },
+    })],
+  },
+  ImperatorRunCrit: { actions: [dynamicAction("Parry", 500, [20, 20, 100], { distanceScale: 0.009 })] },
+  PrimadonKick: { actions: [dynamicAction("Dodge", 855, [80, 250, 80])] },
+  PrimadonMidPunch: { actions: [dynamicAction("Parry", 672, [80, 250, 80])] },
+  PrimadonPunch: { actions: [dynamicAction("Parry", 735, [80, 250, 80])] },
+  PrimadonStomp: { actions: [dynamicAction("Parry", 907.5, [80, 250, 80])] },
+  PrimadonTripleStomp: {
+    actions: [800, 1400, 2050].map((when) => dynamicAction("Parry", when, [80, 250, 80])),
+  },
+  ShadowGun: {
+    actions: [dynamicAction("Parry", 102, [20, 20, 50])],
+    profile: { ignoreAnimationEnd: true, ignoreEarlyAnimationEnd: true, maxAnimationTime: 1 },
+  },
+  SilentheartLightMayhem: {
+    actions: [dynamicAction("Parry", 400, [20, 40, 40], {
+      distanceScale: 0.0145,
+      fastSpeedThreshold: 0.7,
+      fastBaseDelay: 0.25,
+      fastDistanceScale: 0.02,
+      fastMaxDelay: 0.65,
+    })],
+    profile: { predictFacing: true },
+  },
+  TitusVent: {
+    actions: [dynamicAction("Parry", 400, [0, 0, 0], { entityNamePattern: "titus", matchingDelay: 0.3 })],
+  },
+  TelegraphMajor: { profile: { suppressGeneric: true } },
+  WardensBlade: {
+    profile: {
+      facingHitbox: false,
+      ignoreAnimationEnd: true,
+      ignoreEarlyAnimationEnd: true,
+      delayUntilHitbox: true,
+      preferRepeat: true,
+      repeatStartDelay: 0.75,
+      repeatDelay: 0.4,
+      minDistance: 0,
+      maxDistance: 100,
+      hitbox: { X: 15, Y: 15, Z: 15 },
+    },
+  },
+  WeaponAerialAttackTest: { actions: [dynamicAction("Parry", 300, [14, 18, 20])] },
+  WeaponFlourishTest: { actions: [dynamicAction("Parry", 350, [15, 15, 20])] },
+  WeaponRunningAttackTest: { actions: [dynamicAction("Parry", 300, [12, 12, 18])] },
+  WeaponUppercutTest: { actions: [dynamicAction("Parry", 350, [15, 18, 20])] },
+};
+
 function convertActions(sourceActions) {
   const actions = [];
   for (let index = 0; index < (sourceActions ?? []).length; index += 1) {
@@ -156,7 +242,7 @@ function convertActions(sourceActions) {
       hitbox: vector(source.hitbox),
       ignoreHitbox: source.ihbc === true,
       chance: 100,
-      metadata: { importedType: String(source._type ?? kind) },
+      metadata: { importedType: String(source._type ?? kind), ...(source.metadata ?? {}) },
     });
   }
   return actions;
@@ -212,6 +298,7 @@ function convertTiming(source, category, moduleActions) {
   const id = category === "animation" || category === "sound"
     ? cleanAssetId(rawId)
     : String(rawId ?? source.name ?? "");
+  const dynamic = source.umoa === true ? DYNAMIC_MODULES[String(source.smod || "")] : undefined;
   return {
     id,
     name: String(source.name || id),
@@ -234,6 +321,7 @@ function convertTiming(source, category, moduleActions) {
     noVentFallback: source.nvfb === true,
     blockFallbackHold: Math.max(0, Number(source.bfht) || 0.3),
     preferBlockFallback: source.pbfb === true,
+    hyperArmor: source.ha === true,
     sourceModule: source.umoa === true ? String(source.smod || "") : "",
     preferModule: source.umoa === true,
     ignoreAnimationEnd: source.iae === true,
@@ -249,7 +337,8 @@ function convertTiming(source, category, moduleActions) {
     ignoreLocalPlayer: source.ilp === true,
     forceLocalPlayer: source.flp === true,
     probability: {},
-    actions: convertActions(source.actions?.length ? source.actions : moduleActions),
+    actions: convertActions(source.actions?.length ? source.actions : moduleActions.length ? moduleActions : dynamic?.actions),
+    ...(dynamic?.profile ?? {}),
   };
 }
 
@@ -295,6 +384,15 @@ for (const category of ["animation", "sound", "part", "effect"]) {
   timings[category] = [...byId.values()].sort((first, second) => first.name.localeCompare(second.name));
 }
 
+const allTimings = Object.values(timings).flat();
+const genericFallbackProfiles = allTimings.filter((profile) => (
+  profile.preferModule
+  && !profile.preferRepeat
+  && !profile.suppressGeneric
+  && profile.actions.length === 0
+));
+const genericFallbackModules = [...new Set(genericFallbackProfiles.map((profile) => profile.sourceModule))].sort();
+
 const output = {
   version: 1,
   provenance: {
@@ -302,10 +400,15 @@ const output = {
     source: "user-supplied Lycoris timing tree",
     patchesApplied: patches.length,
     staticModuleTemplates: [...moduleActionMap.values()].filter((actions) => actions.length > 0).length,
+    dynamicModuleTemplates: Object.keys(DYNAMIC_MODULES).length,
+    genericFallbackProfiles: genericFallbackProfiles.length,
+    genericFallbackModules,
   },
   timings,
 };
 await mkdir(path.dirname(path.resolve(outputPath)), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
-const count = Object.values(timings).reduce((total, profiles) => total + profiles.length, 0);
-console.log(`Converted ${count} timing profiles with ${patches.length} patch(es) -> ${outputPath}`);
+console.log(
+  `Converted ${allTimings.length} timing profiles with ${patches.length} patch(es); `
+  + `${genericFallbackProfiles.length} explicit generic fallback(s) -> ${outputPath}`,
+);

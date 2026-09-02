@@ -17,6 +17,7 @@ local FLAGS = {
 	GoldenTongueCooldown = { "GoldenTongueCooldown" },
 	ArdourActive = { "Ardour", "ArdourActive" },
 	FlowStateActive = { "FlowState", "FlowStateActive" },
+	SightlessBeam = { "SightlessBeam", "UsingSightlessBeam" },
 }
 
 function StateMonitor.new(state)

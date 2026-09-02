@@ -78,6 +78,28 @@ function DefenseEngine:_defaultAction()
 	return Action.new({ kind = preferred })
 end
 
+function DefenseEngine:_dynamicAction(action, event)
+	local metadata = action.metadata or {}
+	if not metadata.actionFromTelegraph and not metadata.alternativeChild then
+		return action
+	end
+	local resolved = action:clone()
+	local attributes = event.metadata and event.metadata.attributes or {}
+	if metadata.actionFromTelegraph then
+		local telegraph = tostring(attributes.telegraph or attributes.Telegraph or "")
+		resolved.kind = telegraph == "dodge_only" and "Dodge" or "Parry"
+	end
+	if metadata.alternativeChild and event.entity and event.entity:FindFirstChild(metadata.alternativeChild, true) then
+		resolved.kind = metadata.alternativeKind or resolved.kind
+		resolved.delay = tonumber(metadata.alternativeDelay) or resolved.delay
+		local hitbox = metadata.alternativeHitbox
+		if type(hitbox) == "table" then
+			resolved.hitbox = Vector3.new(hitbox.X or 0, hitbox.Y or 0, hitbox.Z or 0)
+		end
+	end
+	return resolved
+end
+
 function DefenseEngine:_reject(reason)
 	self.State:increment("Rejected")
 	self.State:emit("action-rejected", reason)
@@ -198,16 +220,28 @@ function DefenseEngine:handle(event)
 	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 		return false, "defense is disabled"
 	end
-	if event.entity == self.State.Character then
-		return false, "ignored local character event"
-	end
-
 	local profile = self.Timings:get(event.detector, event.id)
 	if not profile then
 		return false, "no timing profile"
 	end
+	local localEvent = event.entity == self.State.Character
+	if localEvent and profile.ignoreLocalPlayer then
+		return false, "ignored local character event"
+	end
+	if localEvent and not profile.allowLocalPlayer and not profile.forceLocalPlayer then
+		return false, "local character event is not allowed"
+	end
+	if profile.forceLocalPlayer and not localEvent then
+		return false, "effect is not on local character"
+	end
 
-	local target = self:_targetFor(event.entity, event.position)
+	local target = localEvent
+			and (self.State.PrimaryTarget or {
+				Character = self.State.Character,
+				Root = self.State.Root,
+				Distance = 0,
+			})
+		or self:_targetFor(event.entity, event.position)
 	if not target then
 		self.State:increment("Rejected")
 		return false, "event entity is not a selected target"
@@ -226,8 +260,15 @@ function DefenseEngine:handle(event)
 		target = target,
 	})
 
-	local actions = #profile.actions > 0 and profile.actions or { self:_defaultAction() }
-	if profile.preferModule and #profile.actions == 0 and not self.ModuleNotified[profile.sourceModule] then
+	local actions = #profile.actions > 0 and profile.actions
+		or ((profile.preferRepeat or profile.suppressGeneric) and {} or { self:_defaultAction() })
+	if
+		profile.preferModule
+		and not profile.preferRepeat
+		and not profile.suppressGeneric
+		and #profile.actions == 0
+		and not self.ModuleNotified[profile.sourceModule]
+	then
 		self.ModuleNotified[profile.sourceModule] = true
 		self.State:emit("module-fallback", {
 			module = profile.sourceModule,
@@ -235,7 +276,7 @@ function DefenseEngine:handle(event)
 		})
 	end
 	for index, action in ipairs(actions) do
-		local resolved, probabilityReason = self.Probability:resolve(action, profile)
+		local resolved, probabilityReason = self.Probability:resolve(self:_dynamicAction(action, event), profile)
 		if not resolved then
 			self.State:increment("Rejected")
 			self.State:emit("action-rejected", probabilityReason)
@@ -260,8 +301,15 @@ function DefenseEngine:handle(event)
 			end
 		end
 
-		local delay = self.Resolver:delay(resolved, event)
+		local delay = self.Resolver:delay(resolved, event, target)
 		local scheduledAction = resolved
+		self.State:emit("incoming-action", {
+			event = event,
+			profile = profile,
+			action = scheduledAction,
+			delay = delay,
+			target = target,
+		})
 		local stopConnection
 		local scheduled = self.Scheduler:schedule(string.format("%s:%s:%d", event.detector, event.id, index), delay, {
 			punishable = profile.punishableWindow,

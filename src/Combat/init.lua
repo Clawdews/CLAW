@@ -27,6 +27,7 @@ local HitboxWaiter = assert(modules["src/Combat/HitboxWaiter.lua"])
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local Combat = {}
 Combat.__index = Combat
@@ -169,6 +170,19 @@ function Combat:start()
 	self.Detectors:start()
 	self:_bind(RunService.Heartbeat, function()
 		self:_step()
+	end)
+	self:_bind(UserInputService.InputBegan, function(input, processed)
+		if processed or input.KeyCode == Enum.KeyCode.Unknown then
+			return
+		end
+		local binding = self.Settings:get("Bindings.ToggleDefense")
+		if
+			type(binding) == "string"
+			and binding ~= ""
+			and string.lower(input.KeyCode.Name) == string.lower(binding)
+		then
+			self:set("Defense.Enabled", not self.Settings:get("Defense.Enabled"))
+		end
 	end)
 	self.State:emit("started")
 	return true

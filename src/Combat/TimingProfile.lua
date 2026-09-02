@@ -32,8 +32,10 @@ function TimingProfile.new(values)
 	self.noVentFallback = values.noVentFallback == true
 	self.blockFallbackHold = math.max(0, tonumber(values.blockFallbackHold) or 0.30)
 	self.preferBlockFallback = values.preferBlockFallback == true
+	self.hyperArmor = values.hyperArmor == true
 	self.sourceModule = tostring(values.sourceModule or "")
 	self.preferModule = values.preferModule == true
+	self.suppressGeneric = values.suppressGeneric == true
 	self.ignoreAnimationEnd = values.ignoreAnimationEnd == true
 	self.ignoreEarlyAnimationEnd = values.ignoreEarlyAnimationEnd == true
 	self.maxAnimationTime = math.max(0, tonumber(values.maxAnimationTime) or 0)
@@ -93,8 +95,10 @@ function TimingProfile:serialize()
 		noVentFallback = self.noVentFallback,
 		blockFallbackHold = self.blockFallbackHold,
 		preferBlockFallback = self.preferBlockFallback,
+		hyperArmor = self.hyperArmor,
 		sourceModule = self.sourceModule,
 		preferModule = self.preferModule,
+		suppressGeneric = self.suppressGeneric,
 		ignoreAnimationEnd = self.ignoreAnimationEnd,
 		ignoreEarlyAnimationEnd = self.ignoreEarlyAnimationEnd,
 		maxAnimationTime = self.maxAnimationTime,

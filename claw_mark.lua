@@ -6329,7 +6329,7 @@ else
 		end
 	end
 
-	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 306)
+	local tuningModal = makeCombatModal("ADVANCED TUNING", 430, 365)
 	combatToggle(tuningModal, "PROBABILITY", "Probability.Enabled", 10, 35, 198)
 	combatToggle(tuningModal, "ALLOW FAILURE", "Probability.AllowFailure", 218, 35, 202)
 	combatNumber(tuningModal, "FAILURE %", "Probability.FailureRate", 10, 64, 0, 100)
@@ -6348,6 +6348,9 @@ else
 	combatNumber(tuningModal, "POLL SEC", "Timing.HitboxPollInterval", 218, 238, 0.01, 1)
 	combatNumber(tuningModal, "ROLL CANCEL", "Defense.RollCancelDelay", 10, 265, 0, 2)
 	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
+	combatToggle(tuningModal, "ANIM SANITY", "Validation.AnimationSanity", 10, 296, 198)
+	combatToggle(tuningModal, "SIGHTLESS FILTER", "Filters.SightlessBeam", 218, 296, 202)
+	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 327, 180, 226)
 	raiseModal(tuningModal)
 
 	bind(advancedTuningButton.MouseButton1Click, function()
@@ -6379,9 +6382,20 @@ else
 		end
 		return list
 	end
+	local function formatTargetList(list)
+		local formatted = {}
+		for _, value in ipairs(list or {}) do
+			formatted[#formatted + 1] = tostring(value)
+		end
+		return table.concat(formatted, "\n")
+	end
 
-	local applyLists = mkButton(listsModal, "APPLY LISTS", 12, 267, 230, 28)
-	local clearLists = mkButton(listsModal, "CLEAR BOTH", 258, 267, 230, 28)
+	local applyLists = mkButton(listsModal, "APPLY LISTS", 12, 267, 150, 28)
+	local listMode = mkButton(listsModal, "", 175, 267, 150, 28)
+	local clearLists = mkButton(listsModal, "CLEAR BOTH", 338, 267, 150, 28)
+	local function refreshListMode()
+		listMode.Text = "MODE: " .. string.upper(CombatRuntime.Settings:get("Targeting.WhitelistMode"))
+	end
 	bind(applyLists.MouseButton1Click, function()
 		CombatRuntime:set("Targeting.Whitelist", parseTargetList(whitelistBox.Text))
 		CombatRuntime:set("Targeting.Blacklist", parseTargetList(blacklistBox.Text))
@@ -6391,9 +6405,15 @@ else
 		whitelistBox.Text = ""
 		blacklistBox.Text = ""
 	end)
+	bind(listMode.MouseButton1Click, function()
+		local current = CombatRuntime.Settings:get("Targeting.WhitelistMode")
+		CombatRuntime:set("Targeting.WhitelistMode", current == "Exclude" and "Only" or "Exclude")
+		refreshListMode()
+	end)
 	bind(targetListsButton.MouseButton1Click, function()
-		whitelistBox.Text = table.concat(CombatRuntime.Settings:get("Targeting.Whitelist"), "\n")
-		blacklistBox.Text = table.concat(CombatRuntime.Settings:get("Targeting.Blacklist"), "\n")
+		whitelistBox.Text = formatTargetList(CombatRuntime.Settings:get("Targeting.Whitelist"))
+		blacklistBox.Text = formatTargetList(CombatRuntime.Settings:get("Targeting.Blacklist"))
+		refreshListMode()
 		listsModal.Visible = true
 	end)
 	raiseModal(listsModal)
@@ -6407,28 +6427,46 @@ local TimingSelected
 local TimingCategory = "animation"
 local TimingAction = "Parry"
 local TimingActionChance = 100
-local TimingAdvanced = {
-	delayUntilHitbox = false,
-	preferRepeat = false,
-	allowAttacking = false,
-	facingHitbox = true,
-	noDodgeFallback = false,
-	noBlockFallback = false,
-	noVentFallback = false,
-	preferBlockFallback = false,
-	ignoreAnimationEnd = false,
-	ignoreEarlyAnimationEnd = false,
-	pastHitbox = false,
-	predictFacing = false,
-	disablePrediction = false,
-	repeatStartDelay = 0,
-	repeatDelay = 0,
-	hitboxOffset = 0,
-	historySeconds = 0,
-	predictionSeconds = 0,
-	maxAnimationTime = 0,
-}
+local TimingActionName = "Parry"
+local TimingActionDuration = 0
+local TimingActionHitbox = { X = 0, Y = 0, Z = 0 }
+local TimingActionIgnoreHitbox = false
+local TimingActions = {}
+local TimingActionIndex = 1
+local function defaultTimingAdvanced()
+	return {
+		delayUntilHitbox = false,
+		preferRepeat = false,
+		allowAttacking = false,
+		facingHitbox = true,
+		hyperArmor = false,
+		allowLocalPlayer = false,
+		useHitboxCFrame = false,
+		ignoreLocalPlayer = false,
+		forceLocalPlayer = false,
+		noDodgeFallback = false,
+		noBlockFallback = false,
+		noVentFallback = false,
+		preferBlockFallback = false,
+		ignoreAnimationEnd = false,
+		ignoreEarlyAnimationEnd = false,
+		pastHitbox = false,
+		predictFacing = false,
+		disablePrediction = false,
+		repeatStartDelay = 0,
+		repeatDelay = 0,
+		hitboxOffset = 0,
+		historySeconds = 0,
+		predictionSeconds = 0,
+		maxAnimationTime = 0,
+		failureRate = 0,
+		dashRate = 0,
+		ignoreEndRate = 0,
+	}
+end
+local TimingAdvanced = defaultTimingAdvanced()
 local refreshTimingAdvanced = function() end
+local refreshTimingActions = function() end
 
 local TimingList,
 	TimingListLayout =
@@ -6490,16 +6528,19 @@ local TimingPunishBox = timingBox("PUNISH WIN", 194, 8)
 local TimingBlockBox = timingBox("BLOCK HOLD", 194, 206)
 
 local timingSaveButton =
-	mkButton(timingEditor, "ADD / UPDATE", 8, 230, 125, 25)
+	mkButton(timingEditor, "SAVE PROFILE", 8, 230, 94, 25)
 
 local timingRemoveButton =
-	mkButton(timingEditor, "REMOVE", 141, 230, 82, 25)
+	mkButton(timingEditor, "REMOVE", 180, 230, 68, 25)
 
 local timingCopyButton =
-	mkButton(timingEditor, "COPY JSON", 231, 230, 82, 25)
+	mkButton(timingEditor, "COPY", 256, 230, 62, 25)
 
 local timingAdvancedButton =
-	mkButton(timingEditor, "ADVANCED", 321, 230, 79, 25)
+	mkButton(timingEditor, "ADV", 326, 230, 74, 25)
+
+local timingActionsButton =
+	mkButton(timingEditor, "ACTIONS: 0", 110, 230, 62, 25)
 
 local TimingJSONBox =
 	mkBox(
@@ -6541,28 +6582,15 @@ local function clearTimingEditor()
 	TimingPunishBox.Text = "0.70"
 	TimingBlockBox.Text = "0.30"
 	TimingActionChance = 100
-	TimingAdvanced = {
-		delayUntilHitbox = false,
-		preferRepeat = false,
-		allowAttacking = false,
-		facingHitbox = true,
-		noDodgeFallback = false,
-		noBlockFallback = false,
-		noVentFallback = false,
-		preferBlockFallback = false,
-		ignoreAnimationEnd = false,
-		ignoreEarlyAnimationEnd = false,
-		pastHitbox = false,
-		predictFacing = false,
-		disablePrediction = false,
-		repeatStartDelay = 0,
-		repeatDelay = 0,
-		hitboxOffset = 0,
-		historySeconds = 0,
-		predictionSeconds = 0,
-		maxAnimationTime = 0,
-	}
+	TimingActionName = "Parry"
+	TimingActionDuration = 0
+	TimingActionHitbox = { X = 0, Y = 0, Z = 0 }
+	TimingActionIgnoreHitbox = false
+	TimingActions = {}
+	TimingActionIndex = 1
+	TimingAdvanced = defaultTimingAdvanced()
 	refreshTimingAdvanced()
+	refreshTimingActions()
 end
 
 local function loadTimingEditor(profile)
@@ -6574,6 +6602,16 @@ local function loadTimingEditor(profile)
 	TimingDelayBox.Text = tostring(profile.actions[1] and profile.actions[1].delay or 0)
 	TimingAction = profile.actions[1] and profile.actions[1].kind or "Parry"
 	TimingActionChance = profile.actions[1] and profile.actions[1].chance or 100
+	TimingActionName = profile.actions[1] and profile.actions[1].name or TimingAction
+	TimingActionDuration = profile.actions[1] and profile.actions[1].duration or 0
+	local firstActionHitbox = profile.actions[1] and profile.actions[1].hitbox or Vector3.zero
+	TimingActionHitbox = { X = firstActionHitbox.X, Y = firstActionHitbox.Y, Z = firstActionHitbox.Z }
+	TimingActionIgnoreHitbox = profile.actions[1] and profile.actions[1].ignoreHitbox or false
+	TimingActions = {}
+	for _, action in ipairs(profile.actions) do
+		TimingActions[#TimingActions + 1] = action:serialize()
+	end
+	TimingActionIndex = 1
 	TimingMinBox.Text = tostring(profile.minDistance)
 	TimingMaxBox.Text = tostring(profile.maxDistance)
 	TimingHitXBox.Text = tostring(profile.hitbox.X)
@@ -6591,6 +6629,11 @@ local function loadTimingEditor(profile)
 		noBlockFallback = profile.noBlockFallback,
 		noVentFallback = profile.noVentFallback,
 		preferBlockFallback = profile.preferBlockFallback,
+		hyperArmor = profile.hyperArmor,
+		allowLocalPlayer = profile.allowLocalPlayer,
+		useHitboxCFrame = profile.useHitboxCFrame,
+		ignoreLocalPlayer = profile.ignoreLocalPlayer,
+		forceLocalPlayer = profile.forceLocalPlayer,
 		ignoreAnimationEnd = profile.ignoreAnimationEnd,
 		ignoreEarlyAnimationEnd = profile.ignoreEarlyAnimationEnd,
 		pastHitbox = profile.pastHitbox,
@@ -6602,10 +6645,14 @@ local function loadTimingEditor(profile)
 		historySeconds = profile.historySeconds,
 		predictionSeconds = profile.predictionSeconds,
 		maxAnimationTime = profile.maxAnimationTime,
+		failureRate = profile.probability.FailureRate or 0,
+		dashRate = profile.probability.DashInsteadOfParryRate or 0,
+		ignoreEndRate = profile.probability.IgnoreAnimationEndRate or 0,
 	}
 	timingCategoryButton.Text = "TYPE: " .. string.upper(TimingCategory)
 	timingActionButton.Text = "ACTION: " .. string.upper(TimingAction)
 	refreshTimingAdvanced()
+	refreshTimingActions()
 end
 
 local timingAdvancedModal = Instance.new("Frame")
@@ -6657,6 +6704,19 @@ local function timingAdvancedNumber(label, key, x, y, minimum, maximum, chance)
 	return box
 end
 
+local function timingAdvancedCompactNumber(label, key, x, y)
+	mkLabel(timingAdvancedModal, label, x, y, 94, 22, 8)
+	local box = mkBox(timingAdvancedModal, "", x + 98, y, 62, 22)
+	local function refresh()
+		box.Text = tostring(TimingAdvanced[key])
+	end
+	advancedRefreshers[#advancedRefreshers + 1] = refresh
+	bind(box.FocusLost, function()
+		TimingAdvanced[key] = clampNumber(box.Text, 0, 100, TimingAdvanced[key])
+		refresh()
+	end)
+end
+
 timingAdvancedToggle("DELAY UNTIL HITBOX", "delayUntilHitbox", 10, 35)
 timingAdvancedToggle("FACING HITBOX", "facingHitbox", 266, 35)
 timingAdvancedToggle("REPEAT UNTIL END", "preferRepeat", 10, 64)
@@ -6670,6 +6730,43 @@ timingAdvancedToggle("IGNORE EARLY END", "ignoreEarlyAnimationEnd", 266, 151)
 timingAdvancedToggle("PAST HITBOX", "pastHitbox", 10, 180)
 timingAdvancedToggle("PREDICT FACING", "predictFacing", 266, 180)
 timingAdvancedToggle("DISABLE PREDICTION", "disablePrediction", 10, 209)
+local timingCategoryOption = mkButton(timingAdvancedModal, "", 266, 209, 244, 23)
+local function refreshTimingCategoryOption()
+	if TimingCategory == "animation" then
+		timingCategoryOption.Text = "HYPERARMOR: " .. (TimingAdvanced.hyperArmor and "ON" or "OFF")
+		timingCategoryOption.BackgroundColor3 = TimingAdvanced.hyperArmor and COLORS.GREEN or COLORS.RED
+	elseif TimingCategory == "sound" then
+		timingCategoryOption.Text = "ALLOW LOCAL SOUND: " .. (TimingAdvanced.allowLocalPlayer and "ON" or "OFF")
+		timingCategoryOption.BackgroundColor3 = TimingAdvanced.allowLocalPlayer and COLORS.GREEN or COLORS.RED
+	elseif TimingCategory == "part" then
+		timingCategoryOption.Text = "USE PART ROTATION: " .. (TimingAdvanced.useHitboxCFrame and "ON" or "OFF")
+		timingCategoryOption.BackgroundColor3 = TimingAdvanced.useHitboxCFrame and COLORS.GREEN or COLORS.RED
+	else
+		local policy = TimingAdvanced.forceLocalPlayer and "FORCE LOCAL"
+			or TimingAdvanced.ignoreLocalPlayer and "IGNORE LOCAL"
+			or "ANY OWNER"
+		timingCategoryOption.Text = "EFFECT OWNER: " .. policy
+		timingCategoryOption.BackgroundColor3 = COLORS.PANEL2
+	end
+end
+advancedRefreshers[#advancedRefreshers + 1] = refreshTimingCategoryOption
+bind(timingCategoryOption.MouseButton1Click, function()
+	if TimingCategory == "animation" then
+		TimingAdvanced.hyperArmor = not TimingAdvanced.hyperArmor
+	elseif TimingCategory == "sound" then
+		TimingAdvanced.allowLocalPlayer = not TimingAdvanced.allowLocalPlayer
+	elseif TimingCategory == "part" then
+		TimingAdvanced.useHitboxCFrame = not TimingAdvanced.useHitboxCFrame
+	elseif TimingAdvanced.forceLocalPlayer then
+		TimingAdvanced.forceLocalPlayer = false
+	elseif TimingAdvanced.ignoreLocalPlayer then
+		TimingAdvanced.ignoreLocalPlayer = false
+		TimingAdvanced.forceLocalPlayer = true
+	else
+		TimingAdvanced.ignoreLocalPlayer = true
+	end
+	refreshTimingCategoryOption()
+end)
 
 timingAdvancedNumber("REPEAT START", "repeatStartDelay", 10, 242, 0, 10)
 timingAdvancedNumber("REPEAT DELAY", "repeatDelay", 266, 242, 0, 10)
@@ -6680,7 +6777,9 @@ timingAdvancedNumber("MAX ANIM SEC", "maxAnimationTime", 266, 296, 0, 30)
 timingAdvancedNumber("ACTION CHANCE %", nil, 10, 323, 0, 100, true)
 
 local advancedReset = mkButton(timingAdvancedModal, "RESET ADVANCED", 266, 323, 244, 22)
-local advancedDone = mkButton(timingAdvancedModal, "DONE", 10, 352, 500, 22)
+timingAdvancedCompactNumber("FAILURE %", "failureRate", 10, 352)
+timingAdvancedCompactNumber("DASH %", "dashRate", 180, 352)
+timingAdvancedCompactNumber("IGNORE END %", "ignoreEndRate", 350, 352)
 
 refreshTimingAdvanced = function()
 	for _, refresh in ipairs(advancedRefreshers) do
@@ -6690,27 +6789,7 @@ end
 
 bind(advancedReset.MouseButton1Click, function()
 	TimingActionChance = 100
-	TimingAdvanced = {
-		delayUntilHitbox = false,
-		preferRepeat = false,
-		allowAttacking = false,
-		facingHitbox = true,
-		noDodgeFallback = false,
-		noBlockFallback = false,
-		noVentFallback = false,
-		preferBlockFallback = false,
-		ignoreAnimationEnd = false,
-		ignoreEarlyAnimationEnd = false,
-		pastHitbox = false,
-		predictFacing = false,
-		disablePrediction = false,
-		repeatStartDelay = 0,
-		repeatDelay = 0,
-		hitboxOffset = 0,
-		historySeconds = 0,
-		predictionSeconds = 0,
-		maxAnimationTime = 0,
-	}
+	TimingAdvanced = defaultTimingAdvanced()
 	refreshTimingAdvanced()
 end)
 
@@ -6718,7 +6797,6 @@ local function closeTimingAdvanced()
 	timingAdvancedModal.Visible = false
 end
 bind(advancedClose.MouseButton1Click, closeTimingAdvanced)
-bind(advancedDone.MouseButton1Click, closeTimingAdvanced)
 bind(timingAdvancedButton.MouseButton1Click, function()
 	refreshTimingAdvanced()
 	timingAdvancedModal.Visible = true
@@ -6727,6 +6805,168 @@ end)
 for _, descendant in ipairs(timingAdvancedModal:GetDescendants()) do
 	if descendant:IsA("GuiObject") then
 		descendant.ZIndex = 21
+	end
+end
+
+local function currentTimingAction()
+	local existing = TimingActions[TimingActionIndex] or {}
+	return {
+		kind = TimingAction,
+		name = TimingActionName ~= "" and TimingActionName or existing.name or TimingAction,
+		delay = tonumber(TimingDelayBox.Text) or 0.15,
+		duration = TimingActionDuration,
+		hitbox = {
+			X = TimingActionHitbox.X,
+			Y = TimingActionHitbox.Y,
+			Z = TimingActionHitbox.Z,
+		},
+		ignoreHitbox = TimingActionIgnoreHitbox,
+		chance = TimingActionChance,
+		metadata = existing.metadata or {},
+	}
+end
+
+local timingActionsModal = Instance.new("Frame")
+timingActionsModal.Position = UDim2.fromOffset(108, 11)
+timingActionsModal.Size = UDim2.fromOffset(440, 380)
+timingActionsModal.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+timingActionsModal.BorderColor3 = COLORS.ACCENT
+timingActionsModal.BorderSizePixel = 1
+timingActionsModal.Visible = false
+timingActionsModal.ZIndex = 22
+timingActionsModal.Parent = TimingsPage
+local actionsHeading = mkLabel(timingActionsModal, "MULTI-ACTION MANAGER", 10, 4, 350, 24, 11)
+actionsHeading.TextColor3 = COLORS.ACCENT
+local actionsClose = mkButton(timingActionsModal, "X", 404, 5, 26, 22)
+local actionsScroll, actionsLayout = mkScroll(timingActionsModal, 10, 35, 420, 205)
+local actionHitboxBoxes = {}
+for index, axis in ipairs({ "X", "Y", "Z" }) do
+	local x = 10 + ((index - 1) * 142)
+	mkLabel(timingActionsModal, "ACTION HITBOX " .. axis, x, 247, 92, 22, 8)
+	local box = mkBox(timingActionsModal, "0", x + 96, 247, 40, 22)
+	actionHitboxBoxes[axis] = box
+	bind(box.FocusLost, function()
+		TimingActionHitbox[axis] = clampNumber(box.Text, 0, 10000, TimingActionHitbox[axis])
+		box.Text = tostring(TimingActionHitbox[axis])
+	end)
+end
+local actionIgnoreHitbox = mkButton(timingActionsModal, "", 10, 276, 150, 24)
+mkLabel(timingActionsModal, "DELAY", 168, 276, 42, 22, 8)
+local actionDelayBox = mkBox(timingActionsModal, "0.15", 212, 276, 62, 22)
+mkLabel(timingActionsModal, "CHANCE", 282, 276, 50, 22, 8)
+local actionChanceBox = mkBox(timingActionsModal, "100", 336, 276, 94, 22)
+mkLabel(timingActionsModal, "NAME", 10, 307, 48, 22, 8)
+local actionNameBox = mkBox(timingActionsModal, "", 60, 307, 166, 22)
+mkLabel(timingActionsModal, "DURATION", 238, 307, 70, 22, 8)
+local actionDurationBox = mkBox(timingActionsModal, "0", 312, 307, 118, 22)
+bind(actionNameBox.FocusLost, function()
+	TimingActionName = actionNameBox.Text
+end)
+bind(actionDurationBox.FocusLost, function()
+	TimingActionDuration = clampNumber(actionDurationBox.Text, 0, 30, TimingActionDuration)
+	actionDurationBox.Text = tostring(TimingActionDuration)
+end)
+bind(actionDelayBox.FocusLost, function()
+	TimingDelayBox.Text = tostring(clampNumber(actionDelayBox.Text, 0, 30, tonumber(TimingDelayBox.Text) or 0.15))
+	actionDelayBox.Text = TimingDelayBox.Text
+end)
+bind(actionChanceBox.FocusLost, function()
+	TimingActionChance = clampNumber(actionChanceBox.Text, 0, 100, TimingActionChance)
+	actionChanceBox.Text = tostring(TimingActionChance)
+end)
+local addCurrentAction = mkButton(timingActionsModal, "ADD", 10, 337, 94, 28)
+local updateCurrentAction = mkButton(timingActionsModal, "UPDATE", 112, 337, 96, 28)
+local removeCurrentAction = mkButton(timingActionsModal, "REMOVE", 216, 337, 96, 28)
+local clearTimingActions = mkButton(timingActionsModal, "CLEAR", 320, 337, 110, 28)
+
+refreshTimingActions = function()
+	timingActionsButton.Text = "ACTIONS: " .. tostring(#TimingActions)
+	actionIgnoreHitbox.Text = "IGNORE ACTION HITBOX: " .. (TimingActionIgnoreHitbox and "ON" or "OFF")
+	actionIgnoreHitbox.BackgroundColor3 = TimingActionIgnoreHitbox and COLORS.GREEN or COLORS.RED
+	actionNameBox.Text = TimingActionName
+	actionDurationBox.Text = tostring(TimingActionDuration)
+	actionDelayBox.Text = TimingDelayBox.Text
+	actionChanceBox.Text = tostring(TimingActionChance)
+	for axis, box in pairs(actionHitboxBoxes) do
+		box.Text = tostring(TimingActionHitbox[axis])
+	end
+	for _, child in ipairs(actionsScroll:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+	for index, action in ipairs(TimingActions) do
+		local row = mkButton(
+			actionsScroll,
+			string.format("%02d  %-10s  %.3fs  %s", index, action.kind, action.delay or 0, action.name or ""),
+			0,
+			0,
+			396,
+			25
+		)
+		row.Size = UDim2.new(1, -4, 0, 25)
+		row.ZIndex = 24
+		row.TextXAlignment = Enum.TextXAlignment.Left
+		row.BackgroundColor3 = index == TimingActionIndex and COLORS.ACCENT or COLORS.PANEL2
+		row.MouseButton1Click:Connect(function()
+			TimingActionIndex = index
+			TimingAction = action.kind
+			TimingActionChance = action.chance or 100
+			TimingActionName = action.name or action.kind
+			TimingActionDuration = action.duration or 0
+			local hitbox = action.hitbox or { X = 0, Y = 0, Z = 0 }
+			TimingActionHitbox = { X = hitbox.X or 0, Y = hitbox.Y or 0, Z = hitbox.Z or 0 }
+			TimingActionIgnoreHitbox = action.ignoreHitbox == true
+			TimingDelayBox.Text = tostring(action.delay or 0)
+			timingActionButton.Text = "ACTION: " .. string.upper(TimingAction)
+			refreshTimingAdvanced()
+			refreshTimingActions()
+		end)
+	end
+	task.defer(function()
+		actionsScroll.CanvasSize = UDim2.fromOffset(0, actionsLayout.AbsoluteContentSize.Y)
+	end)
+end
+
+bind(actionIgnoreHitbox.MouseButton1Click, function()
+	TimingActionIgnoreHitbox = not TimingActionIgnoreHitbox
+	refreshTimingActions()
+end)
+
+bind(addCurrentAction.MouseButton1Click, function()
+	TimingActionIndex = #TimingActions + 1
+	TimingActions[TimingActionIndex] = currentTimingAction()
+	refreshTimingActions()
+end)
+bind(updateCurrentAction.MouseButton1Click, function()
+	if #TimingActions == 0 then
+		TimingActionIndex = 1
+	end
+	TimingActions[TimingActionIndex] = currentTimingAction()
+	refreshTimingActions()
+end)
+bind(removeCurrentAction.MouseButton1Click, function()
+	if TimingActions[TimingActionIndex] then
+		table.remove(TimingActions, TimingActionIndex)
+		TimingActionIndex = math.clamp(TimingActionIndex, 1, math.max(1, #TimingActions))
+		refreshTimingActions()
+	end
+end)
+bind(clearTimingActions.MouseButton1Click, function()
+	TimingActions = {}
+	TimingActionIndex = 1
+	refreshTimingActions()
+end)
+bind(timingActionsButton.MouseButton1Click, function()
+	refreshTimingActions()
+	timingActionsModal.Visible = true
+end)
+bind(actionsClose.MouseButton1Click, function()
+	timingActionsModal.Visible = false
+end)
+for _, descendant in ipairs(timingActionsModal:GetDescendants()) do
+	if descendant:IsA("GuiObject") then
+		descendant.ZIndex = 23
 	end
 end
 
@@ -6753,7 +6993,7 @@ local function refreshTimingList()
 			)
 			row.Size = UDim2.new(1, -2, 0, 24)
 			row.TextXAlignment = Enum.TextXAlignment.Left
-			bind(row.MouseButton1Click, function()
+			row.MouseButton1Click:Connect(function()
 				loadTimingEditor(profile)
 			end)
 		end
@@ -6770,18 +7010,31 @@ bind(timingCategoryButton.MouseButton1Click, function()
 	local index = table.find(values, TimingCategory) or 0
 	TimingCategory = values[(index % #values) + 1]
 	timingCategoryButton.Text = "TYPE: " .. string.upper(TimingCategory)
+	refreshTimingAdvanced()
 end)
 
 bind(timingActionButton.MouseButton1Click, function()
 	local values = { "Parry", "Dodge", "FullDodge", "Block", "Jump", "Slide", "Crouch", "Teleport" }
 	local index = table.find(values, TimingAction) or 0
+	local previous = TimingAction
 	TimingAction = values[(index % #values) + 1]
+	if TimingActionName == previous then
+		TimingActionName = TimingAction
+	end
 	timingActionButton.Text = "ACTION: " .. string.upper(TimingAction)
+	refreshTimingActions()
 end)
 
 bind(timingSaveButton.MouseButton1Click, function()
 	if not CombatRuntime or TimingIDBox.Text == "" then
 		return
+	end
+	if #TimingActions == 0 then
+		TimingActionIndex = 1
+		TimingActions[1] = currentTimingAction()
+	else
+		TimingActionIndex = math.clamp(TimingActionIndex, 1, #TimingActions)
+		TimingActions[TimingActionIndex] = currentTimingAction()
 	end
 	local ok, result = pcall(CombatRuntime.registerTiming, CombatRuntime, {
 		id = TimingIDBox.Text,
@@ -6808,6 +7061,11 @@ bind(timingSaveButton.MouseButton1Click, function()
 		noBlockFallback = TimingAdvanced.noBlockFallback,
 		noVentFallback = TimingAdvanced.noVentFallback,
 		preferBlockFallback = TimingAdvanced.preferBlockFallback,
+		hyperArmor = TimingAdvanced.hyperArmor,
+		allowLocalPlayer = TimingAdvanced.allowLocalPlayer,
+		useHitboxCFrame = TimingAdvanced.useHitboxCFrame,
+		ignoreLocalPlayer = TimingAdvanced.ignoreLocalPlayer,
+		forceLocalPlayer = TimingAdvanced.forceLocalPlayer,
 		ignoreAnimationEnd = TimingAdvanced.ignoreAnimationEnd,
 		ignoreEarlyAnimationEnd = TimingAdvanced.ignoreEarlyAnimationEnd,
 		pastHitbox = TimingAdvanced.pastHitbox,
@@ -6816,14 +7074,13 @@ bind(timingSaveButton.MouseButton1Click, function()
 		historySeconds = TimingAdvanced.historySeconds,
 		predictionSeconds = TimingAdvanced.predictionSeconds,
 		maxAnimationTime = TimingAdvanced.maxAnimationTime,
-		blockFallbackHold = tonumber(TimingBlockBox.Text) or 0.30,
-		actions = {
-			{
-				kind = TimingAction,
-				delay = tonumber(TimingDelayBox.Text) or 0.15,
-				chance = TimingActionChance,
-			},
+		probability = {
+			FailureRate = TimingAdvanced.failureRate,
+			DashInsteadOfParryRate = TimingAdvanced.dashRate,
+			IgnoreAnimationEndRate = TimingAdvanced.ignoreEndRate,
 		},
+		blockFallbackHold = tonumber(TimingBlockBox.Text) or 0.30,
+		actions = TimingActions,
 	}, true)
 	if ok then
 		TimingJSONBox.Text = ""
@@ -6905,7 +7162,8 @@ combatNumber(attackAssistPanel, "FEINT DELAY", "AttackAssistance.FeintDelay", 8,
 combatNumber(attackAssistPanel, "FEINT LEAD", "AttackAssistance.FeintLead", 8, 113, 0, 1)
 combatToggle(attackAssistPanel, "M1 HOLD", "AttackAssistance.HoldM1", 8, 144, 148)
 combatToggle(attackAssistPanel, "FLOURISH FEINT", "AttackAssistance.FlourishFeint", 164, 144, 148)
-combatToggle(attackAssistPanel, "ACTION ROLL", "AttackAssistance.ActionRolling", 8, 173, 304)
+combatToggle(attackAssistPanel, "ACTION ROLL", "AttackAssistance.ActionRolling", 8, 173, 148)
+local rollTargetsButton = mkButton(attackAssistPanel, "ROLL TARGETS", 164, 173, 148, 23)
 combatNumber(attackAssistPanel, "ROLL COOLDOWN", "AttackAssistance.ActionRollCooldown", 8, 202, 0, 10)
 combatNumber(attackAssistPanel, "ROLL CANCEL", "AttackAssistance.ActionRollCancelDelay", 8, 229, 0, 2)
 combatToggle(attackAssistPanel, "ANIM SPEED", "AttackAssistance.AnimationSpeed.Enabled", 8, 260, 148)
@@ -6957,6 +7215,63 @@ end
 task.defer(function()
 	bindingsScroll.CanvasSize = UDim2.fromOffset(0, bindingsLayout.AbsoluteContentSize.Y)
 end)
+
+local rollTargetsModal = Instance.new("Frame")
+rollTargetsModal.Position = UDim2.fromOffset(163, 108)
+rollTargetsModal.Size = UDim2.fromOffset(330, 202)
+rollTargetsModal.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+rollTargetsModal.BorderColor3 = COLORS.ACCENT
+rollTargetsModal.BorderSizePixel = 1
+rollTargetsModal.Visible = false
+rollTargetsModal.ZIndex = 20
+rollTargetsModal.Parent = AssistPage
+local rollHeading = mkLabel(rollTargetsModal, "ACTION ROLL TARGETS", 10, 4, 270, 24, 11)
+rollHeading.TextColor3 = COLORS.ACCENT
+local rollClose = mkButton(rollTargetsModal, "X", 294, 5, 26, 22)
+local rollTargetButtons = {}
+
+local function hasRollTarget(name)
+	return table.find(CombatRuntime.Settings:get("AttackAssistance.ActionRollingActions"), name) ~= nil
+end
+
+local function refreshRollTargets()
+	for name, button in pairs(rollTargetButtons) do
+		local selected = hasRollTarget(name)
+		button.Text = name .. ": " .. (selected and "ON" or "OFF")
+		button.BackgroundColor3 = selected and COLORS.GREEN or COLORS.RED
+	end
+end
+
+for index, name in ipairs({ "M1", "Critical", "Cast", "Parry" }) do
+	local button = mkButton(rollTargetsModal, "", 10, 35 + ((index - 1) * 32), 310, 25)
+	rollTargetButtons[name] = button
+	bind(button.MouseButton1Click, function()
+		local values = {}
+		for _, existing in ipairs(CombatRuntime.Settings:get("AttackAssistance.ActionRollingActions")) do
+			if existing ~= name then
+				values[#values + 1] = existing
+			end
+		end
+		if not hasRollTarget(name) then
+			values[#values + 1] = name
+		end
+		CombatRuntime:set("AttackAssistance.ActionRollingActions", values)
+		refreshRollTargets()
+	end)
+end
+
+bind(rollTargetsButton.MouseButton1Click, function()
+	refreshRollTargets()
+	rollTargetsModal.Visible = true
+end)
+bind(rollClose.MouseButton1Click, function()
+	rollTargetsModal.Visible = false
+end)
+for _, descendant in ipairs(rollTargetsModal:GetDescendants()) do
+	if descendant:IsA("GuiObject") then
+		descendant.ZIndex = 21
+	end
+end
 
 --==============================================================
 -- DIAGNOSTICS UI

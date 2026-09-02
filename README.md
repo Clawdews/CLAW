@@ -12,13 +12,13 @@ CLAW is the private development repository for **CLAW MARK**, a clean combat and
 
 ## Current feature surface
 
-- Target selection by distance, crosshair, health, health ratio, or threat; distance/FOV/on-screen limits; player, mob, ally, mob-aggro, whitelist, and blacklist filters.
+- Target selection by distance, crosshair, health, health ratio, or threat; distance/FOV/on-screen limits; player, mob, ally, mob-aggro, case-insensitive whitelist/blacklist filters, and whitelist-only or ally-exclusion modes.
 - Indexed animation, sound, part/projectile, and effect detectors that reject unknown events before allocating full payloads.
 - Parry, block, dodge, full dodge, jump, slide, crouch, teleport adapter, direct-roll adapter, roll cancel, parry-only, Prediction, Punishment, Vent, and ordered fallbacks.
-- Per-move multi-action timings, action hitboxes, global offsets, ping compensation, animation-speed correction, animation-end cancellation, delayed-hitbox waiting, repeats, past hitboxes, movement/facing prediction, per-action chance, and punish/after windows.
+- Per-move multi-action timings, action hitboxes, global offsets, ping compensation, animation-speed correction, animation-end cancellation, delayed-hitbox waiting, repeats, past hitboxes, movement/facing prediction, per-action delay/duration/chance, category-specific ownership/CFrame policies, and punish/after windows.
 - Stun, iframe, native auto-parry-frame, cooldown, animation sanity, range, oriented-hitbox, facing, visibility, input-focus, window-focus, chime, and attack-state validation.
 - Auto/delayed/flourish feinting, M1 hold, configurable action rolling, configured animation-speed controls, Wisp, Golden Tongue, mantra follow-up, Ardour, Flow State, Rhythm, and ragdoll-response adapters.
-- Legit, Responsive, Performance, and Lab presets; local settings/timing persistence; atomic JSON import/export; advanced timing editor; target-list editor; no-code assist key bindings; pooled hitbox visualization; live diagnostics and rejection reasons.
+- Legit, Responsive, Performance, and Lab presets; local settings/timing persistence; atomic JSON import/export; advanced profile and multi-action editors; target-list editor; a defense toggle key; no-code assist key bindings; pooled hitbox visualization; live diagnostics and rejection reasons.
 
 The performance-sensitive path uses early detector indexes, event-driven state flags, weak entity/animator maps, a single shared hitbox waiter, a bounded hitbox-visual pool, periodic dedupe pruning, batch timing imports, and adaptive target-scan backoff.
 
@@ -35,17 +35,23 @@ The builder and verifier have no third-party dependencies. They package every mo
 
 ## Convert the local Lycoris timing tree
 
-The dependency-free converter decodes `base.txt`, applies every JSON patch chronologically, translates supported actions and static module templates, and writes CLAW timing JSON:
+The dependency-free converter decodes `base.txt`, applies every JSON patch chronologically, translates supported actions, static module templates, and clean-room dynamic formulas, and writes CLAW timing JSON:
 
 ```powershell
 npm run convert:lycoris -- references/lycoris-rewrite/Timings generated/lycoris-timings.json
 ```
 
-The generated database is intentionally gitignored. CLAW MARK automatically loads `CLAW/timings.json` from the runtime filesystem; the TIMINGS page can also load that file or import smaller pasted JSON. Module behaviors that cannot be statically translated use the configured generic defense action and are identified in Diagnostics instead of silently running guessed remote calls.
+The generated database is intentionally gitignored. CLAW MARK automatically loads `CLAW/timings.json` from the runtime filesystem; the TIMINGS page can also load that file or import smaller pasted JSON. For the current reference snapshot, the converter resolves 854 profiles after 4,235 patches into 1,040 actions, 18 repeat profiles, and two intentionally suppressed coordination-only profiles. Five profiles referencing the four absent upstream modules `EruptionCylinder`, `Gaze`, `RazorBlitzFollowup`, and `VengefulSlash` stay on an explicit generic defense fallback and are identified in Diagnostics rather than silently running guessed remote calls.
 
 ## Loader
 
-`loader.lua` expects a secret-free distribution URL in `getgenv().CLAW_DIST_URL`. A private GitHub raw URL cannot be fetched anonymously, and a GitHub token must never be embedded in Lua. The private source repository can stay private while `dist/ClawMark.lua` is served later from a separate read-only endpoint.
+The public distribution bundle is always available from the stable `main` URL. Execute the newest pushed build with:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/dist/ClawMark.lua"))()
+```
+
+`loader.lua` uses the same URL by default. Advanced users can override it through `getgenv().CLAW_DIST_URL`; CLAW never embeds an access token.
 
 ## Combat implementation map
 

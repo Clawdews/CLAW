@@ -1,12 +1,7 @@
--- CLAW intentionally does not contain a GitHub token.
--- Set this to a secret-free URL that serves dist/ClawMark.lua.
+-- CLAW's public distribution contains no GitHub token or private timing data.
 local environment = getgenv and getgenv() or _G
 local distributionURL = environment.CLAW_DIST_URL
-
-assert(
-	type(distributionURL) == "string" and distributionURL ~= "",
-	"Set getgenv().CLAW_DIST_URL to the published CLAW bundle URL first."
-)
+	or "https://raw.githubusercontent.com/Clawdews/CLAW/main/dist/ClawMark.lua"
 
 local source = game:HttpGet(distributionURL)
 local chunk, compileError = loadstring(source, "@CLAW/ClawMark.lua")

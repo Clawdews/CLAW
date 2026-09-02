@@ -15,6 +15,7 @@ local DEFAULTS = {
 		IgnoreAllies = true,
 		RequireOnScreen = false,
 		Whitelist = {},
+		WhitelistMode = "Exclude",
 		Blacklist = {},
 	},
 	Detection = {
@@ -73,6 +74,7 @@ local DEFAULTS = {
 		HistorySeconds = 3,
 		PastHitboxSeconds = 0.20,
 		MinAnimationSpeed = 0.05,
+		AnimationSanity = true,
 		MaxAnimationSpeed = 6,
 		MinAnimationLength = 0,
 		MaxAnimationLength = 30,
@@ -86,6 +88,7 @@ local DEFAULTS = {
 		WindowInactive = true,
 		HoldingBlock = false,
 		ChimeCountdown = true,
+		SightlessBeam = true,
 	},
 	Probability = {
 		Enabled = false,
@@ -148,6 +151,7 @@ local DEFAULTS = {
 		NoBlocking = false,
 	},
 	Bindings = {
+		ToggleDefense = "",
 		DirectDodge = "",
 		Prediction = "",
 		Punishment = "",

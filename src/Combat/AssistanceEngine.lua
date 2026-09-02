@@ -39,6 +39,7 @@ function AssistanceEngine.new(settings, state, timings, scheduler, input, execut
 		Running = false,
 		Random = Random.new(),
 		HoldingM1 = false,
+		FeintedTracks = setmetatable({}, { __mode = "k" }),
 	}, AssistanceEngine)
 end
 
@@ -118,22 +119,38 @@ function AssistanceEngine:_speed(track, profile)
 	end)
 end
 
-function AssistanceEngine:_feint(profile, name)
+function AssistanceEngine:_onIncoming(payload)
 	local attack = self.Settings:get("AttackAssistance")
-	if not attack.AutoFeint then
-		return
-	end
-	if attack.AutoFeintMode == "Passive" and #self.State.Targets == 0 then
+	local active = self.ActiveAttack
+	if not attack.AutoFeint or not active or not active.track or self.FeintedTracks[active.track] then
 		return
 	end
 
-	local delay = attack.FeintDelay
-	if profile and profile.actions[1] then
-		delay = math.max(0, profile.actions[1].delay - attack.FeintLead)
+	local incomingDelay = math.max(0, tonumber(payload and payload.delay) or 0)
+	if attack.AutoFeintMode == "Passive" and not (payload.profile and payload.profile.hyperArmor) then
+		local ok, remaining = pcall(function()
+			local speed = math.max(0.01, math.abs(active.track.Speed))
+			return math.max(0, (active.track.Length - active.track.TimePosition) / speed)
+		end)
+		-- If our current attack completes before theirs can connect, a passive
+		-- feint would accomplish nothing.
+		if ok and remaining > 0 and incomingDelay > remaining then
+			return
+		end
 	end
-	self.Scheduler:schedule("assist:auto-feint", delay, {}, function()
-		self.Executor:execute(Action.new({ kind = "Feint", name = name or "Auto Feint" }), {
-			profile = profile,
+
+	local delay = math.max(0, incomingDelay - attack.FeintLead)
+	if incomingDelay <= 0 then
+		delay = math.max(0, attack.FeintDelay)
+	end
+	self.FeintedTracks[active.track] = true
+	self.Scheduler:schedule("assist:auto-feint:" .. tostring(active.track), delay, {}, function()
+		if self.ActiveAttack ~= active then
+			return
+		end
+		self.Executor:execute(Action.new({ kind = "Feint", name = "Incoming Auto Feint" }), {
+			incoming = payload,
+			profile = active.profile,
 		})
 	end)
 end
@@ -174,7 +191,6 @@ function AssistanceEngine:_onAnimation(track)
 		end
 	end)
 
-	self:_feint(profile, "Auto Feint: " .. profile.name)
 	if
 		self.Settings:get("AttackAssistance.FlourishFeint")
 		and (tag == "flourish" or string.find(name, "flourish", 1, true))
@@ -248,6 +264,14 @@ function AssistanceEngine:_onFlag(payload)
 			self:_custom("MantraFollowUp")
 		end
 	elseif
+		payload.name == "DamagedAnother"
+		and payload.value
+		and self.State.Flags.UsingMantra
+		and self.Settings:get("CombatAssistance.MantraFollowUp")
+		and self.Settings:get("CombatAssistance.MantraFollowUpRequireHit")
+	then
+		self:_custom("MantraFollowUp")
+	elseif
 		(payload.name == "WeaponEquipped" or payload.name == "ArdourActive")
 		and self.State.Flags.WeaponEquipped
 		and not self.State.Flags.ArdourActive
@@ -313,6 +337,8 @@ function AssistanceEngine:start()
 			self:_onFlag(event.payload)
 		elseif event.kind == "setting" then
 			self:_onSetting(event.payload)
+		elseif event.kind == "incoming-action" then
+			self:_onIncoming(event.payload)
 		elseif event.kind == "action" and event.payload.action.kind == "Parry" then
 			self:_roll("Parry")
 		end
