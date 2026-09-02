@@ -1,0 +1,9 @@
+{
+  "name": "CLAW",
+  "entry": "animation_lab_v6.lua",
+  "output": "dist/AnimationLab.lua",
+  "modules": [
+    "src/Runtime/Namespace.lua",
+    "src/Combat/FeatureCatalog.lua"
+  ]
+}

@@ -1,0 +1,19 @@
+# CLAW contains Animation Lab only. Keep the unrelated runtime private.
+project_rain_with_loot.lua
+references/
+
+# Local configuration and secrets must never be committed.
+.env
+.env.*
+!.env.example
+*.local.lua
+config.local.*
+secrets.*
+
+# Generated/editor noise.
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+tmp/
