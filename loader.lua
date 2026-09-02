@@ -2,7 +2,7 @@
 local environment = getgenv and getgenv() or _G
 local HttpService = game:GetService("HttpService")
 local repository = "Clawdews/CLAW"
-local fallbackRef = "cdec03a72be5bf878fcdad61ab320140ee91d032"
+local fallbackRef = "eed039d18a9d5e47f729c202ec9297f5571fe085"
 
 local function traceback(message)
 	local handler = debug and debug.traceback
@@ -41,8 +41,8 @@ local function resolveDistribution()
 		end
 	end
 
-	-- This immutable fallback is the first build that passed the official
-	-- Luau compiler after the UI was split below the 200-register limit.
+	-- This immutable fallback is the compiler-verified v0.3.1 baseline with
+	-- neutral startup, attributed timings, and generic defense recovery.
 	return "https://raw.githubusercontent.com/" .. repository .. "/" .. fallbackRef .. "/dist/ClawMark.lua", fallbackRef
 end
 
