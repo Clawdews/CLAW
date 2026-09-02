@@ -1,4 +1,5 @@
 import { readFile, access } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
@@ -37,6 +38,29 @@ check(combined.includes('environment.CLAW.Version = "' + packageJson.version + '
 check(bundle.includes(`-- BEGIN ENTRY: ${manifest.entry}`), "bundle entry marker is missing");
 for (const modulePath of manifest.modules) {
   check(bundle.includes(`-- BEGIN MODULE: ${modulePath}`), `bundle marker missing: ${modulePath}`);
+}
+
+const compilerCandidates = process.platform === "win32"
+  ? [path.join(root, ".tools", "luau", "bin", "luau-compile.exe")]
+  : [path.join(root, ".tools", "luau", "bin", "luau-compile")];
+let compilerPath;
+for (const candidate of compilerCandidates) {
+  try {
+    await access(candidate);
+    compilerPath = candidate;
+    break;
+  } catch {
+    // The official compiler is an optional local quality gate.
+  }
+}
+if (compilerPath) {
+  const compile = spawnSync(compilerPath, ["--null", path.join(root, manifest.output)], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const detail = `${compile.stdout ?? ""}${compile.stderr ?? ""}`.trim();
+  check(compile.status === 0, `Luau compilation failed${detail ? `: ${detail}` : ""}`);
+  if (compile.status === 0) console.log("Official Luau compile check passed.");
 }
 
 if (failures.length > 0) {

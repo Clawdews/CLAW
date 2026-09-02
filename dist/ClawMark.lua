@@ -10758,6 +10758,8 @@ local function combatText(
 	return box
 end
 
+do
+local function buildCombatUI()
 if not CombatRuntime then
 	local unavailable =
 		mkLabel(
@@ -11052,11 +11054,16 @@ else
 	end)
 	raiseModal(listsModal)
 end
+end
+buildCombatUI()
+end
 
 --==============================================================
 -- TIMING EDITOR UI
 --==============================================================
 
+do
+local function buildTimingEditor()
 local TimingSelected
 local TimingCategory = "animation"
 local TimingAction = "Parry"
@@ -11770,11 +11777,16 @@ end
 
 clearTimingEditor()
 refreshTimingList()
+end
+buildTimingEditor()
+end
 
 --==============================================================
 -- ASSISTANCE UI
 --==============================================================
 
+do
+local function buildAssistanceUI()
 local attackAssistPanel =
 	combatSection(AssistPage, "ATTACK ASSISTANCE", 0, 0, 324, 403)
 
@@ -11906,11 +11918,16 @@ for _, descendant in ipairs(rollTargetsModal:GetDescendants()) do
 		descendant.ZIndex = 21
 	end
 end
+end
+buildAssistanceUI()
+end
 
 --==============================================================
 -- DIAGNOSTICS UI
 --==============================================================
 
+do
+local function buildDiagnosticsUI()
 local debugControls =
 	combatSection(DebugPage, "DIAGNOSTICS", 0, 0, 324, 403)
 
@@ -12000,6 +12017,9 @@ bind(RunService.Heartbeat, function(delta)
 		and ("REJECTION REASONS\n" .. table.concat(reasons, "\n"))
 		or "REJECTION REASONS\nnone recorded"
 end)
+end
+buildDiagnosticsUI()
+end
 
 --==============================================================
 -- MENU
