@@ -8,6 +8,11 @@ local EntityHistory = assert(modules["src/Combat/EntityHistory.lua"])
 local Targeting = assert(modules["src/Combat/Targeting.lua"])
 local TimingStore = assert(modules["src/Combat/TimingStore.lua"])
 local Scheduler = assert(modules["src/Combat/Scheduler.lua"])
+local DetectorHub = assert(modules["src/Combat/Detection/DetectorHub.lua"])
+local InputAdapter = assert(modules["src/Combat/InputAdapter.lua"])
+local ActionExecutor = assert(modules["src/Combat/ActionExecutor.lua"])
+local TimingResolver = assert(modules["src/Combat/TimingResolver.lua"])
+local DefenseEngine = assert(modules["src/Combat/DefenseEngine.lua"])
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -31,12 +36,43 @@ function Combat.new(options)
 		Timings = TimingStore.new(),
 		Targeting = nil,
 		Scheduler = nil,
+		Detectors = nil,
+		Input = nil,
+		Executor = nil,
+		Resolver = nil,
+		Defense = nil,
 		_connections = {},
+		_lifetimeConnections = {},
 		_lastScan = 0,
 	}, Combat)
 
 	self.Targeting = Targeting.new(settings, options.targeting)
 	self.Scheduler = Scheduler.new(state)
+	self.Input = InputAdapter.new(options.input)
+	self.Executor = ActionExecutor.new(settings, state, self.Input)
+	self.Resolver = TimingResolver.new(settings)
+	local detectorOptions = options.detectors or {
+		shared = {
+			ignoreTrack = function(track)
+				local animationLab = environment.__ANIM_LAB_V6
+				return animationLab
+					and animationLab.OwnGhostTracks
+					and animationLab.OwnGhostTracks[track] == true
+			end,
+		},
+	}
+	self.Detectors = DetectorHub.new(settings, detectorOptions)
+	self.Defense = DefenseEngine.new(
+		settings,
+		state,
+		self.Timings,
+		self.Scheduler,
+		self.Executor,
+		self.Resolver
+	)
+	self._lifetimeConnections[#self._lifetimeConnections + 1] = self.Detectors.Detected:Connect(function(event)
+		self.Defense:handle(event)
+	end)
 	return self
 end
 
@@ -84,6 +120,7 @@ function Combat:start()
 
 	self.State:set("Running", true)
 	self.State:setCharacter(Players.LocalPlayer.Character)
+	self.Detectors:start()
 	self:_bind(RunService.Heartbeat, function()
 		self:_step()
 	end)
@@ -97,6 +134,7 @@ function Combat:stop()
 	end
 
 	self.State:set("Running", false)
+	self.Detectors:stop()
 	self.Scheduler:cancelAll("combat stopped")
 	for _, connection in ipairs(self._connections) do
 		pcall(function()
@@ -127,6 +165,13 @@ end
 
 function Combat:Destroy()
 	self:stop()
+	for _, connection in ipairs(self._lifetimeConnections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	table.clear(self._lifetimeConnections)
+	self.Detectors:Destroy()
 	self.Scheduler:Destroy()
 	self.History:clear()
 	self.State:Destroy()

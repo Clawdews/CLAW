@@ -1271,6 +1271,870 @@ do
 end
 -- END MODULE: src/Combat/Scheduler.lua
 
+-- BEGIN MODULE: src/Combat/Detection/DetectorEvent.lua
+do
+  local moduleName = "src/Combat/Detection/DetectorEvent.lua"
+  local moduleFactory = function()
+	local DetectorEvent = {}
+	DetectorEvent.__index = DetectorEvent
+
+	local function findEntity(instance)
+		local cursor = instance
+		while cursor and cursor ~= workspace do
+			if cursor:IsA("Model") and cursor:FindFirstChildWhichIsA("Humanoid") then
+				return cursor
+			end
+			cursor = cursor.Parent
+		end
+		return nil
+	end
+
+	function DetectorEvent.new(detector, id, instance, values)
+		values = values or {}
+		local entity = values.entity or (instance and findEntity(instance))
+		local root = entity and entity:FindFirstChild("HumanoidRootPart")
+
+		return setmetatable({
+			detector = detector,
+			id = tostring(id or ""),
+			instance = instance,
+			entity = entity,
+			root = root,
+			track = values.track,
+			position = values.position or (root and root.Position),
+			startedAt = values.startedAt or os.clock(),
+			metadata = values.metadata or {},
+		}, DetectorEvent)
+	end
+
+	return DetectorEvent
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/DetectorEvent.lua
+
+-- BEGIN MODULE: src/Combat/Detection/AnimationDetector.lua
+do
+  local moduleName = "src/Combat/Detection/AnimationDetector.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local Signal = assert(environment.__CLAW_MODULES["src/Runtime/Signal.lua"])
+	local DetectorEvent = assert(environment.__CLAW_MODULES["src/Combat/Detection/DetectorEvent.lua"])
+
+	local AnimationDetector = {}
+	AnimationDetector.__index = AnimationDetector
+
+	local function cleanID(value)
+		return tostring(value or ""):match("(%d+)") or tostring(value or "")
+	end
+
+	function AnimationDetector.new(options)
+		options = options or {}
+		return setmetatable({
+			Detected = Signal.new(),
+			_source = options.source,
+			_ignoreTrack = options.ignoreTrack,
+			_connections = {},
+			_animators = setmetatable({}, { __mode = "k" }),
+			_running = false,
+		}, AnimationDetector)
+	end
+
+	function AnimationDetector:_bind(signal, callback)
+		local connection = signal:Connect(callback)
+		self._connections[#self._connections + 1] = connection
+		return connection
+	end
+
+	function AnimationDetector:_emit(animator, track)
+		if type(self._ignoreTrack) == "function" then
+			local ok, ignored = pcall(self._ignoreTrack, track)
+			if ok and ignored then
+				return
+			end
+		end
+
+		local animation = track.Animation
+		local id = cleanID(animation and animation.AnimationId)
+		if id == "" then
+			return
+		end
+
+		self.Detected:Fire(DetectorEvent.new("animation", id, animator, {
+			track = track,
+			metadata = {
+				priority = tostring(track.Priority),
+				looped = track.Looped,
+				length = track.Length,
+			},
+		}))
+	end
+
+	function AnimationDetector:_hook(animator)
+		if self._animators[animator] then
+			return
+		end
+
+		local connection = animator.AnimationPlayed:Connect(function(track)
+			self:_emit(animator, track)
+		end)
+		self._animators[animator] = connection
+		self._connections[#self._connections + 1] = connection
+
+		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+			self:_emit(animator, track)
+		end
+	end
+
+	function AnimationDetector:start()
+		if self._running then
+			return
+		end
+		self._running = true
+
+		local source = type(self._source) == "function" and self._source()
+			or self._source
+			or workspace:FindFirstChild("Live")
+			or workspace
+
+		for _, descendant in ipairs(source:GetDescendants()) do
+			if descendant:IsA("Animator") then
+				self:_hook(descendant)
+			end
+		end
+
+		self:_bind(source.DescendantAdded, function(descendant)
+			if descendant:IsA("Animator") then
+				self:_hook(descendant)
+			end
+		end)
+	end
+
+	function AnimationDetector:stop()
+		if not self._running then
+			return
+		end
+		self._running = false
+		for _, connection in ipairs(self._connections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		table.clear(self._connections)
+		table.clear(self._animators)
+	end
+
+	function AnimationDetector:Destroy()
+		self:stop()
+		self.Detected:Destroy()
+	end
+
+	return AnimationDetector
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/AnimationDetector.lua
+
+-- BEGIN MODULE: src/Combat/Detection/SoundDetector.lua
+do
+  local moduleName = "src/Combat/Detection/SoundDetector.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local Signal = assert(environment.__CLAW_MODULES["src/Runtime/Signal.lua"])
+	local DetectorEvent = assert(environment.__CLAW_MODULES["src/Combat/Detection/DetectorEvent.lua"])
+
+	local SoundDetector = {}
+	SoundDetector.__index = SoundDetector
+
+	local function cleanID(value)
+		return tostring(value or ""):match("(%d+)") or tostring(value or "")
+	end
+
+	function SoundDetector.new(options)
+		options = options or {}
+		return setmetatable({
+			Detected = Signal.new(),
+			_source = options.source,
+			_connections = {},
+			_sounds = setmetatable({}, { __mode = "k" }),
+			_running = false,
+		}, SoundDetector)
+	end
+
+	function SoundDetector:_emit(sound)
+		local id = cleanID(sound.SoundId)
+		if id == "" then
+			return
+		end
+
+		self.Detected:Fire(DetectorEvent.new("sound", id, sound, {
+			position = sound.Parent and sound.Parent:IsA("BasePart") and sound.Parent.Position or nil,
+			metadata = {
+				name = sound.Name,
+				playbackSpeed = sound.PlaybackSpeed,
+				timePosition = sound.TimePosition,
+			},
+		}))
+	end
+
+	function SoundDetector:_hook(sound)
+		if self._sounds[sound] then
+			return
+		end
+
+		local connection = sound.Played:Connect(function()
+			self:_emit(sound)
+		end)
+		self._sounds[sound] = connection
+		self._connections[#self._connections + 1] = connection
+
+		if sound.Playing then
+			self:_emit(sound)
+		end
+	end
+
+	function SoundDetector:start()
+		if self._running then
+			return
+		end
+		self._running = true
+
+		local source = type(self._source) == "function" and self._source()
+			or self._source
+			or workspace:FindFirstChild("Live")
+			or workspace
+
+		for _, descendant in ipairs(source:GetDescendants()) do
+			if descendant:IsA("Sound") then
+				self:_hook(descendant)
+			end
+		end
+
+		local connection = source.DescendantAdded:Connect(function(descendant)
+			if descendant:IsA("Sound") then
+				self:_hook(descendant)
+			end
+		end)
+		self._connections[#self._connections + 1] = connection
+	end
+
+	function SoundDetector:stop()
+		if not self._running then
+			return
+		end
+		self._running = false
+		for _, connection in ipairs(self._connections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		table.clear(self._connections)
+		table.clear(self._sounds)
+	end
+
+	function SoundDetector:Destroy()
+		self:stop()
+		self.Detected:Destroy()
+	end
+
+	return SoundDetector
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/SoundDetector.lua
+
+-- BEGIN MODULE: src/Combat/Detection/PartDetector.lua
+do
+  local moduleName = "src/Combat/Detection/PartDetector.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local Signal = assert(environment.__CLAW_MODULES["src/Runtime/Signal.lua"])
+	local DetectorEvent = assert(environment.__CLAW_MODULES["src/Combat/Detection/DetectorEvent.lua"])
+
+	local PartDetector = {}
+	PartDetector.__index = PartDetector
+
+	function PartDetector.new(options)
+		options = options or {}
+		return setmetatable({
+			Detected = Signal.new(),
+			_source = options.source,
+			_connection = nil,
+			_running = false,
+		}, PartDetector)
+	end
+
+	function PartDetector:_emit(part)
+		self.Detected:Fire(DetectorEvent.new("part", part.Name, part, {
+			position = part.Position,
+			metadata = {
+				className = part.ClassName,
+				size = part.Size,
+				velocity = part.AssemblyLinearVelocity,
+			},
+		}))
+	end
+
+	function PartDetector:start()
+		if self._running then
+			return
+		end
+		self._running = true
+
+		local source = type(self._source) == "function" and self._source()
+			or self._source
+			or workspace
+		self._connection = source.DescendantAdded:Connect(function(descendant)
+			if descendant:IsA("BasePart") then
+				self:_emit(descendant)
+			end
+		end)
+	end
+
+	function PartDetector:stop()
+		self._running = false
+		if self._connection then
+			pcall(function()
+				self._connection:Disconnect()
+			end)
+			self._connection = nil
+		end
+	end
+
+	function PartDetector:Destroy()
+		self:stop()
+		self.Detected:Destroy()
+	end
+
+	return PartDetector
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/PartDetector.lua
+
+-- BEGIN MODULE: src/Combat/Detection/EffectDetector.lua
+do
+  local moduleName = "src/Combat/Detection/EffectDetector.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local CollectionService = game:GetService("CollectionService")
+	local Signal = assert(environment.__CLAW_MODULES["src/Runtime/Signal.lua"])
+	local DetectorEvent = assert(environment.__CLAW_MODULES["src/Combat/Detection/DetectorEvent.lua"])
+
+	local EffectDetector = {}
+	EffectDetector.__index = EffectDetector
+
+	function EffectDetector.new(options)
+		options = options or {}
+		return setmetatable({
+			Detected = Signal.new(),
+			_source = options.source,
+			_connection = nil,
+			_running = false,
+		}, EffectDetector)
+	end
+
+	function EffectDetector:_emit(instance)
+		if instance:IsA("Animator") or instance:IsA("Sound") or instance:IsA("BasePart") then
+			return
+		end
+
+		self.Detected:Fire(DetectorEvent.new("effect", instance.Name, instance, {
+			metadata = {
+				className = instance.ClassName,
+				tags = CollectionService:GetTags(instance),
+				attributes = instance:GetAttributes(),
+			},
+		}))
+
+		for _, tag in ipairs(CollectionService:GetTags(instance)) do
+			self.Detected:Fire(DetectorEvent.new("effect", tag, instance, {
+				metadata = { source = "tag", name = instance.Name },
+			}))
+		end
+	end
+
+	function EffectDetector:start()
+		if self._running then
+			return
+		end
+		self._running = true
+
+		local source = type(self._source) == "function" and self._source()
+			or self._source
+			or workspace:FindFirstChild("Live")
+			or workspace
+		self._connection = source.DescendantAdded:Connect(function(descendant)
+			self:_emit(descendant)
+		end)
+	end
+
+	function EffectDetector:stop()
+		self._running = false
+		if self._connection then
+			pcall(function()
+				self._connection:Disconnect()
+			end)
+			self._connection = nil
+		end
+	end
+
+	function EffectDetector:Destroy()
+		self:stop()
+		self.Detected:Destroy()
+	end
+
+	return EffectDetector
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/EffectDetector.lua
+
+-- BEGIN MODULE: src/Combat/Detection/DetectorHub.lua
+do
+  local moduleName = "src/Combat/Detection/DetectorHub.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local modules = environment.__CLAW_MODULES
+	local Signal = assert(modules["src/Runtime/Signal.lua"])
+	local AnimationDetector = assert(modules["src/Combat/Detection/AnimationDetector.lua"])
+	local SoundDetector = assert(modules["src/Combat/Detection/SoundDetector.lua"])
+	local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
+	local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
+
+	local DetectorHub = {}
+	DetectorHub.__index = DetectorHub
+
+	function DetectorHub.new(settings, options)
+		options = options or {}
+		local shared = options.shared or {}
+		local self = setmetatable({
+			Settings = settings,
+			Detected = Signal.new(),
+			Connections = {},
+			Running = false,
+			Detectors = {
+				Animations = AnimationDetector.new(options.animation or shared),
+				Sounds = SoundDetector.new(options.sound or shared),
+				Parts = PartDetector.new(options.part or shared),
+				Effects = EffectDetector.new(options.effect or shared),
+			},
+		}, DetectorHub)
+
+		for settingName, detector in pairs(self.Detectors) do
+			self.Connections[#self.Connections + 1] = detector.Detected:Connect(function(event)
+				if self.Settings:get("Detection." .. settingName) then
+					self.Detected:Fire(event)
+				end
+			end)
+		end
+
+		return self
+	end
+
+	function DetectorHub:start()
+		if self.Running then
+			return
+		end
+		self.Running = true
+		for _, detector in pairs(self.Detectors) do
+			detector:start()
+		end
+	end
+
+	function DetectorHub:stop()
+		if not self.Running then
+			return
+		end
+		self.Running = false
+		for _, detector in pairs(self.Detectors) do
+			detector:stop()
+		end
+	end
+
+	function DetectorHub:Destroy()
+		self:stop()
+		for _, connection in ipairs(self.Connections) do
+			connection:Disconnect()
+		end
+		table.clear(self.Connections)
+		for _, detector in pairs(self.Detectors) do
+			detector:Destroy()
+		end
+		self.Detected:Destroy()
+	end
+
+	return DetectorHub
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/DetectorHub.lua
+
+-- BEGIN MODULE: src/Combat/InputAdapter.lua
+do
+  local moduleName = "src/Combat/InputAdapter.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local UserInputService = game:GetService("UserInputService")
+
+	local InputAdapter = {}
+	InputAdapter.__index = InputAdapter
+
+	function InputAdapter.new(options)
+		options = options or {}
+		local virtualInput
+		pcall(function()
+			virtualInput = game:GetService("VirtualInputManager")
+		end)
+
+		return setmetatable({
+			VirtualInput = virtualInput,
+			Custom = options.custom or {},
+		}, InputAdapter)
+	end
+
+	function InputAdapter:key(keyCode, isDown)
+		if self.VirtualInput then
+			local ok = pcall(
+				self.VirtualInput.SendKeyEvent,
+				self.VirtualInput,
+				isDown,
+				keyCode,
+				false,
+				game
+			)
+			if ok then
+				return true
+			end
+		end
+
+		local keyFunction = rawget(environment, isDown and "keypress" or "keyrelease")
+		if type(keyFunction) == "function" then
+			local ok = pcall(keyFunction, keyCode.Value)
+			return ok
+		end
+
+		return false, "no keyboard input implementation"
+	end
+
+	function InputAdapter:mouse(button, isDown)
+		if not self.VirtualInput then
+			return false, "no mouse input implementation"
+		end
+
+		local position = UserInputService:GetMouseLocation()
+		local ok, inputError = pcall(
+			self.VirtualInput.SendMouseButtonEvent,
+			self.VirtualInput,
+			position.X,
+			position.Y,
+			button,
+			isDown,
+			game,
+			0
+		)
+		return ok, inputError
+	end
+
+	function InputAdapter:tapKey(keyCode, duration)
+		local pressed, pressError = self:key(keyCode, true)
+		if not pressed then
+			return false, pressError
+		end
+
+		task.delay(duration or 0.035, function()
+			self:key(keyCode, false)
+		end)
+		return true
+	end
+
+	function InputAdapter:tapMouse(button, duration)
+		local pressed, pressError = self:mouse(button, true)
+		if not pressed then
+			return false, pressError
+		end
+
+		task.delay(duration or 0.035, function()
+			self:mouse(button, false)
+		end)
+		return true
+	end
+
+	function InputAdapter:custom(name, ...)
+		local callback = self.Custom[name]
+		if type(callback) ~= "function" then
+			return false, "no custom input handler for " .. tostring(name)
+		end
+
+		local ok, success, result = pcall(callback, ...)
+		if not ok then
+			return false, success
+		end
+		if success == false then
+			return false, result
+		end
+		return true, success
+	end
+
+	return InputAdapter
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/InputAdapter.lua
+
+-- BEGIN MODULE: src/Combat/ActionExecutor.lua
+do
+  local moduleName = "src/Combat/ActionExecutor.lua"
+  local moduleFactory = function()
+	local ActionExecutor = {}
+	ActionExecutor.__index = ActionExecutor
+
+	local KEY_BINDINGS = {
+		Parry = Enum.KeyCode.F,
+		Block = Enum.KeyCode.F,
+		Dodge = Enum.KeyCode.Q,
+		FullDodge = Enum.KeyCode.Q,
+		Jump = Enum.KeyCode.Space,
+		Slide = Enum.KeyCode.LeftControl,
+		Crouch = Enum.KeyCode.LeftControl,
+	}
+
+	local DEFAULT_COOLDOWNS = {
+		Parry = 0.075,
+		Block = 0.075,
+		Dodge = 0.20,
+		FullDodge = 0.25,
+		Jump = 0.10,
+		Slide = 0.10,
+		Crouch = 0.10,
+		Feint = 0.075,
+		M1 = 0.075,
+	}
+
+	function ActionExecutor.new(settings, state, input)
+		return setmetatable({
+			Settings = settings,
+			State = state,
+			Input = input,
+			Cooldowns = DEFAULT_COOLDOWNS,
+		}, ActionExecutor)
+	end
+
+	function ActionExecutor:canExecute(action)
+		local readyAt = self.State.Cooldowns[action.kind] or 0
+		return os.clock() >= readyAt
+	end
+
+	function ActionExecutor:_markCooldown(action)
+		local duration = tonumber(action.metadata.cooldown) or self.Cooldowns[action.kind] or 0
+		self.State.Cooldowns[action.kind] = os.clock() + math.max(0, duration)
+	end
+
+	function ActionExecutor:execute(action, context)
+		if not self:canExecute(action) then
+			return false, "action is on cooldown"
+		end
+		if not action:shouldRun() then
+			return false, "probability rejected action"
+		end
+
+		local kind = action.kind
+		local duration = action.duration
+		if duration <= 0 then
+			duration = kind == "Block" and self.Settings:get("Defense.BlockFallbackHold")
+				or kind == "FullDodge" and 0.18
+				or 0.035
+		end
+		local success, result
+
+		if KEY_BINDINGS[kind] then
+			success, result = self.Input:tapKey(KEY_BINDINGS[kind], duration)
+		elseif kind == "Feint" then
+			success, result = self.Input:tapMouse(1, duration)
+		elseif kind == "M1" then
+			success, result = self.Input:tapMouse(0, duration)
+		else
+			success, result = self.Input:custom(kind, action, context)
+		end
+
+		if not success then
+			return false, result
+		end
+
+		self:_markCooldown(action)
+		self.State:emit("action", {
+			action = action,
+			context = context,
+		})
+
+		if (kind == "Dodge" or kind == "FullDodge") and self.Settings:get("Defense.RollCancel") then
+			task.delay(self.Settings:get("Defense.RollCancelDelay"), function()
+				self.Input:tapMouse(1, 0.035)
+			end)
+		end
+
+		return true
+	end
+
+	return ActionExecutor
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/ActionExecutor.lua
+
+-- BEGIN MODULE: src/Combat/TimingResolver.lua
+do
+  local moduleName = "src/Combat/TimingResolver.lua"
+  local moduleFactory = function()
+	local Stats = game:GetService("Stats")
+
+	local TimingResolver = {}
+	TimingResolver.__index = TimingResolver
+
+	function TimingResolver.new(settings)
+		return setmetatable({ Settings = settings }, TimingResolver)
+	end
+
+	function TimingResolver:pingSeconds()
+		local ok, value = pcall(function()
+			return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() / 1000
+		end)
+		return ok and math.max(0, value) or 0
+	end
+
+	function TimingResolver:delay(action, event)
+		local timing = self.Settings:get("Timing")
+		local delay = action.delay + timing.GlobalOffset
+		if timing.PingCompensation then
+			delay = delay - (self:pingSeconds() * timing.PingScale)
+		end
+
+		if event and event.track then
+			local ok, speed = pcall(function()
+				return event.track.Speed
+			end)
+			if ok and type(speed) == "number" and speed ~= 0 then
+				delay = delay / math.abs(speed)
+			end
+		end
+
+		return math.clamp(delay, timing.MinDelay, timing.MaxDelay)
+	end
+
+	return TimingResolver
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/TimingResolver.lua
+
+-- BEGIN MODULE: src/Combat/DefenseEngine.lua
+do
+  local moduleName = "src/Combat/DefenseEngine.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local Action = assert(environment.__CLAW_MODULES["src/Combat/Action.lua"])
+
+	local DefenseEngine = {}
+	DefenseEngine.__index = DefenseEngine
+
+	function DefenseEngine.new(settings, state, timings, scheduler, executor, resolver)
+		return setmetatable({
+			Settings = settings,
+			State = state,
+			Timings = timings,
+			Scheduler = scheduler,
+			Executor = executor,
+			Resolver = resolver,
+		}, DefenseEngine)
+	end
+
+	function DefenseEngine:_targetFor(entity, position)
+		for _, target in ipairs(self.State.Targets) do
+			if target.Character == entity then
+				return target
+			end
+		end
+
+		if typeof(position) ~= "Vector3" then
+			return nil
+		end
+
+		local nearest
+		local nearestDistance = math.huge
+		for _, target in ipairs(self.State.Targets) do
+			local distance = (target.Root.Position - position).Magnitude
+			if distance < nearestDistance then
+				nearest = target
+				nearestDistance = distance
+			end
+		end
+		return nearest
+	end
+
+	function DefenseEngine:_defaultAction()
+		local preferred = self.Settings:get("Defense.Preferred")
+		local allowPath = "Defense.Allow" .. preferred
+		if self.Settings:get(allowPath) == false then
+			preferred = self.Settings:get("Defense.Fallback")
+		end
+		return Action.new({ kind = preferred })
+	end
+
+	function DefenseEngine:handle(event)
+		self.State:increment("Detected")
+		self.State:emit("detected", event)
+
+		if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
+			return false, "defense is disabled"
+		end
+		if event.entity == self.State.Character then
+			return false, "ignored local character event"
+		end
+
+		local profile = self.Timings:get(event.detector, event.id)
+		if not profile then
+			return false, "no timing profile"
+		end
+
+		local target = self:_targetFor(event.entity, event.position)
+		if not target then
+			self.State:increment("Rejected")
+			return false, "event entity is not a selected target"
+		end
+
+		local actions = #profile.actions > 0 and profile.actions or { self:_defaultAction() }
+		for index, action in ipairs(actions) do
+			local delay = self.Resolver:delay(action, event)
+			self.Scheduler:schedule(
+				string.format("%s:%s:%d", event.detector, event.id, index),
+				delay,
+				{
+					punishable = profile.punishableWindow,
+					after = profile.afterWindow,
+				},
+				function()
+					local ok, reason = self.Executor:execute(action, {
+						event = event,
+						profile = profile,
+						target = target,
+					})
+					if not ok then
+						self.State:increment("Rejected")
+						self.State:emit("action-rejected", reason)
+					end
+				end
+			)
+		end
+
+		return true
+	end
+
+	return DefenseEngine
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/DefenseEngine.lua
+
 -- BEGIN MODULE: src/Combat/init.lua
 do
   local moduleName = "src/Combat/init.lua"
@@ -1285,6 +2149,11 @@ do
 	local Targeting = assert(modules["src/Combat/Targeting.lua"])
 	local TimingStore = assert(modules["src/Combat/TimingStore.lua"])
 	local Scheduler = assert(modules["src/Combat/Scheduler.lua"])
+	local DetectorHub = assert(modules["src/Combat/Detection/DetectorHub.lua"])
+	local InputAdapter = assert(modules["src/Combat/InputAdapter.lua"])
+	local ActionExecutor = assert(modules["src/Combat/ActionExecutor.lua"])
+	local TimingResolver = assert(modules["src/Combat/TimingResolver.lua"])
+	local DefenseEngine = assert(modules["src/Combat/DefenseEngine.lua"])
 
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
@@ -1308,12 +2177,43 @@ do
 			Timings = TimingStore.new(),
 			Targeting = nil,
 			Scheduler = nil,
+			Detectors = nil,
+			Input = nil,
+			Executor = nil,
+			Resolver = nil,
+			Defense = nil,
 			_connections = {},
+			_lifetimeConnections = {},
 			_lastScan = 0,
 		}, Combat)
 
 		self.Targeting = Targeting.new(settings, options.targeting)
 		self.Scheduler = Scheduler.new(state)
+		self.Input = InputAdapter.new(options.input)
+		self.Executor = ActionExecutor.new(settings, state, self.Input)
+		self.Resolver = TimingResolver.new(settings)
+		local detectorOptions = options.detectors or {
+			shared = {
+				ignoreTrack = function(track)
+					local animationLab = environment.__ANIM_LAB_V6
+					return animationLab
+						and animationLab.OwnGhostTracks
+						and animationLab.OwnGhostTracks[track] == true
+				end,
+			},
+		}
+		self.Detectors = DetectorHub.new(settings, detectorOptions)
+		self.Defense = DefenseEngine.new(
+			settings,
+			state,
+			self.Timings,
+			self.Scheduler,
+			self.Executor,
+			self.Resolver
+		)
+		self._lifetimeConnections[#self._lifetimeConnections + 1] = self.Detectors.Detected:Connect(function(event)
+			self.Defense:handle(event)
+		end)
 		return self
 	end
 
@@ -1361,6 +2261,7 @@ do
 
 		self.State:set("Running", true)
 		self.State:setCharacter(Players.LocalPlayer.Character)
+		self.Detectors:start()
 		self:_bind(RunService.Heartbeat, function()
 			self:_step()
 		end)
@@ -1374,6 +2275,7 @@ do
 		end
 
 		self.State:set("Running", false)
+		self.Detectors:stop()
 		self.Scheduler:cancelAll("combat stopped")
 		for _, connection in ipairs(self._connections) do
 			pcall(function()
@@ -1404,6 +2306,13 @@ do
 
 	function Combat:Destroy()
 		self:stop()
+		for _, connection in ipairs(self._lifetimeConnections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		table.clear(self._lifetimeConnections)
+		self.Detectors:Destroy()
 		self.Scheduler:Destroy()
 		self.History:clear()
 		self.State:Destroy()

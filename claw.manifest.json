@@ -15,6 +15,16 @@
     "src/Combat/TimingProfile.lua",
     "src/Combat/TimingStore.lua",
     "src/Combat/Scheduler.lua",
+    "src/Combat/Detection/DetectorEvent.lua",
+    "src/Combat/Detection/AnimationDetector.lua",
+    "src/Combat/Detection/SoundDetector.lua",
+    "src/Combat/Detection/PartDetector.lua",
+    "src/Combat/Detection/EffectDetector.lua",
+    "src/Combat/Detection/DetectorHub.lua",
+    "src/Combat/InputAdapter.lua",
+    "src/Combat/ActionExecutor.lua",
+    "src/Combat/TimingResolver.lua",
+    "src/Combat/DefenseEngine.lua",
     "src/Combat/init.lua"
   ]
 }
