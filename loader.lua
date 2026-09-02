@@ -2,7 +2,7 @@
 local environment = getgenv and getgenv() or _G
 local HttpService = game:GetService("HttpService")
 local repository = "Clawdews/CLAW"
-local fallbackRef = "26e64264626101c861a5b505cf1aa1b039206c8b"
+local fallbackRef = "43900510ddea3ae2d4280b500e53e473be8c13c3"
 
 local function traceback(message)
 	local handler = debug and debug.traceback
@@ -41,8 +41,8 @@ local function resolveDistribution()
 		end
 	end
 
-	-- This immutable fallback is the compiler-verified v0.3.7 baseline with
-	-- motion-aware weapon defense, edge-triggered native input, and clear failures.
+	-- This immutable fallback is the compiler-verified v0.3.8 baseline with
+	-- state-aware dodge fallback, native roll cancellation, and clear failures.
 	return "https://raw.githubusercontent.com/" .. repository .. "/" .. fallbackRef .. "/dist/ClawMark.lua", fallbackRef
 end
 
