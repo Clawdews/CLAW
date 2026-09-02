@@ -48,10 +48,10 @@ The generated database is intentionally gitignored. CLAW MARK automatically load
 The public distribution bundle is always available from the stable `main` URL. Execute the newest pushed build with:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/dist/ClawMark.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/loader.lua?t=" .. tostring(os.time())))()
 ```
 
-`loader.lua` uses the same URL by default. Advanced users can override it through `getgenv().CLAW_DIST_URL`; CLAW never embeds an access token.
+`loader.lua` cache-busts and fetches the current distribution, records the outcome in `getgenv().CLAW_BOOT_STATUS`, and displays a visible success or failure notification. Advanced users can override the bundle URL through `getgenv().CLAW_DIST_URL`; CLAW never embeds an access token.
 
 ## Combat implementation map
 
