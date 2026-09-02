@@ -28,6 +28,7 @@ for (const relativePath of [manifest.entry, "loader.lua", ...manifest.modules]) 
   sources.set(relativePath, await readFile(path.join(root, relativePath), "utf8"));
 }
 const combined = [...sources.values()].join("\n");
+const entry = sources.get(manifest.entry);
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 
 check(!/Animation Lab/i.test(combined), "visible legacy Animation Lab branding remains");
@@ -36,6 +37,12 @@ check(!/(?:ghp_|github_pat_)[A-Za-z0-9_]+/.test(combined), "GitHub credential-li
 check(!/https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(combined), "Discord webhook URL found");
 check(combined.includes('environment.CLAW.Version = "' + packageJson.version + '"'), "runtime/package versions differ");
 check(bundle.includes(`-- BEGIN ENTRY: ${manifest.entry}`), "bundle entry marker is missing");
+const colorBlock = entry.match(/local COLORS\s*=\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+const definedColors = new Set([...colorBlock.matchAll(/^\s*([A-Z][A-Z0-9_]*)\s*=/gm)].map((match) => match[1]));
+const usedColors = new Set([...entry.matchAll(/COLORS\.([A-Z][A-Z0-9_]*)/g)].map((match) => match[1]));
+for (const color of usedColors) {
+  check(definedColors.has(color), `undefined UI palette key: COLORS.${color}`);
+}
 for (const modulePath of manifest.modules) {
   check(bundle.includes(`-- BEGIN MODULE: ${modulePath}`), `bundle marker missing: ${modulePath}`);
 }

@@ -7659,6 +7659,13 @@ local COLORS = {
 			108,
 			165
 		),
+
+	ACCENT =
+		Color3.fromRGB(
+			116,
+			94,
+			190
+		),
 }
 
 --==============================================================
@@ -7920,6 +7927,18 @@ if not guiParent then
 			WaitForChild(
 				"PlayerGui"
 			)
+end
+
+local existingGui =
+	guiParent:
+		FindFirstChild(
+			"_ClawMark"
+		)
+
+if existingGui then
+	pcall(function()
+		existingGui:Destroy()
+	end)
 end
 
 Gui.Parent =
@@ -12595,6 +12614,14 @@ refreshStatus()
 
 openPage(
 	BurstPage
+)
+
+assert(
+	Gui.Parent ~= nil
+		and Main.Parent == Gui
+		and BurstPage.Visible
+		and #State.Connections > 0,
+	"CLAW MARK UI startup check failed"
 )
 
 print(
