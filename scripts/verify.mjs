@@ -60,11 +60,14 @@ check(!/https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\//i.tes
 check(combined.includes('environment.CLAW.Version = "' + packageJson.version + '"'), "runtime/package versions differ");
 check(/BursterMaster\s*=\s*false/.test(entry), "Burster must start disabled");
 check(/LoggingEnabled\s*=\s*false/.test(entry), "animation logging must start disabled");
+check(entry.includes("Main.Active = false"), "main window background can sink game input");
+check(!/UIS\.MouseBehavior\s*=|UIS\.MouseIconEnabled\s*=/.test(entry), "UI mutates global Roblox mouse state");
 check(!/name\s*=\s*"(?:Critical|Flourish)"[\s\S]{0,80}?enabled\s*=\s*true/.test(entry), "a built-in burst rule starts enabled");
 check(settingsSource.includes("function Settings:safeStart()"), "safe-start settings reset is missing");
 check(combatSource.includes("Settings.new(savedSettings):safeStart()"), "saved active switches can bypass safe start");
 check(inputSource.includes("string.byte(string.upper(name))"), "executor virtual-key conversion is missing");
 check(nativeInputSource.includes('self:_remote("Block")'), "native block remote bridge is missing");
+check(!nativeInputSource.includes("self.InputData = self:_scanInputData()"), "native bridge can retain the game's private input state");
 check(
   nativeInputSource.includes("self.InputData.f = true") && nativeInputSource.includes("self.InputData.f = false"),
   "native block input-state mirroring is missing",

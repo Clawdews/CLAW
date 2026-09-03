@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.4.3"
+	environment.CLAW.Version = "0.4.4"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -3909,7 +3909,12 @@ do
 			self.Status = reason or "native scan failed"
 			return false, self.Status
 		end
-		self.InputData = self:_scanInputData()
+		-- Do not retain or mutate the game's private input-state upvalue. Native
+		-- Block/Unblock remotes do not require it, and an executor returning the
+		-- wrong RenderStepped closure here can corrupt BackpackClient/weapon input.
+		-- Direct dodge/cancel will safely use the ordinary configured fallback when
+		-- this optional private state is unavailable.
+		self.InputData = nil
 		local block = self:_remote("Block")
 		local unblock = self:_remote("Unblock")
 		if not block or not unblock then
@@ -7785,7 +7790,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.4.3
+--  CLAW MARK v0.4.4
 --
 --  TABS
 --    BURSTER
@@ -11163,7 +11168,9 @@ Main.BorderColor3 =
 
 Main.BorderSizePixel = 1
 
-Main.Active = true
+-- The window background must never sink game input. Interactive children keep
+-- their own button behavior, and the header alone is active for dragging.
+Main.Active = false
 
 Main.Parent =
 	Gui
@@ -11172,79 +11179,15 @@ UI.Main =
 	Main
 
 ------------------------------------------------------------
--- Mouse behavior
+-- Mouse ownership
 ------------------------------------------------------------
 
-local function enterUI()
-
-	if State.MouseHover then
-		return
-	end
-
-	State.MouseHover = true
-
-	State.OldMouseIcon =
-		UIS.MouseIconEnabled
-
-	State.OldMouseBehavior =
-		UIS.MouseBehavior
-
-	UIS.MouseIconEnabled =
-		true
-
-	UIS.MouseBehavior =
-		Enum.MouseBehavior.Default
-end
-
+-- CLAW deliberately does not write UserInputService.MouseBehavior or
+-- MouseIconEnabled. Fighting the game's camera/input controller every render
+-- step can strand ordinary clicks and hotbar input on executor runtimes.
 local function leaveUI()
-
-	if not State.MouseHover then
-		return
-	end
-
 	State.MouseHover = false
-
-	if State.OldMouseIcon ~= nil then
-
-		UIS.MouseIconEnabled =
-			State.OldMouseIcon
-	end
-
-	if State.OldMouseBehavior ~= nil then
-
-		UIS.MouseBehavior =
-			State.OldMouseBehavior
-	end
 end
-
-bind(
-	Main.MouseEnter,
-	enterUI
-)
-
-bind(
-	Main.MouseLeave,
-	leaveUI
-)
-
-bind(
-	RunService.RenderStepped,
-	function()
-
-		if
-			State.Destroyed
-			or not State.MouseHover
-		then
-			return
-		end
-
-		UIS.MouseIconEnabled =
-			true
-
-		UIS.MouseBehavior =
-			Enum.MouseBehavior.Default
-	end
-)
 
 ------------------------------------------------------------
 -- Header
@@ -11254,6 +11197,8 @@ local Top =
 	Instance.new(
 		"Frame"
 	)
+
+Top.Active = true
 
 Top.Size =
 	UDim2.new(
@@ -11277,7 +11222,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.3",
+	"CLAW MARK v0.4.4",
 	8,
 	0,
 	170,
@@ -16297,7 +16242,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.3 online"
+	"[CLAW] CLAW MARK v0.4.4 online"
 )
 
 -- END ENTRY: claw_mark.lua

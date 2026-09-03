@@ -2,6 +2,13 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Backpack and mouse isolation — v0.4.4
+
+- Removed all writes to `UserInputService.MouseBehavior` and `MouseIconEnabled`; CLAW no longer fights the game's camera/input controller every rendered frame.
+- Made the 680×520 window background input-transparent while retaining active buttons and header-only dragging.
+- Disabled discovery and mutation of the game's private RenderStepped input-state upvalue. Native Block/Unblock does not require it, while a false-positive table can corrupt weapon-slot or BackpackClient state.
+- Direct dodge and dodge cancellation degrade to configured input fallbacks when private state is unavailable.
+
 ## Passive boot isolation — v0.4.3
 
 - Combat is constructed for the UI but remains stopped while its master and mastered features are off.

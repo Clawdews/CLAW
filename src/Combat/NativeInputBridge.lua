@@ -650,7 +650,12 @@ function NativeInputBridge:initialize(force)
 		self.Status = reason or "native scan failed"
 		return false, self.Status
 	end
-	self.InputData = self:_scanInputData()
+	-- Do not retain or mutate the game's private input-state upvalue. Native
+	-- Block/Unblock remotes do not require it, and an executor returning the
+	-- wrong RenderStepped closure here can corrupt BackpackClient/weapon input.
+	-- Direct dodge/cancel will safely use the ordinary configured fallback when
+	-- this optional private state is unavailable.
+	self.InputData = nil
 	local block = self:_remote("Block")
 	local unblock = self:_remote("Unblock")
 	if not block or not unblock then
