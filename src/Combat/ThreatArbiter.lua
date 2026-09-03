@@ -21,7 +21,36 @@ local function countPlans(record)
 	return count
 end
 
-function ThreatArbiter.new(settings, state, scheduler, clock)
+local function makeRecord()
+	return {
+		animationTimes = {},
+		admissionTimes = {},
+		abortTimes = {},
+		lastAnimationAt = {},
+		plans = {},
+		plansByEvent = setmetatable({}, { __mode = "k" }),
+		noisyUntil = 0,
+		rearmUntil = 0,
+		lastNotice = 0,
+		sourceName = "unknown",
+	}
+end
+
+local function pruneTimes(timestamps, cutoff)
+	local write = 1
+	for read = 1, #timestamps do
+		local timestamp = timestamps[read]
+		if timestamp >= cutoff then
+			timestamps[write] = timestamp
+			write = write + 1
+		end
+	end
+	for index = #timestamps, write, -1 do
+		timestamps[index] = nil
+	end
+end
+
+function ThreatArbiter.new(settings, state, scheduler, clock, onQuarantine)
 	if type(scheduler) == "function" and clock == nil then
 		clock = scheduler
 		scheduler = nil
@@ -31,6 +60,7 @@ function ThreatArbiter.new(settings, state, scheduler, clock)
 		State = state,
 		Clock = clock or os.clock,
 		Scheduler = scheduler,
+		OnQuarantine = onQuarantine,
 		Sources = setmetatable({}, { __mode = "k" }),
 		FallbackSource = nil,
 		ActivePlans = 0,
@@ -44,33 +74,18 @@ function ThreatArbiter:_record(event)
 	local source = sourceFor(event)
 	if not source then
 		if not self.FallbackSource then
-			self.FallbackSource = {
-				animationTimes = {},
-				plans = {},
-				plansByEvent = setmetatable({}, { __mode = "k" }),
-				noisyUntil = 0,
-				lastCorroboratedAt = 0,
-				lastNoisyPass = 0,
-				lastNotice = 0,
-			}
+			self.FallbackSource = makeRecord()
 		end
 		return self.FallbackSource, "unknown"
 	end
 
 	local record = self.Sources[source]
 	if not record then
-		record = {
-			animationTimes = {},
-			plans = {},
-			plansByEvent = setmetatable({}, { __mode = "k" }),
-			noisyUntil = 0,
-			lastCorroboratedAt = 0,
-			lastNoisyPass = 0,
-			lastNotice = 0,
-		}
+		record = makeRecord()
 		self.Sources[source] = record
 	end
 	local name = event.entity and event.entity.Name or event.instance and event.instance.Name or "unknown"
+	record.sourceName = tostring(name)
 	return record, tostring(name)
 end
 
@@ -121,14 +136,44 @@ function ThreatArbiter:_decision(kind, event, reason, record, force)
 	})
 end
 
-function ThreatArbiter:_pruneTimes(record, cutoff)
-	local retained = {}
-	for _, timestamp in ipairs(record.animationTimes) do
-		if timestamp >= cutoff then
-			retained[#retained + 1] = timestamp
+function ThreatArbiter:_cancelAnimationPlans(record, reason)
+	if not self.Scheduler then
+		return
+	end
+	local pending = {}
+	for _, plan in pairs(record.plans) do
+		if not plan.settled and plan.event.detector == "animation" then
+			for scheduled in pairs(plan.tasks) do
+				pending[#pending + 1] = scheduled
+			end
 		end
 	end
-	record.animationTimes = retained
+	for _, scheduled in ipairs(pending) do
+		self.Scheduler:cancel(scheduled, reason)
+	end
+end
+
+function ThreatArbiter:_quarantine(record, event, reason, metric)
+	local now = self.Clock()
+	record.noisyUntil = math.max(
+		record.noisyUntil,
+		now + math.max(0.10, self.Settings:get("ThreatGuard.QuarantineSeconds"))
+	)
+	record.rearmUntil = math.max(record.rearmUntil, record.noisyUntil)
+	table.clear(record.animationTimes)
+	table.clear(record.admissionTimes)
+	table.clear(record.abortTimes)
+	table.clear(record.lastAnimationAt)
+	self:_cancelAnimationPlans(record, reason)
+	if type(self.OnQuarantine) == "function" then
+		local called, released = pcall(self.OnQuarantine, reason)
+		if called and released ~= false then
+			self.State:increment("ThreatInputReleases")
+		end
+	end
+	self.State:increment(metric)
+	self.State:increment("ThreatDropped")
+	self:_decision("quarantined", event, reason, record, true)
 end
 
 function ThreatArbiter:observe(event)
@@ -140,25 +185,19 @@ function ThreatArbiter:observe(event)
 	local now = self.Clock()
 	if event.detector ~= "animation" then
 		if (TRUST[event.detector] or 0) >= 3 then
-			record.lastCorroboratedAt = now
+			if record.noisyUntil > now then
+				self.State:increment("ThreatCorroborated")
+				self:_decision("corroborated", event, "trusted evidence bypassed animation quarantine", record)
+			end
 		end
 		return true
 	end
 
 	local window = math.max(0.05, self.Settings:get("ThreatGuard.BurstWindow"))
 	local limit = math.max(2, math.floor(self.Settings:get("ThreatGuard.BurstLimit")))
-	self:_pruneTimes(record, now - window)
+	pruneTimes(record.animationTimes, now - window)
 
-	local corroborated = now - record.lastCorroboratedAt
-		<= math.max(0, self.Settings:get("ThreatGuard.CorroborationWindow"))
 	if record.noisyUntil > now then
-		local passInterval = math.max(0.05, self.Settings:get("ThreatGuard.NoisyPassInterval"))
-		if corroborated and now - record.lastNoisyPass >= passInterval then
-			record.lastNoisyPass = now
-			self.State:increment("ThreatCorroborated")
-			self:_decision("corroborated", event, "trusted non-animation evidence", record)
-			return true
-		end
 		self.State:increment("ThreatDropped")
 		self:_decision("dropped", event, "animation channel quarantined for " .. sourceName, record)
 		return false, "animation spam quarantine"
@@ -166,11 +205,7 @@ function ThreatArbiter:observe(event)
 
 	record.animationTimes[#record.animationTimes + 1] = now
 	if #record.animationTimes > limit then
-		record.noisyUntil = now + math.max(0.10, self.Settings:get("ThreatGuard.QuarantineSeconds"))
-		record.animationTimes = {}
-		self.State:increment("ThreatSpamBursts")
-		self.State:increment("ThreatDropped")
-		self:_decision("quarantined", event, "animation burst from " .. sourceName, record, true)
+		self:_quarantine(record, event, "animation burst from " .. sourceName, "ThreatSpamBursts")
 		return false, "animation burst quarantined"
 	end
 
@@ -182,10 +217,47 @@ function ThreatArbiter:claim(event, dueAt)
 		return true, nil
 	end
 
-	local record = self:_record(event)
+	local record, sourceName = self:_record(event)
 	local existing = record.plansByEvent[event]
 	if existing and not existing.settled then
 		return true, existing
+	end
+
+	local now = self.Clock()
+	if event.detector == "animation" then
+		if record.noisyUntil > now then
+			self.State:increment("ThreatDropped")
+			self:_decision("dropped", event, "animation channel quarantined for " .. sourceName, record)
+			return false, nil, "animation spam quarantine"
+		end
+		local animationID = tostring(event.id or "")
+		local lastSameAnimation = record.lastAnimationAt[animationID]
+		local sameAnimationRearm = math.max(0, self.Settings:get("ThreatGuard.SameAnimationRearm"))
+		if lastSameAnimation and now - lastSameAnimation < sameAnimationRearm then
+			self.State:increment("ThreatRearmDrops")
+			self.State:increment("ThreatDropped")
+			self:_decision("dropped", event, "same animation rearm lease", record)
+			return false, nil, "same animation rearm"
+		end
+		if now < record.rearmUntil then
+			self.State:increment("ThreatRearmDrops")
+			self.State:increment("ThreatDropped")
+			self:_decision("dropped", event, "source rearm lease", record)
+			return false, nil, "source rearm"
+		end
+
+		local churnWindow = math.max(0.25, self.Settings:get("ThreatGuard.ChurnWindow"))
+		local churnLimit = math.max(2, math.floor(self.Settings:get("ThreatGuard.ChurnLimit")))
+		pruneTimes(record.admissionTimes, now - churnWindow)
+		if #record.admissionTimes >= churnLimit then
+			self:_quarantine(
+				record,
+				event,
+				"sustained animation-plan churn from " .. sourceName,
+				"ThreatChurnBursts"
+			)
+			return false, nil, "source churn quarantined"
+		end
 	end
 
 	local separation = math.max(0, self.Settings:get("ThreatGuard.PlanSeparation"))
@@ -243,6 +315,14 @@ function ThreatArbiter:claim(event, dueAt)
 	}
 	record.plans[plan.id] = plan
 	record.plansByEvent[event] = plan
+	if event.detector == "animation" then
+		record.admissionTimes[#record.admissionTimes + 1] = now
+		record.lastAnimationAt[tostring(event.id or "")] = now
+		record.rearmUntil = math.max(
+			record.rearmUntil,
+			now + math.max(0, self.Settings:get("ThreatGuard.SourceRearm"))
+		)
+	end
 	self.ActivePlans = self.ActivePlans + 1
 	self.State:increment("ThreatAdmitted")
 	self:_decision("admitted", event, "source plan admitted", record)
@@ -273,6 +353,33 @@ function ThreatArbiter:settle(plan, scheduled, reason)
 	plan.record.plans[plan.id] = nil
 	plan.record.plansByEvent[plan.event] = nil
 	self.ActivePlans = math.max(0, self.ActivePlans - 1)
+
+	if plan.event.detector == "animation" then
+		local now = self.Clock()
+		local quarantined = false
+		local rearm = math.max(0, self.Settings:get("ThreatGuard.SourceRearm"))
+		plan.record.rearmUntil = math.max(plan.record.rearmUntil, now + rearm)
+		local outcome = string.lower(tostring(reason or ""))
+		if string.find(outcome, "animation ended", 1, true) then
+			local abortWindow = math.max(0.25, self.Settings:get("ThreatGuard.AbortWindow"))
+			local abortLimit = math.max(2, math.floor(self.Settings:get("ThreatGuard.AbortLimit")))
+			pruneTimes(plan.record.abortTimes, now - abortWindow)
+			plan.record.abortTimes[#plan.record.abortTimes + 1] = now
+			self.State:increment("ThreatAborted")
+			if #plan.record.abortTimes >= abortLimit and plan.record.noisyUntil <= now then
+				self:_quarantine(
+					plan.record,
+					plan.event,
+					"repeated early animation aborts from " .. plan.record.sourceName,
+					"ThreatChurnBursts"
+				)
+				quarantined = true
+			end
+		end
+		if quarantined then
+			return
+		end
+	end
 	self:_decision("settled", plan.event, reason or "plan settled", plan.record)
 end
 
@@ -282,11 +389,13 @@ function ThreatArbiter:reset()
 			plan.settled = true
 		end
 		table.clear(record.animationTimes)
+		table.clear(record.admissionTimes)
+		table.clear(record.abortTimes)
+		table.clear(record.lastAnimationAt)
 		table.clear(record.plans)
 		table.clear(record.plansByEvent)
 		record.noisyUntil = 0
-		record.lastCorroboratedAt = 0
-		record.lastNoisyPass = 0
+		record.rearmUntil = 0
 	end
 	for _, record in pairs(self.Sources) do
 		resetRecord(record)

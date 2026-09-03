@@ -93,12 +93,14 @@ function Combat.new(options)
 
 	self.Targeting = Targeting.new(settings, options.targeting)
 	self.Scheduler = Scheduler.new(state)
-	self.Threats = ThreatArbiter.new(settings, state, self.Scheduler)
 	local inputOptions = {
 		custom = options.input and options.input.custom or nil,
 		settings = settings,
 	}
 	self.Input = InputAdapter.new(inputOptions)
+	self.Threats = ThreatArbiter.new(settings, state, self.Scheduler, nil, function(reason)
+		return self.Input.Native:releaseAll("threat guard: " .. tostring(reason))
+	end)
 	self.Executor = ActionExecutor.new(settings, state, self.Input)
 	self.Resolver = TimingResolver.new(settings)
 	self.Performance = Performance.new(settings)

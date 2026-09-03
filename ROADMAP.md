@@ -2,6 +2,17 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Threat Guard paced-churn containment — v0.4.1
+
+- Added short per-attacker and same-animation rearm leases so cancelled or completed plans cannot reopen a defense slot on the next frame.
+- Added a two-second rolling admission budget; a sixth animation plan from one source triggers containment even when the events stay below the raw 350ms burst detector.
+- Added early-animation-abort accounting; three rapid cancelled tracks quarantine only that source's animation channel.
+- Ported Lycoris's missing provenance guard: mob-library animations replayed by player characters are rejected before scheduling, alongside the existing priority, blend-weight, and speed sanity checks.
+- Stronger part, effect, and projectile evidence bypasses both animation rearm and animation quarantine.
+- Quarantine drains pending animation plans from the noisy source while leaving other attackers and detector channels live.
+- Quarantine also drains the native block queue and sends a bounded safe release; lingering replicated block state gets two additional release attempts instead of trapping normal combat input.
+- Debug and copied reports split raw bursts, paced churn, rearm drops, and early aborts; executable scenarios cover each path.
+
 ## Threat Guard foundation — v0.4.0
 
 - Per-attacker animation burst detection and quarantine; one noisy Animator does not disable other targets or detector channels.

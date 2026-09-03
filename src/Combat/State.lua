@@ -40,6 +40,10 @@ function State.new()
 		ThreatCoalesced = 0,
 		ThreatDropped = 0,
 		ThreatSpamBursts = 0,
+		ThreatChurnBursts = 0,
+		ThreatRearmDrops = 0,
+		ThreatAborted = 0,
+		ThreatInputReleases = 0,
 		ThreatCorroborated = 0,
 		ThreatPromoted = 0,
 	}

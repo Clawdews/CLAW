@@ -228,6 +228,8 @@ function NativeInputBridge.new()
 		NextRetry = 0,
 		NextBlockRetry = 0,
 		BlockRetryCount = 0,
+		NextUnblockRetry = 0,
+		UnblockAttemptCount = 0,
 		ReleaseSent = true,
 		LastTransition = "idle",
 		Stats = {
@@ -235,6 +237,8 @@ function NativeInputBridge.new()
 			Unblocks = 0,
 			Retries = 0,
 			Coalesced = 0,
+			ReleaseRetries = 0,
+			SafetyReleases = 0,
 			Dodges = 0,
 			DodgeCancels = 0,
 		},
@@ -411,6 +415,26 @@ function NativeInputBridge:_sendUnblock(detail)
 	return fired, reason
 end
 
+function NativeInputBridge:_attemptUnblock(detail, now)
+	now = now or os.clock()
+	if self.UnblockAttemptCount >= 3 then
+		return false, "unblock retry budget exhausted"
+	end
+	if now < self.NextUnblockRetry then
+		return false, "unblock retry pending"
+	end
+
+	local retry = self.UnblockAttemptCount > 0
+	local fired, reason = self:_sendUnblock(detail)
+	self.UnblockAttemptCount = self.UnblockAttemptCount + 1
+	self.NextUnblockRetry = now + 0.12
+	self.ReleaseSent = fired
+	if retry then
+		self.Stats.ReleaseRetries = self.Stats.ReleaseRetries + 1
+	end
+	return fired, reason
+end
+
 function NativeInputBridge:isBusy()
 	return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
 end
@@ -510,12 +534,19 @@ function NativeInputBridge:releaseAll(reason)
 	table.clear(self.Queue)
 	self.NextBlockRetry = 0
 	self.BlockRetryCount = 0
+	self.NextUnblockRetry = 0
+	self.UnblockAttemptCount = 0
 
 	local ok, releaseReason = true, nil
 	if shouldUnblock and self.Ready then
-		ok, releaseReason = self:_sendUnblock(detail)
+		self.Stats.SafetyReleases = self.Stats.SafetyReleases + 1
+		ok, releaseReason = self:_attemptUnblock(detail)
+	elseif shouldUnblock then
+		ok, releaseReason = false, "native bridge unavailable"
 	end
-	self.ReleaseSent = true
+	if not shouldUnblock then
+		self.ReleaseSent = true
+	end
 	self.LastTransition = ok and ("released: " .. detail)
 		or ("release failed: " .. tostring(releaseReason))
 	return ok, releaseReason or detail
@@ -547,10 +578,7 @@ function NativeInputBridge:_updateQueue()
 			self.InputData.f = false
 		end
 		if blocking then
-			if not self.ReleaseSent then
-				self:_sendUnblock("waiting for clear")
-				self.ReleaseSent = true
-			end
+			self:_attemptUnblock("waiting for clear", now)
 		elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
 			local fired = self:_sendBlock(false)
 			if fired then
@@ -563,6 +591,8 @@ function NativeInputBridge:_updateQueue()
 				self.ReleaseSent = false
 				self.BlockRetryCount = 0
 				self.NextBlockRetry = now + 0.12
+				self.UnblockAttemptCount = 0
+				self.NextUnblockRetry = 0
 			end
 		end
 	elseif active then
@@ -586,9 +616,11 @@ function NativeInputBridge:_updateQueue()
 		end
 		-- Release once when the queue drains. The old implementation sent this
 		-- remote every rendered frame while the Blocking effect lingered.
-		if (hadEntries or blocking) and not self.ReleaseSent then
-			self:_sendUnblock("queue drained")
-			self.ReleaseSent = true
+		if hadEntries or blocking then
+			self:_attemptUnblock("queue drained", now)
+		else
+			self.UnblockAttemptCount = 0
+			self.NextUnblockRetry = 0
 		end
 	end
 end
@@ -687,6 +719,8 @@ function NativeInputBridge:block(duration, deflect)
 	self.ReleaseSent = false
 	self.BlockRetryCount = 0
 	self.NextBlockRetry = now + 0.12
+	self.UnblockAttemptCount = 0
+	self.NextUnblockRetry = 0
 	if self.InputData then
 		self.InputData.f = true
 	end
@@ -704,6 +738,8 @@ function NativeInputBridge:invalidate(reason)
 	table.clear(self.Queue)
 	self.NextBlockRetry = 0
 	self.BlockRetryCount = 0
+	self.NextUnblockRetry = 0
+	self.UnblockAttemptCount = 0
 	self.ReleaseSent = true
 	self.LastTransition = "idle"
 	self.InputData = nil

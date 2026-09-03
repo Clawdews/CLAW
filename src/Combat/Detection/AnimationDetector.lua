@@ -16,6 +16,7 @@ function AnimationDetector.new(options)
 		_source = options.source,
 		_ignoreTrack = options.ignoreTrack,
 		_accept = options.accept,
+		_classify = options.classify,
 		_connections = {},
 		_animators = setmetatable({}, { __mode = "k" }),
 		_running = false,
@@ -45,13 +46,23 @@ function AnimationDetector:_emit(animator, track)
 		return
 	end
 
+	local metadata = {
+		priority = tostring(track.Priority),
+		looped = track.Looped,
+		length = track.Length,
+	}
+	if type(self._classify) == "function" then
+		local ok, classification = pcall(self._classify, id, animator, track)
+		if ok and type(classification) == "table" then
+			for key, value in pairs(classification) do
+				metadata[key] = value
+			end
+		end
+	end
+
 	self.Detected:Fire(DetectorEvent.new("animation", id, animator, {
 		track = track,
-		metadata = {
-			priority = tostring(track.Priority),
-			looped = track.Looped,
-			length = track.Length,
-		},
+		metadata = metadata,
 	}))
 end
 

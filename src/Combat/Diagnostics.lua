@@ -152,11 +152,13 @@ function Diagnostics:report(context)
 			clientEffects.Deduplicated or 0
 		),
 		string.format(
-			"native_io=blocks:%d unblocks:%d retries:%d coalesced:%d dodges:%d cancels:%d",
+			"native_io=blocks:%d unblocks:%d block_retries:%d coalesced:%d release_retries:%d safety_releases:%d dodges:%d cancels:%d",
 			stats.Blocks or 0,
 			stats.Unblocks or 0,
 			stats.Retries or 0,
 			stats.Coalesced or 0,
+			stats.ReleaseRetries or 0,
+			stats.SafetyReleases or 0,
 			stats.Dodges or 0,
 			stats.DodgeCancels or 0
 		),
@@ -183,11 +185,15 @@ function Diagnostics:report(context)
 			metrics.Cancelled or 0
 		),
 		string.format(
-			"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d corroborated:%d promoted:%d",
+			"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d churn:%d rearm:%d aborts:%d releases:%d corroborated:%d promoted:%d",
 			metrics.ThreatAdmitted or 0,
 			metrics.ThreatCoalesced or 0,
 			metrics.ThreatDropped or 0,
 			metrics.ThreatSpamBursts or 0,
+			metrics.ThreatChurnBursts or 0,
+			metrics.ThreatRearmDrops or 0,
+			metrics.ThreatAborted or 0,
+			metrics.ThreatInputReleases or 0,
 			metrics.ThreatCorroborated or 0,
 			metrics.ThreatPromoted or 0
 		),

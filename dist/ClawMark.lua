@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.4.0"
+	environment.CLAW.Version = "0.4.1"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -227,8 +227,12 @@ do
 			QuarantineSeconds = 1.25,
 			MaxPendingPerSource = 2,
 			PlanSeparation = 0.08,
-			CorroborationWindow = 0.18,
-			NoisyPassInterval = 0.20,
+			SourceRearm = 0.16,
+			SameAnimationRearm = 0.30,
+			ChurnWindow = 2.00,
+			ChurnLimit = 5,
+			AbortWindow = 1.50,
+			AbortLimit = 3,
 		},
 		Timing = {
 			Profile = "Balanced",
@@ -660,6 +664,10 @@ do
 			ThreatCoalesced = 0,
 			ThreatDropped = 0,
 			ThreatSpamBursts = 0,
+			ThreatChurnBursts = 0,
+			ThreatRearmDrops = 0,
+			ThreatAborted = 0,
+			ThreatInputReleases = 0,
 			ThreatCorroborated = 0,
 			ThreatPromoted = 0,
 		}
@@ -1773,7 +1781,36 @@ do
 		return count
 	end
 
-	function ThreatArbiter.new(settings, state, scheduler, clock)
+	local function makeRecord()
+		return {
+			animationTimes = {},
+			admissionTimes = {},
+			abortTimes = {},
+			lastAnimationAt = {},
+			plans = {},
+			plansByEvent = setmetatable({}, { __mode = "k" }),
+			noisyUntil = 0,
+			rearmUntil = 0,
+			lastNotice = 0,
+			sourceName = "unknown",
+		}
+	end
+
+	local function pruneTimes(timestamps, cutoff)
+		local write = 1
+		for read = 1, #timestamps do
+			local timestamp = timestamps[read]
+			if timestamp >= cutoff then
+				timestamps[write] = timestamp
+				write = write + 1
+			end
+		end
+		for index = #timestamps, write, -1 do
+			timestamps[index] = nil
+		end
+	end
+
+	function ThreatArbiter.new(settings, state, scheduler, clock, onQuarantine)
 		if type(scheduler) == "function" and clock == nil then
 			clock = scheduler
 			scheduler = nil
@@ -1783,6 +1820,7 @@ do
 			State = state,
 			Clock = clock or os.clock,
 			Scheduler = scheduler,
+			OnQuarantine = onQuarantine,
 			Sources = setmetatable({}, { __mode = "k" }),
 			FallbackSource = nil,
 			ActivePlans = 0,
@@ -1796,33 +1834,18 @@ do
 		local source = sourceFor(event)
 		if not source then
 			if not self.FallbackSource then
-				self.FallbackSource = {
-					animationTimes = {},
-					plans = {},
-					plansByEvent = setmetatable({}, { __mode = "k" }),
-					noisyUntil = 0,
-					lastCorroboratedAt = 0,
-					lastNoisyPass = 0,
-					lastNotice = 0,
-				}
+				self.FallbackSource = makeRecord()
 			end
 			return self.FallbackSource, "unknown"
 		end
 
 		local record = self.Sources[source]
 		if not record then
-			record = {
-				animationTimes = {},
-				plans = {},
-				plansByEvent = setmetatable({}, { __mode = "k" }),
-				noisyUntil = 0,
-				lastCorroboratedAt = 0,
-				lastNoisyPass = 0,
-				lastNotice = 0,
-			}
+			record = makeRecord()
 			self.Sources[source] = record
 		end
 		local name = event.entity and event.entity.Name or event.instance and event.instance.Name or "unknown"
+		record.sourceName = tostring(name)
 		return record, tostring(name)
 	end
 
@@ -1873,14 +1896,44 @@ do
 		})
 	end
 
-	function ThreatArbiter:_pruneTimes(record, cutoff)
-		local retained = {}
-		for _, timestamp in ipairs(record.animationTimes) do
-			if timestamp >= cutoff then
-				retained[#retained + 1] = timestamp
+	function ThreatArbiter:_cancelAnimationPlans(record, reason)
+		if not self.Scheduler then
+			return
+		end
+		local pending = {}
+		for _, plan in pairs(record.plans) do
+			if not plan.settled and plan.event.detector == "animation" then
+				for scheduled in pairs(plan.tasks) do
+					pending[#pending + 1] = scheduled
+				end
 			end
 		end
-		record.animationTimes = retained
+		for _, scheduled in ipairs(pending) do
+			self.Scheduler:cancel(scheduled, reason)
+		end
+	end
+
+	function ThreatArbiter:_quarantine(record, event, reason, metric)
+		local now = self.Clock()
+		record.noisyUntil = math.max(
+			record.noisyUntil,
+			now + math.max(0.10, self.Settings:get("ThreatGuard.QuarantineSeconds"))
+		)
+		record.rearmUntil = math.max(record.rearmUntil, record.noisyUntil)
+		table.clear(record.animationTimes)
+		table.clear(record.admissionTimes)
+		table.clear(record.abortTimes)
+		table.clear(record.lastAnimationAt)
+		self:_cancelAnimationPlans(record, reason)
+		if type(self.OnQuarantine) == "function" then
+			local called, released = pcall(self.OnQuarantine, reason)
+			if called and released ~= false then
+				self.State:increment("ThreatInputReleases")
+			end
+		end
+		self.State:increment(metric)
+		self.State:increment("ThreatDropped")
+		self:_decision("quarantined", event, reason, record, true)
 	end
 
 	function ThreatArbiter:observe(event)
@@ -1892,25 +1945,19 @@ do
 		local now = self.Clock()
 		if event.detector ~= "animation" then
 			if (TRUST[event.detector] or 0) >= 3 then
-				record.lastCorroboratedAt = now
+				if record.noisyUntil > now then
+					self.State:increment("ThreatCorroborated")
+					self:_decision("corroborated", event, "trusted evidence bypassed animation quarantine", record)
+				end
 			end
 			return true
 		end
 
 		local window = math.max(0.05, self.Settings:get("ThreatGuard.BurstWindow"))
 		local limit = math.max(2, math.floor(self.Settings:get("ThreatGuard.BurstLimit")))
-		self:_pruneTimes(record, now - window)
+		pruneTimes(record.animationTimes, now - window)
 
-		local corroborated = now - record.lastCorroboratedAt
-			<= math.max(0, self.Settings:get("ThreatGuard.CorroborationWindow"))
 		if record.noisyUntil > now then
-			local passInterval = math.max(0.05, self.Settings:get("ThreatGuard.NoisyPassInterval"))
-			if corroborated and now - record.lastNoisyPass >= passInterval then
-				record.lastNoisyPass = now
-				self.State:increment("ThreatCorroborated")
-				self:_decision("corroborated", event, "trusted non-animation evidence", record)
-				return true
-			end
 			self.State:increment("ThreatDropped")
 			self:_decision("dropped", event, "animation channel quarantined for " .. sourceName, record)
 			return false, "animation spam quarantine"
@@ -1918,11 +1965,7 @@ do
 
 		record.animationTimes[#record.animationTimes + 1] = now
 		if #record.animationTimes > limit then
-			record.noisyUntil = now + math.max(0.10, self.Settings:get("ThreatGuard.QuarantineSeconds"))
-			record.animationTimes = {}
-			self.State:increment("ThreatSpamBursts")
-			self.State:increment("ThreatDropped")
-			self:_decision("quarantined", event, "animation burst from " .. sourceName, record, true)
+			self:_quarantine(record, event, "animation burst from " .. sourceName, "ThreatSpamBursts")
 			return false, "animation burst quarantined"
 		end
 
@@ -1934,10 +1977,47 @@ do
 			return true, nil
 		end
 
-		local record = self:_record(event)
+		local record, sourceName = self:_record(event)
 		local existing = record.plansByEvent[event]
 		if existing and not existing.settled then
 			return true, existing
+		end
+
+		local now = self.Clock()
+		if event.detector == "animation" then
+			if record.noisyUntil > now then
+				self.State:increment("ThreatDropped")
+				self:_decision("dropped", event, "animation channel quarantined for " .. sourceName, record)
+				return false, nil, "animation spam quarantine"
+			end
+			local animationID = tostring(event.id or "")
+			local lastSameAnimation = record.lastAnimationAt[animationID]
+			local sameAnimationRearm = math.max(0, self.Settings:get("ThreatGuard.SameAnimationRearm"))
+			if lastSameAnimation and now - lastSameAnimation < sameAnimationRearm then
+				self.State:increment("ThreatRearmDrops")
+				self.State:increment("ThreatDropped")
+				self:_decision("dropped", event, "same animation rearm lease", record)
+				return false, nil, "same animation rearm"
+			end
+			if now < record.rearmUntil then
+				self.State:increment("ThreatRearmDrops")
+				self.State:increment("ThreatDropped")
+				self:_decision("dropped", event, "source rearm lease", record)
+				return false, nil, "source rearm"
+			end
+
+			local churnWindow = math.max(0.25, self.Settings:get("ThreatGuard.ChurnWindow"))
+			local churnLimit = math.max(2, math.floor(self.Settings:get("ThreatGuard.ChurnLimit")))
+			pruneTimes(record.admissionTimes, now - churnWindow)
+			if #record.admissionTimes >= churnLimit then
+				self:_quarantine(
+					record,
+					event,
+					"sustained animation-plan churn from " .. sourceName,
+					"ThreatChurnBursts"
+				)
+				return false, nil, "source churn quarantined"
+			end
 		end
 
 		local separation = math.max(0, self.Settings:get("ThreatGuard.PlanSeparation"))
@@ -1995,6 +2075,14 @@ do
 		}
 		record.plans[plan.id] = plan
 		record.plansByEvent[event] = plan
+		if event.detector == "animation" then
+			record.admissionTimes[#record.admissionTimes + 1] = now
+			record.lastAnimationAt[tostring(event.id or "")] = now
+			record.rearmUntil = math.max(
+				record.rearmUntil,
+				now + math.max(0, self.Settings:get("ThreatGuard.SourceRearm"))
+			)
+		end
 		self.ActivePlans = self.ActivePlans + 1
 		self.State:increment("ThreatAdmitted")
 		self:_decision("admitted", event, "source plan admitted", record)
@@ -2025,6 +2113,33 @@ do
 		plan.record.plans[plan.id] = nil
 		plan.record.plansByEvent[plan.event] = nil
 		self.ActivePlans = math.max(0, self.ActivePlans - 1)
+
+		if plan.event.detector == "animation" then
+			local now = self.Clock()
+			local quarantined = false
+			local rearm = math.max(0, self.Settings:get("ThreatGuard.SourceRearm"))
+			plan.record.rearmUntil = math.max(plan.record.rearmUntil, now + rearm)
+			local outcome = string.lower(tostring(reason or ""))
+			if string.find(outcome, "animation ended", 1, true) then
+				local abortWindow = math.max(0.25, self.Settings:get("ThreatGuard.AbortWindow"))
+				local abortLimit = math.max(2, math.floor(self.Settings:get("ThreatGuard.AbortLimit")))
+				pruneTimes(plan.record.abortTimes, now - abortWindow)
+				plan.record.abortTimes[#plan.record.abortTimes + 1] = now
+				self.State:increment("ThreatAborted")
+				if #plan.record.abortTimes >= abortLimit and plan.record.noisyUntil <= now then
+					self:_quarantine(
+						plan.record,
+						plan.event,
+						"repeated early animation aborts from " .. plan.record.sourceName,
+						"ThreatChurnBursts"
+					)
+					quarantined = true
+				end
+			end
+			if quarantined then
+				return
+			end
+		end
 		self:_decision("settled", plan.event, reason or "plan settled", plan.record)
 	end
 
@@ -2034,11 +2149,13 @@ do
 				plan.settled = true
 			end
 			table.clear(record.animationTimes)
+			table.clear(record.admissionTimes)
+			table.clear(record.abortTimes)
+			table.clear(record.lastAnimationAt)
 			table.clear(record.plans)
 			table.clear(record.plansByEvent)
 			record.noisyUntil = 0
-			record.lastCorroboratedAt = 0
-			record.lastNoisyPass = 0
+			record.rearmUntil = 0
 		end
 		for _, record in pairs(self.Sources) do
 			resetRecord(record)
@@ -2192,6 +2309,7 @@ do
 			_source = options.source,
 			_ignoreTrack = options.ignoreTrack,
 			_accept = options.accept,
+			_classify = options.classify,
 			_connections = {},
 			_animators = setmetatable({}, { __mode = "k" }),
 			_running = false,
@@ -2221,13 +2339,23 @@ do
 			return
 		end
 
+		local metadata = {
+			priority = tostring(track.Priority),
+			looped = track.Looped,
+			length = track.Length,
+		}
+		if type(self._classify) == "function" then
+			local ok, classification = pcall(self._classify, id, animator, track)
+			if ok and type(classification) == "table" then
+				for key, value in pairs(classification) do
+					metadata[key] = value
+				end
+			end
+		end
+
 		self.Detected:Fire(DetectorEvent.new("animation", id, animator, {
 			track = track,
-			metadata = {
-				priority = tostring(track.Priority),
-				looped = track.Looped,
-				length = track.Length,
-			},
+			metadata = metadata,
 		}))
 	end
 
@@ -2929,6 +3057,7 @@ do
 	local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
 	local ClientEffectDetector = assert(modules["src/Combat/Detection/ClientEffectDetector.lua"])
 	local Players = game:GetService("Players")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 	local DetectorHub = {}
 	DetectorHub.__index = DetectorHub
@@ -2936,6 +3065,38 @@ do
 	function DetectorHub.new(settings, timings, options)
 		options = options or {}
 		local shared = options.shared or {}
+		local mobAnimationIDs = {}
+		local function refreshMobAnimationIDs()
+			table.clear(mobAnimationIDs)
+			local assets = ReplicatedStorage:FindFirstChild("Assets")
+			local animations = assets and assets:FindFirstChild("Anims")
+			local mobs = animations and animations:FindFirstChild("Mobs")
+			if not mobs then
+				return
+			end
+			for _, animation in ipairs(mobs:GetDescendants()) do
+				if animation:IsA("Animation") and animation.Name ~= "RunningAttack" then
+					local id = tostring(animation.AnimationId or ""):match("(%d+)")
+					if id then
+						mobAnimationIDs[id] = true
+					end
+				end
+			end
+		end
+		refreshMobAnimationIDs()
+		local function classifyAnimation(id, animator)
+			if not mobAnimationIDs[tostring(id)] then
+				return nil
+			end
+			local entity = animator and animator:FindFirstAncestorWhichIsA("Model")
+			if entity and Players:GetPlayerFromCharacter(entity) then
+				return {
+					playerMobAnimation = true,
+					trustReason = "player replayed replicated mob animation",
+				}
+			end
+			return nil
+		end
 		local function combatAnimation(track)
 			if not track then
 				return false
@@ -2996,14 +3157,20 @@ do
 			combined.accept = combined.accept or accept
 			return combined
 		end
+		local animationOptions = {}
+		for key, value in pairs(options.animation or {}) do
+			animationOptions[key] = value
+		end
+		animationOptions.classify = animationOptions.classify or classifyAnimation
 		local self = setmetatable({
 			Settings = settings,
 			Timings = timings,
 			Detected = Signal.new(),
 			Connections = {},
 			Running = false,
+			RefreshAnimationTrust = refreshMobAnimationIDs,
 			Detectors = {
-				Animations = AnimationDetector.new(detectorOptions(options.animation)),
+				Animations = AnimationDetector.new(detectorOptions(animationOptions)),
 				Sounds = SoundDetector.new(detectorOptions(options.sound)),
 				Parts = PartDetector.new(detectorOptions(options.part)),
 				Effects = EffectDetector.new(detectorOptions(options.effect)),
@@ -3032,6 +3199,7 @@ do
 			return
 		end
 		self.Running = true
+		self.RefreshAnimationTrust()
 		self:sync()
 	end
 
@@ -3319,6 +3487,8 @@ do
 			NextRetry = 0,
 			NextBlockRetry = 0,
 			BlockRetryCount = 0,
+			NextUnblockRetry = 0,
+			UnblockAttemptCount = 0,
 			ReleaseSent = true,
 			LastTransition = "idle",
 			Stats = {
@@ -3326,6 +3496,8 @@ do
 				Unblocks = 0,
 				Retries = 0,
 				Coalesced = 0,
+				ReleaseRetries = 0,
+				SafetyReleases = 0,
 				Dodges = 0,
 				DodgeCancels = 0,
 			},
@@ -3502,6 +3674,26 @@ do
 		return fired, reason
 	end
 
+	function NativeInputBridge:_attemptUnblock(detail, now)
+		now = now or os.clock()
+		if self.UnblockAttemptCount >= 3 then
+			return false, "unblock retry budget exhausted"
+		end
+		if now < self.NextUnblockRetry then
+			return false, "unblock retry pending"
+		end
+
+		local retry = self.UnblockAttemptCount > 0
+		local fired, reason = self:_sendUnblock(detail)
+		self.UnblockAttemptCount = self.UnblockAttemptCount + 1
+		self.NextUnblockRetry = now + 0.12
+		self.ReleaseSent = fired
+		if retry then
+			self.Stats.ReleaseRetries = self.Stats.ReleaseRetries + 1
+		end
+		return fired, reason
+	end
+
 	function NativeInputBridge:isBusy()
 		return next(self.Queue) ~= nil or not self.ReleaseSent or self:_hasEffect("Blocking")
 	end
@@ -3601,12 +3793,19 @@ do
 		table.clear(self.Queue)
 		self.NextBlockRetry = 0
 		self.BlockRetryCount = 0
+		self.NextUnblockRetry = 0
+		self.UnblockAttemptCount = 0
 
 		local ok, releaseReason = true, nil
 		if shouldUnblock and self.Ready then
-			ok, releaseReason = self:_sendUnblock(detail)
+			self.Stats.SafetyReleases = self.Stats.SafetyReleases + 1
+			ok, releaseReason = self:_attemptUnblock(detail)
+		elseif shouldUnblock then
+			ok, releaseReason = false, "native bridge unavailable"
 		end
-		self.ReleaseSent = true
+		if not shouldUnblock then
+			self.ReleaseSent = true
+		end
 		self.LastTransition = ok and ("released: " .. detail)
 			or ("release failed: " .. tostring(releaseReason))
 		return ok, releaseReason or detail
@@ -3638,10 +3837,7 @@ do
 				self.InputData.f = false
 			end
 			if blocking then
-				if not self.ReleaseSent then
-					self:_sendUnblock("waiting for clear")
-					self.ReleaseSent = true
-				end
+				self:_attemptUnblock("waiting for clear", now)
 			elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
 				local fired = self:_sendBlock(false)
 				if fired then
@@ -3654,6 +3850,8 @@ do
 					self.ReleaseSent = false
 					self.BlockRetryCount = 0
 					self.NextBlockRetry = now + 0.12
+					self.UnblockAttemptCount = 0
+					self.NextUnblockRetry = 0
 				end
 			end
 		elseif active then
@@ -3677,9 +3875,11 @@ do
 			end
 			-- Release once when the queue drains. The old implementation sent this
 			-- remote every rendered frame while the Blocking effect lingered.
-			if (hadEntries or blocking) and not self.ReleaseSent then
-				self:_sendUnblock("queue drained")
-				self.ReleaseSent = true
+			if hadEntries or blocking then
+				self:_attemptUnblock("queue drained", now)
+			else
+				self.UnblockAttemptCount = 0
+				self.NextUnblockRetry = 0
 			end
 		end
 	end
@@ -3778,6 +3978,8 @@ do
 		self.ReleaseSent = false
 		self.BlockRetryCount = 0
 		self.NextBlockRetry = now + 0.12
+		self.UnblockAttemptCount = 0
+		self.NextUnblockRetry = 0
 		if self.InputData then
 			self.InputData.f = true
 		end
@@ -3795,6 +3997,8 @@ do
 		table.clear(self.Queue)
 		self.NextBlockRetry = 0
 		self.BlockRetryCount = 0
+		self.NextUnblockRetry = 0
+		self.UnblockAttemptCount = 0
 		self.ReleaseSent = true
 		self.LastTransition = "idle"
 		self.InputData = nil
@@ -4870,6 +5074,9 @@ do
 		if not self.Settings:get("Validation.AnimationSanity") or event.detector ~= "animation" or not event.track then
 			return true
 		end
+		if event.metadata and event.metadata.playerMobAnimation then
+			return false, "player-mob-animation"
+		end
 
 		local ok, speed, length = pcall(function()
 			return math.abs(event.track.Speed), event.track.Length
@@ -5404,11 +5611,13 @@ do
 				clientEffects.Deduplicated or 0
 			),
 			string.format(
-				"native_io=blocks:%d unblocks:%d retries:%d coalesced:%d dodges:%d cancels:%d",
+				"native_io=blocks:%d unblocks:%d block_retries:%d coalesced:%d release_retries:%d safety_releases:%d dodges:%d cancels:%d",
 				stats.Blocks or 0,
 				stats.Unblocks or 0,
 				stats.Retries or 0,
 				stats.Coalesced or 0,
+				stats.ReleaseRetries or 0,
+				stats.SafetyReleases or 0,
 				stats.Dodges or 0,
 				stats.DodgeCancels or 0
 			),
@@ -5435,11 +5644,15 @@ do
 				metrics.Cancelled or 0
 			),
 			string.format(
-				"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d corroborated:%d promoted:%d",
+				"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d churn:%d rearm:%d aborts:%d releases:%d corroborated:%d promoted:%d",
 				metrics.ThreatAdmitted or 0,
 				metrics.ThreatCoalesced or 0,
 				metrics.ThreatDropped or 0,
 				metrics.ThreatSpamBursts or 0,
+				metrics.ThreatChurnBursts or 0,
+				metrics.ThreatRearmDrops or 0,
+				metrics.ThreatAborted or 0,
+				metrics.ThreatInputReleases or 0,
 				metrics.ThreatCorroborated or 0,
 				metrics.ThreatPromoted or 0
 			),
@@ -7196,12 +7409,14 @@ do
 
 		self.Targeting = Targeting.new(settings, options.targeting)
 		self.Scheduler = Scheduler.new(state)
-		self.Threats = ThreatArbiter.new(settings, state, self.Scheduler)
 		local inputOptions = {
 			custom = options.input and options.input.custom or nil,
 			settings = settings,
 		}
 		self.Input = InputAdapter.new(inputOptions)
+		self.Threats = ThreatArbiter.new(settings, state, self.Scheduler, nil, function(reason)
+			return self.Input.Native:releaseAll("threat guard: " .. tostring(reason))
+		end)
 		self.Executor = ActionExecutor.new(settings, state, self.Input)
 		self.Resolver = TimingResolver.new(settings)
 		self.Performance = Performance.new(settings)
@@ -7553,7 +7768,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.4.0
+--  CLAW MARK v0.4.1
 --
 --  TABS
 --    BURSTER
@@ -11046,7 +11261,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.0",
+	"CLAW MARK v0.4.1",
 	8,
 	0,
 	170,
@@ -15382,7 +15597,7 @@ bind(RunService.Heartbeat, function(delta)
 		and CombatRuntime.Detectors.Detectors.ClientEffects.Stats
 		or {}
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dH %dR %dA %dS %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dL %dS %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -15393,6 +15608,10 @@ bind(RunService.Heartbeat, function(delta)
 		metrics.ThreatCoalesced or 0,
 		metrics.ThreatDropped or 0,
 		metrics.ThreatSpamBursts or 0,
+		metrics.ThreatChurnBursts or 0,
+		metrics.ThreatRearmDrops or 0,
+		metrics.ThreatAborted or 0,
+		metrics.ThreatInputReleases or 0,
 		metrics.ThreatPromoted or 0,
 		effectStats.ClientEffect or 0,
 		effectStats.ClientEffectLarge or 0,
@@ -15403,6 +15622,8 @@ bind(RunService.Heartbeat, function(delta)
 		nativeStats.Unblocks or 0,
 		nativeStats.Retries or 0,
 		nativeStats.Coalesced or 0,
+		nativeStats.ReleaseRetries or 0,
+		nativeStats.SafetyReleases or 0,
 		nativeStats.Dodges or 0,
 		nativeStats.DodgeCancels or 0,
 		string.sub(CombatRuntime.Input.Native.LastTransition or "idle", 1, 38),
@@ -16056,7 +16277,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.0 online"
+	"[CLAW] CLAW MARK v0.4.1 online"
 )
 
 -- END ENTRY: claw_mark.lua

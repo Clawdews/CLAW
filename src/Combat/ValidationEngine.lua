@@ -110,6 +110,9 @@ function ValidationEngine:_trackValid(event)
 	if not self.Settings:get("Validation.AnimationSanity") or event.detector ~= "animation" or not event.track then
 		return true
 	end
+	if event.metadata and event.metadata.playerMobAnimation then
+		return false, "player-mob-animation"
+	end
 
 	local ok, speed, length = pcall(function()
 		return math.abs(event.track.Speed), event.track.Length

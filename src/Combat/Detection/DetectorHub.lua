@@ -7,6 +7,7 @@ local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
 local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
 local ClientEffectDetector = assert(modules["src/Combat/Detection/ClientEffectDetector.lua"])
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local DetectorHub = {}
 DetectorHub.__index = DetectorHub
@@ -14,6 +15,38 @@ DetectorHub.__index = DetectorHub
 function DetectorHub.new(settings, timings, options)
 	options = options or {}
 	local shared = options.shared or {}
+	local mobAnimationIDs = {}
+	local function refreshMobAnimationIDs()
+		table.clear(mobAnimationIDs)
+		local assets = ReplicatedStorage:FindFirstChild("Assets")
+		local animations = assets and assets:FindFirstChild("Anims")
+		local mobs = animations and animations:FindFirstChild("Mobs")
+		if not mobs then
+			return
+		end
+		for _, animation in ipairs(mobs:GetDescendants()) do
+			if animation:IsA("Animation") and animation.Name ~= "RunningAttack" then
+				local id = tostring(animation.AnimationId or ""):match("(%d+)")
+				if id then
+					mobAnimationIDs[id] = true
+				end
+			end
+		end
+	end
+	refreshMobAnimationIDs()
+	local function classifyAnimation(id, animator)
+		if not mobAnimationIDs[tostring(id)] then
+			return nil
+		end
+		local entity = animator and animator:FindFirstAncestorWhichIsA("Model")
+		if entity and Players:GetPlayerFromCharacter(entity) then
+			return {
+				playerMobAnimation = true,
+				trustReason = "player replayed replicated mob animation",
+			}
+		end
+		return nil
+	end
 	local function combatAnimation(track)
 		if not track then
 			return false
@@ -74,14 +107,20 @@ function DetectorHub.new(settings, timings, options)
 		combined.accept = combined.accept or accept
 		return combined
 	end
+	local animationOptions = {}
+	for key, value in pairs(options.animation or {}) do
+		animationOptions[key] = value
+	end
+	animationOptions.classify = animationOptions.classify or classifyAnimation
 	local self = setmetatable({
 		Settings = settings,
 		Timings = timings,
 		Detected = Signal.new(),
 		Connections = {},
 		Running = false,
+		RefreshAnimationTrust = refreshMobAnimationIDs,
 		Detectors = {
-			Animations = AnimationDetector.new(detectorOptions(options.animation)),
+			Animations = AnimationDetector.new(detectorOptions(animationOptions)),
 			Sounds = SoundDetector.new(detectorOptions(options.sound)),
 			Parts = PartDetector.new(detectorOptions(options.part)),
 			Effects = EffectDetector.new(detectorOptions(options.effect)),
@@ -110,6 +149,7 @@ function DetectorHub:start()
 		return
 	end
 	self.Running = true
+	self.RefreshAnimationTrust()
 	self:sync()
 end
 
