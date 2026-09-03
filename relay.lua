@@ -3,7 +3,6 @@ local environment = getgenv and getgenv() or _G
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
@@ -19,6 +18,11 @@ local DEFAULTS = {
 	ControllerName = "",
 	CommandPrefix = ";alts",
 	BringSeconds = 3,
+	BringSpeed = 40,
+	BringVerticalSpeed = 16,
+	BringAcceleration = 80,
+	BringTimeout = 300,
+	ReleaseHeadPin = true,
 	FormationRadius = 5,
 	FormationSlot = 0,
 	AutoStart = true,
@@ -41,6 +45,14 @@ local function copyArray(value)
 	return result
 end
 
+local function finiteNumber(value)
+	local number = tonumber(value)
+	if number and number == number and math.abs(number) < math.huge then
+		return number
+	end
+	return nil
+end
+
 local function loadConfig()
 	local supplied = type(environment.CLAW_RELAY_CONFIG) == "table" and environment.CLAW_RELAY_CONFIG or {}
 	local config = {}
@@ -54,7 +66,11 @@ local function loadConfig()
 	config.ControllerUserId = math.max(0, math.floor(tonumber(config.ControllerUserId) or 0))
 	config.ControllerName = tostring(config.ControllerName or ""):match("^%s*(.-)%s*$")
 	config.CommandPrefix = tostring(config.CommandPrefix or ";alts"):match("^%s*(.-)%s*$")
-	config.BringSeconds = math.clamp(tonumber(config.BringSeconds) or 3, 0.25, 30)
+	config.BringSeconds = math.clamp(finiteNumber(config.BringSeconds) or 3, 0.25, 600)
+	config.BringSpeed = math.clamp(finiteNumber(config.BringSpeed) or 40, 5, 120)
+	config.BringVerticalSpeed = math.clamp(finiteNumber(config.BringVerticalSpeed) or 16, 2, 60)
+	config.BringAcceleration = math.clamp(finiteNumber(config.BringAcceleration) or 80, 10, 240)
+	config.BringTimeout = math.clamp(finiteNumber(config.BringTimeout) or 300, 10, 600)
 	config.FormationRadius = math.clamp(tonumber(config.FormationRadius) or 5, 0, 30)
 	config.FormationSlot = math.max(0, math.floor(tonumber(config.FormationSlot) or 0))
 	config.AutoStartAttempts = math.clamp(math.floor(tonumber(config.AutoStartAttempts) or 12), 1, 60)
@@ -95,7 +111,7 @@ end
 
 local Relay = {
 	Name = "CLAW RELAY",
-	Version = "0.1.2",
+	Version = "0.2.0",
 	Config = Config,
 	Running = true,
 	Connections = {},
@@ -103,9 +119,8 @@ local Relay = {
 	ControllerChat = nil,
 	MovementGeneration = 0,
 	MovementActive = false,
-	MovementTween = nil,
-	MovementConnection = nil,
-	MovementValue = nil,
+	Movement = nil,
+	LastMovement = "not started",
 	MenuGeneration = 0,
 	PhaseEnabled = false,
 	SafetyEnabled = Config.ProximitySafety == true,
@@ -175,69 +190,186 @@ function Relay:_formationOffset()
 	return Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius), slot
 end
 
+local function flightProperty(movement, instance, property, value)
+	local properties = movement.Properties[instance]
+	if not properties then
+		properties = {}
+		movement.Properties[instance] = properties
+	end
+	local saved = properties[property]
+	if not saved then
+		saved = { Original = instance[property] }
+		properties[property] = saved
+	end
+	saved.Applied = value
+	instance[property] = value
+end
+
 function Relay:cancelMovement(reason)
 	self.MovementGeneration = self.MovementGeneration + 1
 	self.MovementActive = false
-	if self.MovementTween then
-		pcall(function()
-			self.MovementTween:Cancel()
-		end)
-		self.MovementTween = nil
+	local movement = self.Movement
+	self.Movement = nil
+	if movement then
+		if movement.Connection then movement.Connection:Disconnect() end
+		if movement.Mover then movement.Mover:Destroy() end
+		if LocalPlayer.Character == movement.Character and movement.Root.Parent then
+			pcall(function() movement.Root.AssemblyLinearVelocity = Vector3.zero end)
+		end
+		for instance, properties in pairs(movement.Properties) do
+			for property, saved in pairs(properties) do
+				pcall(function()
+					if instance.Parent and instance[property] == saved.Applied then
+						instance[property] = saved.Original
+					end
+				end)
+			end
+		end
 	end
-	if self.MovementConnection then
-		self.MovementConnection:Disconnect()
-		self.MovementConnection = nil
-	end
-	if self.MovementValue then
-		self.MovementValue:Destroy()
-		self.MovementValue = nil
-	end
-	if not self.PhaseEnabled then
-		self:_restoreCollision()
-	end
+	if not self.PhaseEnabled then self:_restoreCollision() end
 	if reason then
-		log("movement stopped: " .. tostring(reason))
+		self.LastMovement = tostring(reason)
+		log("movement stopped: " .. self.LastMovement)
 	end
 end
 
+function Relay:_flightState(movement)
+	flightProperty(movement, movement.Manager, "ActiveController", movement.Air)
+	for _, parent in ipairs({ movement.Root, movement.Manager }) do
+		local sensor = parent:FindFirstChild("GroundSensor")
+		if sensor and sensor:IsA("ControllerPartSensor") then
+			flightProperty(movement, sensor, "SearchDistance", 0)
+		end
+	end
+	local helio = movement.Root:FindFirstChild("HelioFlight")
+	if helio and helio:IsA("BodyVelocity") then
+		flightProperty(movement, helio, "MaxForce", Vector3.zero)
+	end
+	self:_applyNoclip()
+
+	-- Only the specific head pin handled by PX; never sweep other body movers.
+	local head = movement.Character:FindFirstChild("Head")
+	local pin = head and head:FindFirstChild("BodyPosition")
+	if Config.ReleaseHeadPin and pin and pin:IsA("BodyPosition") then
+		if movement.PinsReleased >= 3 then
+			return false, "head movement pin keeps returning"
+		end
+		pin:Destroy()
+		movement.PinsReleased = movement.PinsReleased + 1
+		log("released head movement pin (" .. movement.PinsReleased .. ")")
+	end
+	return true
+end
+
+function Relay:_stepFlight(movement, dt)
+	if not self.Running or LocalPlayer.Character ~= movement.Character or not movement.Root.Parent
+		or movement.Humanoid.Health <= 0 then
+		return self:cancelMovement("character unavailable")
+	end
+	if not self.Controller or self.Controller.Character ~= movement.TargetCharacter
+		or not movement.TargetRoot.Parent or movement.TargetHumanoid.Health <= 0 then
+		return self:cancelMovement("controller character changed")
+	end
+	if movement.Root.Anchored then return self:cancelMovement("character is anchored") end
+	if movement.Mover.Parent ~= movement.Root then return self:cancelMovement("flight mover removed") end
+	if not movement.Manager.Parent or not movement.Air.Parent then
+		return self:cancelMovement("air controller unavailable")
+	end
+	local now = os.clock()
+	if now - movement.Started >= Config.BringTimeout then return self:cancelMovement("travel timeout") end
+	dt = finiteNumber(dt)
+	if not dt or dt <= 0 then return end
+
+	local position = movement.Root.Position
+	-- Stop on a large external correction instead of dragging back along a stale tween.
+	if dt <= 0.25 then
+		local expected = movement.PreviousPosition + movement.Velocity * dt
+		if (position - expected).Magnitude > 12 then
+			return self:cancelMovement("position changed unexpectedly; possible knockback or server correction")
+		end
+	end
+	movement.PreviousPosition = position
+	local delta = movement.Goal - position
+	local distance = delta.Magnitude
+	if distance <= 1.2 and movement.Velocity.Magnitude <= 4 then
+		return self:cancelMovement("arrived")
+	end
+	if distance < movement.BestDistance - 0.25 then
+		movement.BestDistance = distance
+		movement.LastProgress = now
+	elseif now - movement.LastProgress > 6 then
+		return self:cancelMovement("no progress for 6 seconds")
+	end
+
+	local ok, reason = self:_flightState(movement)
+	if not ok then return self:cancelMovement(reason) end
+	local limit = math.min(Config.BringSpeed, movement.PaceLimit)
+	local desired = distance > 0.001 and delta.Unit * math.min(limit, distance * 2) or Vector3.zero
+	desired = Vector3.new(desired.X, math.clamp(desired.Y, -Config.BringVerticalSpeed, Config.BringVerticalSpeed), desired.Z)
+	local change = desired - movement.Velocity
+	local maxChange = Config.BringAcceleration * math.min(dt, 0.1)
+	if change.Magnitude > maxChange then change = change.Unit * maxChange end
+	movement.Velocity = movement.Velocity + change
+	movement.Mover.Velocity = movement.Velocity
+	movement.Root.AssemblyLinearVelocity = movement.Velocity
+end
+
 function Relay:bring(seconds)
-	local controllerCharacter, controllerRoot = self:_character(self.Controller)
-	local character = self:_character(LocalPlayer)
-	if not controllerCharacter or not controllerRoot then
-		return false, "controller character is unavailable"
-	end
-	if not character then
-		return false, "local character is unavailable"
-	end
+	local targetCharacter, targetRoot, targetHumanoid = self:_character(self.Controller)
+	local character, root, humanoid = self:_character(LocalPlayer)
+	if not targetCharacter then return false, "controller character is unavailable" end
+	if not character then return false, "local character is unavailable" end
+	local manager = character:FindFirstChild("ControllerManager")
+	local air = manager and manager:FindFirstChild("AirController")
+	if not air then return false, "Deepwoken air controller is unavailable; try after spawning" end
+	if root.Anchored then return false, "character is anchored" end
 
 	self:cancelMovement()
 	local generation = self.MovementGeneration
 	local offset, slot = self:_formationOffset()
-	local goal = controllerRoot.CFrame * CFrame.new(offset)
-	local value = Instance.new("CFrameValue")
-	value.Value = character:GetPivot()
-	self.MovementValue = value
+	local goal = (targetRoot.CFrame * CFrame.new(offset)).Position
+	local distance = (goal - root.Position).Magnitude
+	if distance <= 1.2 then
+		self.LastMovement = "already at destination"
+		log(self.LastMovement)
+		return true
+	end
+	local duration = math.clamp(finiteNumber(seconds) or Config.BringSeconds, 0.25, 600)
+	local movement = {
+		Character = character, Root = root, Humanoid = humanoid, Manager = manager, Air = air,
+		TargetCharacter = targetCharacter, TargetRoot = targetRoot, TargetHumanoid = targetHumanoid,
+		Goal = goal, PaceLimit = distance / duration, Velocity = Vector3.zero,
+		PreviousPosition = root.Position, BestDistance = distance,
+		Started = os.clock(), LastProgress = os.clock(), Properties = {}, PinsReleased = 0,
+	}
+	self.Movement = movement
 	self.MovementActive = true
-
-	self.MovementConnection = RunService.RenderStepped:Connect(function()
-		if not self.Running or generation ~= self.MovementGeneration or LocalPlayer.Character ~= character then
-			self:cancelMovement("character changed")
-			return
-		end
-		character:PivotTo(value.Value)
+	local ok, reason = pcall(function()
+		local mover = Instance.new("BodyVelocity")
+		movement.Mover = mover
+		mover.Name = "RollCancel2"
+		mover:AddTag("AllowedBM")
+		mover:SetAttribute("ClawRelayOwned", true)
+		mover.P = 20000
+		mover.MaxForce = Vector3.new(1e10, 1e10, 1e10)
+		mover.Velocity = Vector3.zero
+		mover.Parent = root
+		local ready, failure = self:_flightState(movement)
+		if not ready then error(failure) end
+		root.AssemblyLinearVelocity = Vector3.zero
+		movement.Connection = RunService.PreSimulation:Connect(function(dt)
+			if generation ~= self.MovementGeneration then return end
+			local success, message = pcall(self._stepFlight, self, movement, dt)
+			if not success then self:cancelMovement("flight error: " .. tostring(message)) end
+		end)
 	end)
-
-	local duration = math.clamp(tonumber(seconds) or Config.BringSeconds, 0.25, 30)
-	local tween = TweenService:Create(value, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Value = goal })
-	self.MovementTween = tween
-	tween.Completed:Connect(function(playbackState)
-		if generation ~= self.MovementGeneration then
-			return
-		end
-		self:cancelMovement(playbackState == Enum.PlaybackState.Completed and "arrived" or "cancelled")
-	end)
-	tween:Play()
-	log(string.format("bringing to controller (slot %d, %.2fs)", slot, duration))
+	if not ok then
+		self:cancelMovement("flight setup failed")
+		return false, tostring(reason)
+	end
+	self.LastMovement = "flying"
+	log(string.format("bringing slot %d: %.0f studs, max %.0f studs/s, vertical max %.0f",
+		slot, distance, math.min(Config.BringSpeed, movement.PaceLimit), Config.BringVerticalSpeed))
 	return true
 end
 
@@ -358,13 +490,19 @@ end
 
 function Relay:_status()
 	local controller = self.Controller and self.Controller.Name or "waiting"
+	local movement = self.Movement
+	local remaining = movement and (movement.Goal - movement.Root.Position).Magnitude or 0
 	return string.format(
-		"v%s controller=%s movement=%s phase=%s safety=%s",
+		"v%s controller=%s movement=%s speed=%.0f vertical=%.0f remaining=%.1f phase=%s safety=%s last=%s",
 		self.Version,
 		controller,
 		self.MovementActive and "moving" or "idle",
+		Config.BringSpeed,
+		Config.BringVerticalSpeed,
+		remaining,
 		self.PhaseEnabled and "on" or "off",
-		self.SafetyEnabled and "on" or "off"
+		self.SafetyEnabled and "on" or "off",
+		self.LastMovement
 	)
 end
 
@@ -372,10 +510,21 @@ function Relay:_executeCommand(commandLine)
 	local command, remainder = string.match(commandLine, "^(%S+)%s*(.-)%s*$")
 	command = string.lower(command or "")
 	if command == "" or command == "help" then
-		log("commands: bring [seconds], stop, phase [on/off], menu, safety [on/off], status")
+		log("commands: bring [minimum seconds], speed [5-120], stop, phase [on/off], menu, safety [on/off], status")
 	elseif command == "bring" or command == "tween" then
-		local ok, reason = self:bring(tonumber(remainder))
+		if remainder ~= "" and not finiteNumber(remainder) then
+			return warnRelay("usage: bring [minimum seconds]")
+		end
+		local ok, reason = self:bring(finiteNumber(remainder))
 		if not ok then warnRelay(reason) end
+	elseif command == "speed" then
+		if remainder == "" then return log("bring speed: " .. Config.BringSpeed .. " studs/s") end
+		local speed = finiteNumber(remainder)
+		if not speed or speed < 5 or speed > 120 then
+			return warnRelay("speed must be between 5 and 120 studs/s")
+		end
+		Config.BringSpeed = speed
+		log("bring speed: " .. speed .. " studs/s")
 	elseif command == "stop" then
 		self:cancelMovement("controller command")
 	elseif command == "phase" then
@@ -510,7 +659,7 @@ Relay:_connect(LocalPlayer.CharacterRemoving, function()
 	Relay:cancelMovement("respawning")
 end)
 Relay:_connect(RunService.Stepped, function()
-	if Relay.PhaseEnabled or Relay.MovementActive then
+	if Relay.PhaseEnabled and not Relay.MovementActive then
 		Relay:_applyNoclip()
 	end
 end)

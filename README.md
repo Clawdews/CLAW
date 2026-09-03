@@ -9,6 +9,8 @@ Run this on each alt. Replace the username with your main's exact username, not 
 ```lua
 getgenv().CLAW_RELAY_CONFIG = {
     ControllerName = "YOUR_MAIN_USERNAME",
+    BringSpeed = 40, -- studs per second; lower this for slower travel
+    BringVerticalSpeed = 16,
     TrustedUserIds = {},
     ProximitySafety = false,
 }
@@ -21,7 +23,8 @@ Type commands in chat from your main:
 | Command | What it does |
 | --- | --- |
 | `;alts bring` | Moves alts to positions around you |
-| `;alts bring 5` | Same, over five seconds |
+| `;alts bring 5` | Requests a slower trip; speed limits still apply |
+| `;alts speed 25` | Sets the travel speed limit, including during a trip |
 | `;alts stop` | Stops movement |
 | `;alts phase on` / `;alts phase off` | Toggles noclip |
 | `;alts menu` | Requests a return to the main menu |
@@ -30,9 +33,13 @@ Type commands in chat from your main:
 
 Proximity safety starts off. Before turning it on, add your other alts' numeric Roblox UserIds to `TrustedUserIds`. Your main is already trusted. By default, an untrusted player within 80 studs for two seconds triggers a menu request.
 
-You can use `ControllerUserId` instead of `ControllerName`. Movement uses temporary noclip and restores collisions afterward unless phase is still on.
+You can use `ControllerUserId` instead of `ControllerName`.
 
-No server joining or forced respawn yet. The alt manager is compile-checked, but still needs in-game testing.
+Bring uses velocity-based flight with acceleration and braking, not a fixed three-second teleport tween. Default limits are 40 studs/s overall and 16 studs/s vertically. `bring 5` requests a minimum travel time, not a deadline that overrides those limits. The destination is your position when you send the command; this is not continuous follow.
+
+Flight temporarily changes the air controller, ground sensing, and collisions, then restores them on stop. It releases a `BodyPosition` pin under the character's head during flight; set `ReleaseHeadPin = false` to disable that behavior. Other options are `BringAcceleration` (80), `BringSeconds` (3), and `BringTimeout` (300). Stops include missing characters, a removed mover, no progress, repeated head pins, and large unexpected position changes. `status` prints the last movement result on each alt.
+
+Test over a short distance first. This is direct travel, not obstacle-aware navigation, and isn't a guarantee against anti-air attacks or server corrections. No server joining or forced respawn yet.
 
 [Alt manager source](relay.lua)
 
