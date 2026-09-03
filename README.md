@@ -9,8 +9,8 @@ Run this on each alt. Replace the username with your main's exact username, not 
 ```lua
 getgenv().CLAW_RELAY_CONFIG = {
     ControllerName = "YOUR_MAIN_USERNAME",
-    BringSpeed = 40, -- studs per second; lower this for slower travel
-    BringVerticalSpeed = 16,
+    BringSpeed = 200, -- horizontal (XZ) studs/s; configurable 5–200
+    BringVerticalSpeed = 24, -- independent vertical (Y) studs/s; configurable 2–60
     TrustedUserIds = {},
     ProximitySafety = false,
 }
@@ -23,8 +23,10 @@ Type commands in chat from your main:
 | Command | What it does |
 | --- | --- |
 | `;alts bring` | Moves alts to positions around you |
-| `;alts bring 5` | Requests a slower trip; speed limits still apply |
-| `;alts speed 25` | Sets the travel speed limit, including during a trip |
+| `;alts bring 5` | Adds optional pacing based on distance / 5 seconds; speed limits still apply |
+| `;alts bring 0` | Disables pacing, including a configured `BringSeconds` |
+| `;alts speed 200` | Sets horizontal speed (5–200 studs/s), including during a trip |
+| `;alts yspeed 24` | Sets vertical speed independently (2–60 studs/s) |
 | `;alts stop` | Stops movement |
 | `;alts phase on` / `;alts phase off` | Toggles noclip |
 | `;alts menu` | Requests a return to the main menu |
@@ -35,9 +37,9 @@ Proximity safety starts off. Before turning it on, add your other alts' numeric 
 
 You can use `ControllerUserId` instead of `ControllerName`.
 
-Bring uses velocity-based flight with acceleration and braking, not a fixed three-second teleport tween. Default limits are 40 studs/s overall and 16 studs/s vertically. `bring 5` requests a minimum travel time, not a deadline that overrides those limits. The destination is your position when you send the command; this is not continuous follow.
+Bring uses velocity-based flight with acceleration and braking. Default limits are 200 studs/s horizontally and 24 studs/s vertically; horizontal arrival doesn't slow the remaining vertical travel. Plain `bring` has no timed pacing by default. `bring 5` limits each axis to its starting distance / 5 seconds as well as your chosen speeds; acceleration, braking, and arrival tolerance affect the actual trip time. Repeating `bring` updates the destination without restarting the flight or zeroing velocity. The destination is your position when you send the command; this is not continuous follow. Existing config values still override defaults; update your config or use the speed commands after reloading.
 
-Flight temporarily changes the air controller, ground sensing, and collisions, then restores them on stop. It releases a `BodyPosition` pin under the character's head during flight; set `ReleaseHeadPin = false` to disable that behavior. Other options are `BringAcceleration` (80), `BringSeconds` (3), and `BringTimeout` (300). Stops include missing characters, a removed mover, no progress, repeated head pins, and large unexpected position changes. `status` prints the last movement result on each alt.
+Flight temporarily changes the air controller, ground sensing, and collisions, then restores them on stop. It releases a `BodyPosition` pin under the character's head during flight; set `ReleaseHeadPin = false` to disable that behavior. Other options are `BringAcceleration` (80 studs/s² per axis, configurable 10–240), `BringSeconds` (0, pacing off), and `BringTimeout` (300). Stops include missing characters, a removed mover, no progress, repeated head pins, and large unexpected position changes. `status` prints configured speeds, current measured XZ/Y speeds, pacing, and the last movement result on each alt. High limits won't necessarily be reached on short trips because acceleration and braking still apply.
 
 Test over a short distance first. This is direct travel, not obstacle-aware navigation, and isn't a guarantee against anti-air attacks or server corrections. No server joining or forced respawn yet.
 

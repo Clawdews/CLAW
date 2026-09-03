@@ -17,9 +17,9 @@ local DEFAULTS = {
 	ControllerUserId = 0,
 	ControllerName = "",
 	CommandPrefix = ";alts",
-	BringSeconds = 3,
-	BringSpeed = 40,
-	BringVerticalSpeed = 16,
+	BringSeconds = 0,
+	BringSpeed = 200,
+	BringVerticalSpeed = 24,
 	BringAcceleration = 80,
 	BringTimeout = 300,
 	ReleaseHeadPin = true,
@@ -66,9 +66,9 @@ local function loadConfig()
 	config.ControllerUserId = math.max(0, math.floor(tonumber(config.ControllerUserId) or 0))
 	config.ControllerName = tostring(config.ControllerName or ""):match("^%s*(.-)%s*$")
 	config.CommandPrefix = tostring(config.CommandPrefix or ";alts"):match("^%s*(.-)%s*$")
-	config.BringSeconds = math.clamp(finiteNumber(config.BringSeconds) or 3, 0.25, 600)
-	config.BringSpeed = math.clamp(finiteNumber(config.BringSpeed) or 40, 5, 120)
-	config.BringVerticalSpeed = math.clamp(finiteNumber(config.BringVerticalSpeed) or 16, 2, 60)
+	config.BringSeconds = math.clamp(finiteNumber(config.BringSeconds) or 0, 0, 600)
+	config.BringSpeed = math.clamp(finiteNumber(config.BringSpeed) or 200, 5, 200)
+	config.BringVerticalSpeed = math.clamp(finiteNumber(config.BringVerticalSpeed) or 24, 2, 60)
 	config.BringAcceleration = math.clamp(finiteNumber(config.BringAcceleration) or 80, 10, 240)
 	config.BringTimeout = math.clamp(finiteNumber(config.BringTimeout) or 300, 10, 600)
 	config.FormationRadius = math.clamp(tonumber(config.FormationRadius) or 5, 0, 30)
@@ -111,7 +111,7 @@ end
 
 local Relay = {
 	Name = "CLAW RELAY",
-	Version = "0.2.0",
+	Version = "0.2.1",
 	Config = Config,
 	Running = true,
 	Connections = {},
@@ -261,6 +261,18 @@ function Relay:_flightState(movement)
 	return true
 end
 
+local function flightPace(movement, seconds, delta)
+	movement.PaceSeconds = seconds
+	movement.HorizontalLimit = seconds > 0 and Vector3.new(delta.X, 0, delta.Z).Magnitude / seconds or math.huge
+	movement.VerticalLimit = seconds > 0 and math.abs(delta.Y) / seconds or math.huge
+end
+
+local function brakingSpeed(distance, limit, acceleration, dt)
+	-- Leave room to brake, including the upcoming physics step. Axes never share a speed budget.
+	local step = acceleration * dt
+	return math.min(limit, math.sqrt(step * step + 2 * acceleration * math.max(0, distance - 0.25)) - step)
+end
+
 function Relay:_stepFlight(movement, dt)
 	if not self.Running or LocalPlayer.Character ~= movement.Character or not movement.Root.Parent
 		or movement.Humanoid.Health <= 0 then
@@ -282,13 +294,15 @@ function Relay:_stepFlight(movement, dt)
 
 	local position = movement.Root.Position
 	-- Stop on a large external correction instead of dragging back along a stale tween.
-	if dt <= 0.25 then
-		local expected = movement.PreviousPosition + movement.Velocity * dt
+	local previousDt = movement.PreviousStepDt or 0
+	if previousDt <= 0.25 then
+		local expected = movement.PreviousPosition + movement.Velocity * previousDt
 		if (position - expected).Magnitude > 12 then
 			return self:cancelMovement("position changed unexpectedly; possible knockback or server correction")
 		end
 	end
 	movement.PreviousPosition = position
+	movement.PreviousStepDt = dt
 	local delta = movement.Goal - position
 	local distance = delta.Magnitude
 	if distance <= 1.2 and movement.Velocity.Magnitude <= 4 then
@@ -303,13 +317,19 @@ function Relay:_stepFlight(movement, dt)
 
 	local ok, reason = self:_flightState(movement)
 	if not ok then return self:cancelMovement(reason) end
-	local limit = math.min(Config.BringSpeed, movement.PaceLimit)
-	local desired = distance > 0.001 and delta.Unit * math.min(limit, distance * 2) or Vector3.zero
-	desired = Vector3.new(desired.X, math.clamp(desired.Y, -Config.BringVerticalSpeed, Config.BringVerticalSpeed), desired.Z)
-	local change = desired - movement.Velocity
+	local horizontal = Vector3.new(delta.X, 0, delta.Z)
+	local horizontalSpeed = brakingSpeed(horizontal.Magnitude,
+		math.min(Config.BringSpeed, movement.HorizontalLimit), Config.BringAcceleration, dt)
+	local desiredHorizontal = horizontal.Magnitude > 0.001 and horizontal.Unit * horizontalSpeed or Vector3.zero
+	local currentHorizontal = Vector3.new(movement.Velocity.X, 0, movement.Velocity.Z)
+	local change = desiredHorizontal - currentHorizontal
 	local maxChange = Config.BringAcceleration * math.min(dt, 0.1)
 	if change.Magnitude > maxChange then change = change.Unit * maxChange end
-	movement.Velocity = movement.Velocity + change
+	local nextHorizontal = currentHorizontal + change
+	local desiredY = math.sign(delta.Y) * brakingSpeed(math.abs(delta.Y),
+		math.min(Config.BringVerticalSpeed, movement.VerticalLimit), Config.BringAcceleration, dt)
+	local nextY = movement.Velocity.Y + math.clamp(desiredY - movement.Velocity.Y, -maxChange, maxChange)
+	movement.Velocity = Vector3.new(nextHorizontal.X, nextY, nextHorizontal.Z)
 	movement.Mover.Velocity = movement.Velocity
 	movement.Root.AssemblyLinearVelocity = movement.Velocity
 end
@@ -324,24 +344,42 @@ function Relay:bring(seconds)
 	if not air then return false, "Deepwoken air controller is unavailable; try after spawning" end
 	if root.Anchored then return false, "character is anchored" end
 
-	self:cancelMovement()
-	local generation = self.MovementGeneration
 	local offset, slot = self:_formationOffset()
 	local goal = (targetRoot.CFrame * CFrame.new(offset)).Position
-	local distance = (goal - root.Position).Magnitude
+	local delta = goal - root.Position
+	local distance = delta.Magnitude
+	local duration = math.clamp(finiteNumber(seconds) or Config.BringSeconds, 0, 600)
+	local active = self.Movement
+	if self.MovementActive and active and active.Character == character and active.Root == root
+		and active.Manager == manager and active.Air == air and active.TargetCharacter == targetCharacter
+		and active.Mover.Parent == root and active.Connection and active.Connection.Connected then
+		local changedGoal = (active.Goal - goal).Magnitude > 0.25
+		if changedGoal or active.PaceSeconds ~= duration then flightPace(active, duration, delta) end
+		active.Goal = goal
+		if changedGoal then
+			active.BestDistance = distance
+			active.LastProgress = os.clock()
+		end
+		self.LastMovement = "flying (destination refreshed)"
+		log("destination refreshed; keeping current flight velocity")
+		return true
+	end
+
+	self:cancelMovement()
+	local generation = self.MovementGeneration
 	if distance <= 1.2 then
 		self.LastMovement = "already at destination"
 		log(self.LastMovement)
 		return true
 	end
-	local duration = math.clamp(finiteNumber(seconds) or Config.BringSeconds, 0.25, 600)
 	local movement = {
 		Character = character, Root = root, Humanoid = humanoid, Manager = manager, Air = air,
 		TargetCharacter = targetCharacter, TargetRoot = targetRoot, TargetHumanoid = targetHumanoid,
-		Goal = goal, PaceLimit = distance / duration, Velocity = Vector3.zero,
-		PreviousPosition = root.Position, BestDistance = distance,
+		Goal = goal, Velocity = Vector3.zero,
+		PreviousPosition = root.Position, PreviousStepDt = 0, BestDistance = distance,
 		Started = os.clock(), LastProgress = os.clock(), Properties = {}, PinsReleased = 0,
 	}
+	flightPace(movement, duration, delta)
 	self.Movement = movement
 	self.MovementActive = true
 	local ok, reason = pcall(function()
@@ -368,8 +406,9 @@ function Relay:bring(seconds)
 		return false, tostring(reason)
 	end
 	self.LastMovement = "flying"
-	log(string.format("bringing slot %d: %.0f studs, max %.0f studs/s, vertical max %.0f",
-		slot, distance, math.min(Config.BringSpeed, movement.PaceLimit), Config.BringVerticalSpeed))
+	log(string.format("bringing slot %d: %.0f studs, XZ max %.0f studs/s, Y max %.0f, pacing %s",
+		slot, distance, math.min(Config.BringSpeed, movement.HorizontalLimit),
+		math.min(Config.BringVerticalSpeed, movement.VerticalLimit), duration > 0 and (duration .. "s") or "off"))
 	return true
 end
 
@@ -492,13 +531,17 @@ function Relay:_status()
 	local controller = self.Controller and self.Controller.Name or "waiting"
 	local movement = self.Movement
 	local remaining = movement and (movement.Goal - movement.Root.Position).Magnitude or 0
+	local velocity = movement and movement.Root.AssemblyLinearVelocity or Vector3.zero
 	return string.format(
-		"v%s controller=%s movement=%s speed=%.0f vertical=%.0f remaining=%.1f phase=%s safety=%s last=%s",
+		"v%s controller=%s movement=%s speed=%.0f vertical=%.0f actual_xz=%.1f actual_y=%.1f pacing=%s remaining=%.1f phase=%s safety=%s last=%s",
 		self.Version,
 		controller,
 		self.MovementActive and "moving" or "idle",
 		Config.BringSpeed,
 		Config.BringVerticalSpeed,
+		Vector3.new(velocity.X, 0, velocity.Z).Magnitude,
+		velocity.Y,
+		movement and movement.PaceSeconds > 0 and (movement.PaceSeconds .. "s") or "off",
 		remaining,
 		self.PhaseEnabled and "on" or "off",
 		self.SafetyEnabled and "on" or "off",
@@ -510,21 +553,26 @@ function Relay:_executeCommand(commandLine)
 	local command, remainder = string.match(commandLine, "^(%S+)%s*(.-)%s*$")
 	command = string.lower(command or "")
 	if command == "" or command == "help" then
-		log("commands: bring [minimum seconds], speed [5-120], stop, phase [on/off], menu, safety [on/off], status")
+		log("commands: bring [pace seconds; 0=off], speed [5-200], yspeed [2-60], stop, phase [on/off], menu, safety [on/off], status")
 	elseif command == "bring" or command == "tween" then
-		if remainder ~= "" and not finiteNumber(remainder) then
-			return warnRelay("usage: bring [minimum seconds]")
+		local seconds = finiteNumber(remainder)
+		if remainder ~= "" and (not seconds or seconds < 0 or seconds > 600) then
+			return warnRelay("usage: bring [pace seconds: 0-600; 0=off]")
 		end
-		local ok, reason = self:bring(finiteNumber(remainder))
+		local ok, reason = self:bring(seconds)
 		if not ok then warnRelay(reason) end
-	elseif command == "speed" then
-		if remainder == "" then return log("bring speed: " .. Config.BringSpeed .. " studs/s") end
+	elseif command == "speed" or command == "yspeed" then
+		local key = command == "speed" and "BringSpeed" or "BringVerticalSpeed"
+		local axis = command == "speed" and "XZ" or "Y"
+		local minimum = command == "speed" and 5 or 2
+		local maximum = command == "speed" and 200 or 60
+		if remainder == "" then return log(axis .. " speed: " .. Config[key] .. " studs/s") end
 		local speed = finiteNumber(remainder)
-		if not speed or speed < 5 or speed > 120 then
-			return warnRelay("speed must be between 5 and 120 studs/s")
+		if not speed or speed < minimum or speed > maximum then
+			return warnRelay(axis .. " speed must be between " .. minimum .. " and " .. maximum .. " studs/s")
 		end
-		Config.BringSpeed = speed
-		log("bring speed: " .. speed .. " studs/s")
+		Config[key] = speed
+		log(axis .. " speed: " .. speed .. " studs/s (acceleration/braking still apply)")
 	elseif command == "stop" then
 		self:cancelMovement("controller command")
 	elseif command == "phase" then
