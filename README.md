@@ -1,18 +1,14 @@
-# CLAW RELAY
+# CLAW
 
-CLAW RELAY is a small, no-UI controller for moving and managing the user's own alternate accounts from one trusted Roblox account. It contains no combat automation, animation recorder, timing database, or Project Rain code.
+Alt control and loot notifications for Deepwoken. Two separate scripts; use whichever you need.
 
-The former CLAW MARK v0.4.7 source remains archived under the `legacy-combat-v0.4.7` tag. The existing local Project Rain loot notifier remains private, ignored, and untouched.
+## Alt manager
 
-## Start each follower account
-
-Set the controller to the exact username of the main account, then execute the loader on every alt:
+Run this on each alt. Replace the username with your main's exact username, not its display name. All accounts need to be in the same server.
 
 ```lua
 getgenv().CLAW_RELAY_CONFIG = {
-    ControllerName = "ExactMainUsername",
-
-    -- Optional safety roster. Numeric UserIds are recommended.
+    ControllerName = "YOUR_MAIN_USERNAME",
     TrustedUserIds = {},
     ProximitySafety = false,
 }
@@ -20,29 +16,46 @@ getgenv().CLAW_RELAY_CONFIG = {
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/loader.lua?t=" .. tostring(os.time())))()
 ```
 
-`ControllerUserId` may be used instead of `ControllerName` and takes priority when both are supplied. The configured controller account deliberately does not start the follower runtime.
+Type commands in chat from your main:
 
-## Controller commands
+| Command | What it does |
+| --- | --- |
+| `;alts bring` | Moves alts to positions around you |
+| `;alts bring 5` | Same, over five seconds |
+| `;alts stop` | Stops movement |
+| `;alts phase on` / `;alts phase off` | Toggles noclip |
+| `;alts menu` | Requests a return to the main menu |
+| `;alts safety on` / `;alts safety off` | Toggles proximity auto-log |
+| `;alts status` / `;alts help` | Prints to each alt's console |
 
-Type these in chat from the configured controller account while the alts share its server:
+Proximity safety starts off. Before turning it on, add your other alts' numeric Roblox UserIds to `TrustedUserIds`. Your main is already trusted. By default, an untrusted player within 80 studs for two seconds triggers a menu request.
 
-```text
-;alts bring
-;alts bring 5
-;alts stop
-;alts phase on
-;alts phase off
-;alts menu
-;alts safety on
-;alts safety off
-;alts status
-;alts help
+You can use `ControllerUserId` instead of `ControllerName`. Movement uses temporary noclip and restores collisions afterward unless phase is still on.
+
+No server joining or forced respawn yet. The alt manager is compile-checked, but still needs in-game testing.
+
+[Alt manager source](relay.lua)
+
+## Loot webhook
+
+Watches PR's `Looted:` notifications and sends them to Discord. Repeated items are batched together, starred loot gets a gold embed, and chosen items can ping you.
+
+Run this once before PR, with your webhook URL filled in. Keep that URL private.
+
+```lua
+getgenv().CLAW_LOOT_CONFIG = {
+    WEBHOOK_URL = "", -- paste your Discord webhook URL here
+    USER_ID = "",     -- your Discord user ID, if you want pings
+    PING_ITEMS = {
+        ["ether core"] = true, -- lowercase item names
+    },
+}
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/loot.lua?t=" .. tostring(os.time())))()
 ```
 
-`bring` assigns each alt a stable formation position instead of stacking every character on one point. Movement noclip is temporary and restores the character's collision state afterward.
+Messages include your Roblox username, item names, a session item count, a timestamp, and a shortened server ID. Optional settings: `USERNAME`, `AVATAR`, `FLUSH_EVERY` (default 2 seconds), `BATCH_SIZE` (default 12), and `DEBUG_SCAN` (default false).
 
-`menu` uses Deepwoken's `ReturnToMenu` request and confirms only the matching `Return to Main Menu` prompt. It does not auto-answer unrelated choice prompts.
+This is the standalone notifier from the working PR setup, with private config and the PR loader removed. It doesn't launch PR. If you're already running that notifier, don't load a second copy.
 
-Proximity safety is disabled by default. Before enabling it, list the UserIds of the main account and every alt in `TrustedUserIds`. An unlisted player who stays within `ProximityDistance` for `ProximityGraceSeconds` causes that alt to request the main menu.
-
-CLAW RELAY does not currently force a respawn or select a Deepwoken server. Deepwoken's instant-respawn behavior and its lobby `StartMenu.PickServer` flow are game-specific; they must not be replaced with generic Roblox respawn or JobId assumptions.
+[Loot notifier source](loot.lua)
