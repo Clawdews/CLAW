@@ -41,6 +41,8 @@ Type these in chat from the configured controller account while the alts share i
 
 `bring` assigns each alt a stable formation position instead of stacking every character on one point. Movement noclip is temporary and restores the character's collision state afterward.
 
+`menu` uses Deepwoken's `ReturnToMenu` request and confirms only the matching `Return to Main Menu` prompt. It does not auto-answer unrelated choice prompts.
+
 Proximity safety is disabled by default. Before enabling it, list the UserIds of the main account and every alt in `TrustedUserIds`. An unlisted player who stays within `ProximityDistance` for `ProximityGraceSeconds` causes that alt to request the main menu.
 
 CLAW RELAY does not currently force a respawn or select a Deepwoken server. Deepwoken's instant-respawn behavior and its lobby `StartMenu.PickServer` flow are game-specific; they must not be replaced with generic Roblox respawn or JobId assumptions.

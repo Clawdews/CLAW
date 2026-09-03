@@ -95,7 +95,7 @@ end
 
 local Relay = {
 	Name = "CLAW RELAY",
-	Version = "0.1.1",
+	Version = "0.1.2",
 	Config = Config,
 	Running = true,
 	Connections = {},
@@ -106,6 +106,7 @@ local Relay = {
 	MovementTween = nil,
 	MovementConnection = nil,
 	MovementValue = nil,
+	MenuGeneration = 0,
 	PhaseEnabled = false,
 	SafetyEnabled = Config.ProximitySafety == true,
 	SafetyTriggered = false,
@@ -261,14 +262,33 @@ function Relay:returnToMenu(reason)
 	if not remote then
 		return false, "ReturnToMenu remote is unavailable"
 	end
-	local ok, result = pcall(function()
-		remote:FireServer()
+
+	self.MenuGeneration = self.MenuGeneration + 1
+	local generation = self.MenuGeneration
+	local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	task.spawn(function()
+		local deadline = os.clock() + 15
+		while self.Running and generation == self.MenuGeneration and os.clock() < deadline do
+			pcall(function()
+				remote:FireServer()
+			end)
+			local prompt = playerGui and playerGui:FindFirstChild("ChoicePrompt")
+			if prompt and prompt:GetAttribute("Title") == "Return to Main Menu" then
+				local choice = prompt:FindFirstChild("Choice")
+				if choice then
+					pcall(function()
+						choice:FireServer(true)
+					end)
+				end
+			end
+			task.wait(0.25)
+		end
+		if self.Running and generation == self.MenuGeneration then
+			warnRelay("return-to-menu request timed out")
+		end
 	end)
-	if ok then
-		log("returning to menu" .. (reason and (": " .. reason) or ""))
-		return true
-	end
-	return false, result
+	log("requesting main menu" .. (reason and (": " .. reason) or ""))
+	return true
 end
 
 function Relay:_trustedSets()
@@ -440,6 +460,7 @@ function Relay:Destroy(reason)
 		return
 	end
 	self.Running = false
+	self.MenuGeneration = self.MenuGeneration + 1
 	self:cancelMovement()
 	self.PhaseEnabled = false
 	self:_restoreCollision()
