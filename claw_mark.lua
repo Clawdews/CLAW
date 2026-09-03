@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.4.2
+--  CLAW MARK v0.4.3
 --
 --  TABS
 --    BURSTER
@@ -614,7 +614,6 @@ if CombatModule then
 	local ok, combatOrError =
 		pcall(function()
 			local combat = CombatModule.new()
-			combat:start()
 			return combat
 		end)
 
@@ -3492,7 +3491,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.2",
+	"CLAW MARK v0.4.3",
 	8,
 	0,
 	170,
@@ -8512,5 +8511,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.2 online"
+	"[CLAW] CLAW MARK v0.4.3 online"
 )

@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.4.2"
+	environment.CLAW.Version = "0.4.3"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -7522,9 +7522,9 @@ do
 
 		self.State:set("Running", true)
 		self.State:setCharacter(Players.LocalPlayer.Character)
-		self.Monitor:start()
-		self.Assistance:start()
 		if self.Settings:get("Enabled") then
+			self.Monitor:start()
+			self.Assistance:start()
 			self.Detectors:start()
 		end
 		self:_bind(RunService.Heartbeat, function()
@@ -7602,13 +7602,24 @@ do
 		if detectorName and self.Detectors.Detectors[detectorName] then
 			self.Detectors:sync(detectorName)
 		end
+		-- Loading CLAW must remain observationally inert. The UI owns a fully
+		-- constructed Combat object, but no heartbeat, global input listener,
+		-- ContextAction binding, detector, or character monitor starts until a
+		-- mastered feature explicitly enables Combat.
+		if enabledChanged and self.Settings:get("Enabled") and not self.State.Running then
+			self:start()
+		end
 		if enabledChanged and self.State.Running then
 			if self.Settings:get("Enabled") then
+				self.Monitor:start()
+				self.Assistance:start()
 				self._lastScan = -math.huge
 				self:_step()
 				self.Detectors:start()
 			else
 				self.Detectors:stop()
+				self.Assistance:stop()
+				self.Monitor:stop()
 				self.Scheduler:cancelAll("combat disabled")
 				self.Defense:reset()
 				self.Input:releaseAll("combat disabled")
@@ -7640,13 +7651,20 @@ do
 		local ok, reason = self.Presets:apply(name)
 		if ok then
 			self.History:setWindow(self.Settings:get("Validation.HistorySeconds"))
+			if self.Settings:get("Enabled") and not self.State.Running then
+				self:start()
+			end
 			if self.State.Running then
 				if self.Settings:get("Enabled") then
+					self.Monitor:start()
+					self.Assistance:start()
 					self._lastScan = -math.huge
 					self:_step()
 					self.Detectors:start()
 				else
 					self.Detectors:stop()
+					self.Assistance:stop()
+					self.Monitor:stop()
 				end
 			end
 			self.Detectors:refresh()
@@ -7717,13 +7735,11 @@ do
 		self.Scheduler:cancelAll("safe reset")
 		self.Defense:reset()
 		self.Assistance:stop()
+		self.Monitor:stop()
 		local released, releaseDetail = self.Input:releaseAll("safe reset")
 		self.State:setTargets({})
 		table.clear(self.State.Cooldowns)
 		self.History:clear()
-		if self.State.Running then
-			self.Assistance:start()
-		end
 		self:save()
 		self.State:emit("safe-reset", releaseDetail)
 		return released, releaseDetail
@@ -7769,7 +7785,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.4.2
+--  CLAW MARK v0.4.3
 --
 --  TABS
 --    BURSTER
@@ -8384,7 +8400,6 @@ if CombatModule then
 	local ok, combatOrError =
 		pcall(function()
 			local combat = CombatModule.new()
-			combat:start()
 			return combat
 		end)
 
@@ -11262,7 +11277,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.2",
+	"CLAW MARK v0.4.3",
 	8,
 	0,
 	170,
@@ -16282,7 +16297,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.2 online"
+	"[CLAW] CLAW MARK v0.4.3 online"
 )
 
 -- END ENTRY: claw_mark.lua

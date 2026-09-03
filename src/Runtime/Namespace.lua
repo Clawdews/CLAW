@@ -2,7 +2,7 @@ local environment = getgenv and getgenv() or _G
 
 environment.CLAW = environment.CLAW or {}
 environment.CLAW.Name = "CLAW MARK"
-environment.CLAW.Version = "0.4.2"
+environment.CLAW.Version = "0.4.3"
 environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 

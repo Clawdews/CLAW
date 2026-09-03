@@ -41,8 +41,7 @@ local function resolveDistribution()
 		end
 	end
 
-	-- This immutable fallback is the compiler-verified v0.4.2 baseline with
-	-- state-driven input release, paced-churn containment, and provenance validation.
+	-- This immutable fallback is updated after each compiler-verified release.
 	return "https://raw.githubusercontent.com/" .. repository .. "/" .. fallbackRef .. "/dist/ClawMark.lua", fallbackRef
 end
 

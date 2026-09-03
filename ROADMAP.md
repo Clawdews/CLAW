@@ -2,6 +2,13 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Passive boot isolation — v0.4.3
+
+- Combat is constructed for the UI but remains stopped while its master and mastered features are off.
+- The global input listener, heartbeat, high-priority delayed-feint context action, character-state monitor, assistance animator listeners, and detector channels are installed only after an explicit enable.
+- Disabling Combat tears down its monitor and assistance hooks; Panic leaves them stopped instead of silently reinstalling them.
+- This isolates the game's BackpackClient and ordinary weapon-slot input from CLAW's off state.
+
 ## Native input release hotfix — v0.4.2
 
 - Removed the incorrect fixed cap on Unblock attempts. While Deepwoken still reports the replicated `Blocking` effect, CLAW now retries Unblock at a throttled 30Hz, matching Lycoris's state-driven release contract.
