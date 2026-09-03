@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.3.9"
+	environment.CLAW.Version = "0.4.0"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -219,6 +219,16 @@ do
 			ParryOnly = false,
 			UsePredictionMantra = false,
 			UsePunishmentMantra = false,
+		},
+		ThreatGuard = {
+			Enabled = true,
+			BurstWindow = 0.35,
+			BurstLimit = 8,
+			QuarantineSeconds = 1.25,
+			MaxPendingPerSource = 2,
+			PlanSeparation = 0.08,
+			CorroborationWindow = 0.18,
+			NoisyPassInterval = 0.20,
 		},
 		Timing = {
 			Profile = "Balanced",
@@ -632,6 +642,13 @@ do
 		self.LastPlan = nil
 		self.LastActionResult = nil
 		self.LastFailure = nil
+		self.LastThreat = nil
+		self.ThreatSummary = {
+			enabled = false,
+			activePlans = 0,
+			noisySources = 0,
+			mode = "OFF",
+		}
 		self.Metrics = {
 			Detected = 0,
 			Scheduled = 0,
@@ -639,6 +656,12 @@ do
 			Failed = 0,
 			Cancelled = 0,
 			Rejected = 0,
+			ThreatAdmitted = 0,
+			ThreatCoalesced = 0,
+			ThreatDropped = 0,
+			ThreatSpamBursts = 0,
+			ThreatCorroborated = 0,
+			ThreatPromoted = 0,
 		}
 		self.Changed = Signal.new()
 		self.Event = Signal.new()
@@ -693,6 +716,13 @@ do
 		self.LastPlan = nil
 		self.LastActionResult = nil
 		self.LastFailure = nil
+		self.LastThreat = nil
+		self.ThreatSummary = {
+			enabled = false,
+			activePlans = 0,
+			noisySources = 0,
+			mode = "OFF",
+		}
 	end
 
 	function State:Destroy()
@@ -1682,6 +1712,9 @@ do
 		if scheduled.thread then
 			pcall(task.cancel, scheduled.thread)
 		end
+		if type(scheduled.onCancel) == "function" then
+			pcall(scheduled.onCancel, scheduled.reason)
+		end
 		self._tasks[scheduled.id] = nil
 		self.state.ActiveTasks[scheduled.id] = nil
 		self.state:increment("Cancelled")
@@ -1712,6 +1745,323 @@ do
   __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
 end
 -- END MODULE: src/Combat/Scheduler.lua
+
+-- BEGIN MODULE: src/Combat/ThreatArbiter.lua
+do
+  local moduleName = "src/Combat/ThreatArbiter.lua"
+  local moduleFactory = function()
+	local ThreatArbiter = {}
+	ThreatArbiter.__index = ThreatArbiter
+
+	local TRUST = {
+		animation = 1,
+		sound = 2,
+		part = 3,
+		effect = 3,
+		projectile = 4,
+	}
+
+	local function sourceFor(event)
+		return event and (event.entity or event.instance) or nil
+	end
+
+	local function countPlans(record)
+		local count = 0
+		for _ in pairs(record.plans) do
+			count = count + 1
+		end
+		return count
+	end
+
+	function ThreatArbiter.new(settings, state, scheduler, clock)
+		if type(scheduler) == "function" and clock == nil then
+			clock = scheduler
+			scheduler = nil
+		end
+		local self = setmetatable({
+			Settings = settings,
+			State = state,
+			Clock = clock or os.clock,
+			Scheduler = scheduler,
+			Sources = setmetatable({}, { __mode = "k" }),
+			FallbackSource = nil,
+			ActivePlans = 0,
+			NextPlanID = 0,
+		}, ThreatArbiter)
+		state.ThreatSummary = self:_summary()
+		return self
+	end
+
+	function ThreatArbiter:_record(event)
+		local source = sourceFor(event)
+		if not source then
+			if not self.FallbackSource then
+				self.FallbackSource = {
+					animationTimes = {},
+					plans = {},
+					plansByEvent = setmetatable({}, { __mode = "k" }),
+					noisyUntil = 0,
+					lastCorroboratedAt = 0,
+					lastNoisyPass = 0,
+					lastNotice = 0,
+				}
+			end
+			return self.FallbackSource, "unknown"
+		end
+
+		local record = self.Sources[source]
+		if not record then
+			record = {
+				animationTimes = {},
+				plans = {},
+				plansByEvent = setmetatable({}, { __mode = "k" }),
+				noisyUntil = 0,
+				lastCorroboratedAt = 0,
+				lastNoisyPass = 0,
+				lastNotice = 0,
+			}
+			self.Sources[source] = record
+		end
+		local name = event.entity and event.entity.Name or event.instance and event.instance.Name or "unknown"
+		return record, tostring(name)
+	end
+
+	function ThreatArbiter:_summary(now)
+		now = now or self.Clock()
+		local noisy = 0
+		for _, record in pairs(self.Sources) do
+			if record.noisyUntil > now then
+				noisy = noisy + 1
+			end
+		end
+		if self.FallbackSource and self.FallbackSource.noisyUntil > now then
+			noisy = noisy + 1
+		end
+		local enabled = self.Settings:get("ThreatGuard.Enabled")
+		return {
+			enabled = enabled,
+			activePlans = self.ActivePlans,
+			noisySources = noisy,
+			mode = not enabled and "OFF" or noisy > 0 and "DEGRADED" or "NORMAL",
+		}
+	end
+
+	function ThreatArbiter:_decision(kind, event, reason, record, force)
+		local now = self.Clock()
+		self.State.LastThreat = {
+			kind = kind,
+			reason = tostring(reason or kind),
+			detector = event and event.detector or "?",
+			id = event and event.id or "?",
+			entity = event and event.entity and event.entity.Name or "?",
+			at = now,
+		}
+		self.State.ThreatSummary = self:_summary(now)
+
+		-- A breaker can produce thousands of events per second. Preserve counters,
+		-- but rate-limit trace emission so diagnostics do not become the new flood.
+		if not force and record and now - record.lastNotice < 0.25 then
+			return
+		end
+		if record then
+			record.lastNotice = now
+		end
+		self.State:emit("threat-" .. kind, {
+			event = event,
+			reason = reason,
+			summary = self.State.ThreatSummary,
+		})
+	end
+
+	function ThreatArbiter:_pruneTimes(record, cutoff)
+		local retained = {}
+		for _, timestamp in ipairs(record.animationTimes) do
+			if timestamp >= cutoff then
+				retained[#retained + 1] = timestamp
+			end
+		end
+		record.animationTimes = retained
+	end
+
+	function ThreatArbiter:observe(event)
+		if not self.Settings:get("ThreatGuard.Enabled") then
+			return true
+		end
+
+		local record, sourceName = self:_record(event)
+		local now = self.Clock()
+		if event.detector ~= "animation" then
+			if (TRUST[event.detector] or 0) >= 3 then
+				record.lastCorroboratedAt = now
+			end
+			return true
+		end
+
+		local window = math.max(0.05, self.Settings:get("ThreatGuard.BurstWindow"))
+		local limit = math.max(2, math.floor(self.Settings:get("ThreatGuard.BurstLimit")))
+		self:_pruneTimes(record, now - window)
+
+		local corroborated = now - record.lastCorroboratedAt
+			<= math.max(0, self.Settings:get("ThreatGuard.CorroborationWindow"))
+		if record.noisyUntil > now then
+			local passInterval = math.max(0.05, self.Settings:get("ThreatGuard.NoisyPassInterval"))
+			if corroborated and now - record.lastNoisyPass >= passInterval then
+				record.lastNoisyPass = now
+				self.State:increment("ThreatCorroborated")
+				self:_decision("corroborated", event, "trusted non-animation evidence", record)
+				return true
+			end
+			self.State:increment("ThreatDropped")
+			self:_decision("dropped", event, "animation channel quarantined for " .. sourceName, record)
+			return false, "animation spam quarantine"
+		end
+
+		record.animationTimes[#record.animationTimes + 1] = now
+		if #record.animationTimes > limit then
+			record.noisyUntil = now + math.max(0.10, self.Settings:get("ThreatGuard.QuarantineSeconds"))
+			record.animationTimes = {}
+			self.State:increment("ThreatSpamBursts")
+			self.State:increment("ThreatDropped")
+			self:_decision("quarantined", event, "animation burst from " .. sourceName, record, true)
+			return false, "animation burst quarantined"
+		end
+
+		return true
+	end
+
+	function ThreatArbiter:claim(event, dueAt)
+		if not self.Settings:get("ThreatGuard.Enabled") then
+			return true, nil
+		end
+
+		local record = self:_record(event)
+		local existing = record.plansByEvent[event]
+		if existing and not existing.settled then
+			return true, existing
+		end
+
+		local separation = math.max(0, self.Settings:get("ThreatGuard.PlanSeparation"))
+		local trust = TRUST[event.detector] or 1
+		for _, plan in pairs(record.plans) do
+			if not plan.settled and math.abs(plan.dueAt - dueAt) <= separation then
+				plan.channels[event.detector] = true
+				if trust > plan.trust and self.Scheduler then
+					local pending = {}
+					for scheduled in pairs(plan.tasks) do
+						pending[#pending + 1] = scheduled
+					end
+					for _, scheduled in ipairs(pending) do
+						self.Scheduler:cancel(scheduled, "superseded by stronger threat evidence")
+					end
+					if not plan.settled then
+						plan.pending = 0
+						self:settle(plan, nil, "superseded by stronger threat evidence")
+					end
+					self.State:increment("ThreatPromoted")
+					self:_decision("promoted", event, "stronger evidence replaced animation plan", record, true)
+					break
+				end
+				plan.trust = math.max(plan.trust, trust)
+				self.State:increment("ThreatCoalesced")
+				self:_decision("coalesced", event, "overlapping source plan", record)
+				return false, nil, "overlapping threat coalesced"
+			end
+		end
+
+		local maximum = math.max(1, math.floor(self.Settings:get("ThreatGuard.MaxPendingPerSource")))
+		local pendingPlans = countPlans(record)
+		-- Animation spam cannot spend the slots reserved for a server effect, part,
+		-- or projectile. Higher-trust channels get a small independent allowance so
+		-- a noisy Animator cannot starve the evidence that would confirm a real hit.
+		local budgetReached = event.detector == "animation" and pendingPlans >= maximum
+			or event.detector ~= "animation" and pendingPlans >= maximum + 2
+		if budgetReached then
+			self.State:increment("ThreatDropped")
+			self:_decision("dropped", event, "source plan budget reached", record)
+			return false, nil, "source threat budget"
+		end
+
+		self.NextPlanID = self.NextPlanID + 1
+		local plan = {
+			id = self.NextPlanID,
+			record = record,
+			event = event,
+			dueAt = dueAt,
+			trust = trust,
+			channels = { [event.detector] = true },
+			tasks = {},
+			pending = 0,
+			settled = false,
+		}
+		record.plans[plan.id] = plan
+		record.plansByEvent[event] = plan
+		self.ActivePlans = self.ActivePlans + 1
+		self.State:increment("ThreatAdmitted")
+		self:_decision("admitted", event, "source plan admitted", record)
+		return true, plan
+	end
+
+	function ThreatArbiter:register(plan, scheduled)
+		if not plan or not scheduled or plan.settled or plan.tasks[scheduled] then
+			return
+		end
+		plan.tasks[scheduled] = true
+		plan.pending = plan.pending + 1
+	end
+
+	function ThreatArbiter:settle(plan, scheduled, reason)
+		if not plan or plan.settled then
+			return
+		end
+		if scheduled and plan.tasks[scheduled] then
+			plan.tasks[scheduled] = nil
+			plan.pending = math.max(0, plan.pending - 1)
+		end
+		if plan.pending > 0 then
+			return
+		end
+
+		plan.settled = true
+		plan.record.plans[plan.id] = nil
+		plan.record.plansByEvent[plan.event] = nil
+		self.ActivePlans = math.max(0, self.ActivePlans - 1)
+		self:_decision("settled", plan.event, reason or "plan settled", plan.record)
+	end
+
+	function ThreatArbiter:reset()
+		local function resetRecord(record)
+			for _, plan in pairs(record.plans) do
+				plan.settled = true
+			end
+			table.clear(record.animationTimes)
+			table.clear(record.plans)
+			table.clear(record.plansByEvent)
+			record.noisyUntil = 0
+			record.lastCorroboratedAt = 0
+			record.lastNoisyPass = 0
+		end
+		for _, record in pairs(self.Sources) do
+			resetRecord(record)
+		end
+		if self.FallbackSource then
+			resetRecord(self.FallbackSource)
+		end
+		self.FallbackSource = nil
+		self.ActivePlans = 0
+		self.State.ThreatSummary = self:_summary()
+		self.State.LastThreat = nil
+	end
+
+	function ThreatArbiter:Destroy()
+		self:reset()
+		table.clear(self.Sources)
+	end
+
+	return ThreatArbiter
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/ThreatArbiter.lua
 
 -- BEGIN MODULE: src/Combat/Performance.lua
 do
@@ -2232,6 +2582,340 @@ do
 end
 -- END MODULE: src/Combat/Detection/EffectDetector.lua
 
+-- BEGIN MODULE: src/Combat/Detection/ClientEffectDetector.lua
+do
+  local moduleName = "src/Combat/Detection/ClientEffectDetector.lua"
+  local moduleFactory = function()
+	local environment = getgenv and getgenv() or _G
+	local Signal = assert(environment.__CLAW_MODULES["src/Runtime/Signal.lua"])
+	local DetectorEvent = assert(environment.__CLAW_MODULES["src/Combat/Detection/DetectorEvent.lua"])
+
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+	local ClientEffectDetector = {}
+	ClientEffectDetector.__index = ClientEffectDetector
+
+	local CHANNELS = {
+		ClientEffect = true,
+		ClientEffectLarge = true,
+		ClientEffectDirect = true,
+	}
+
+	local OWNER_KEYS = {
+		"owner",
+		"Owner",
+		"caster",
+		"Caster",
+		"character",
+		"Character",
+		"entity",
+		"Entity",
+		"source",
+		"Source",
+	}
+
+	local POSITION_KEYS = {
+		"position",
+		"Position",
+		"pos",
+		"Pos",
+		"cframe",
+		"CFrame",
+		"cf",
+		"CF",
+		"part",
+		"Part",
+	}
+
+	local function humanoidModel(instance)
+		if typeof(instance) ~= "Instance" then
+			return nil
+		end
+		local model
+		if instance:IsA("Model") then
+			model = instance
+		elseif instance:IsA("BasePart") or instance:IsA("Attachment") then
+			model = instance:FindFirstAncestorWhichIsA("Model")
+		end
+		if not model or not model:FindFirstChildWhichIsA("Humanoid") then
+			return nil
+		end
+		local live = workspace:FindFirstChild("Live")
+		if live and model ~= live and not model:IsDescendantOf(live) then
+			return nil
+		end
+		return model
+	end
+
+	local function explicitOwner(data)
+		for _, key in ipairs(OWNER_KEYS) do
+			local owner = humanoidModel(data[key])
+			if owner then
+				return owner, "explicit"
+			end
+		end
+		return nil
+	end
+
+	local function boundedOwner(data)
+		local explicit, confidence = explicitOwner(data)
+		if explicit then
+			return explicit, confidence
+		end
+
+		local seen = {}
+		local inspected = 0
+		local function visit(value, depth)
+			if inspected >= 32 or depth > 2 then
+				return nil
+			end
+			inspected = inspected + 1
+			local owner = humanoidModel(value)
+			if owner then
+				return owner
+			end
+			if type(value) ~= "table" or seen[value] then
+				return nil
+			end
+			seen[value] = true
+			for _, child in pairs(value) do
+				local found = visit(child, depth + 1)
+				if found then
+					return found
+				end
+				if inspected >= 32 then
+					break
+				end
+			end
+			return nil
+		end
+		local owner = visit(data, 0)
+		return owner, owner and "inferred" or "none"
+	end
+
+	local function originFor(data, owner)
+		local root = owner and owner:FindFirstChild("HumanoidRootPart")
+		if root and root:IsA("BasePart") then
+			return root, root.Position
+		end
+		for _, key in ipairs(POSITION_KEYS) do
+			local value = data[key]
+			if typeof(value) == "Vector3" then
+				return nil, value
+			elseif typeof(value) == "CFrame" then
+				return nil, value.Position
+			elseif typeof(value) == "Instance" then
+				if value:IsA("BasePart") then
+					return value, value.Position
+				elseif value:IsA("Attachment") then
+					return value.Parent, value.WorldPosition
+				end
+			end
+		end
+		return owner, nil
+	end
+
+	local function shallowSnapshot(data)
+		local snapshot = {}
+		local count = 0
+		for key, value in pairs(data) do
+			if count >= 32 then
+				break
+			end
+			local valueType = typeof(value)
+			if
+				type(key) == "string"
+				and (
+					valueType == "string"
+					or valueType == "number"
+					or valueType == "boolean"
+					or valueType == "Vector3"
+					or valueType == "CFrame"
+					or valueType == "Instance"
+				)
+			then
+				snapshot[key] = value
+				count = count + 1
+			end
+		end
+		return snapshot
+	end
+
+	local function rounded(value)
+		return math.floor(value * 4 + 0.5) / 4
+	end
+
+	local function fingerprintFor(id, owner, position)
+		local ownerKey = owner and owner:GetFullName() or "?"
+		local positionKey = "?"
+		if typeof(position) == "Vector3" then
+			positionKey = string.format("%.2f,%.2f,%.2f", rounded(position.X), rounded(position.Y), rounded(position.Z))
+		end
+		return tostring(id) .. "|" .. ownerKey .. "|" .. positionKey
+	end
+
+	function ClientEffectDetector.new(options)
+		options = options or {}
+		return setmetatable({
+			Detected = Signal.new(),
+			_source = options.source,
+			_accept = options.accept,
+			_connections = {},
+			_hooked = setmetatable({}, { __mode = "k" }),
+			_recent = {},
+			_running = false,
+			Stats = {
+				ClientEffect = 0,
+				ClientEffectLarge = 0,
+				ClientEffectDirect = 0,
+				Deduplicated = 0,
+			},
+		}, ClientEffectDetector)
+	end
+
+	function ClientEffectDetector:_bind(signal, callback)
+		local connection = signal:Connect(callback)
+		self._connections[#self._connections + 1] = connection
+		return connection
+	end
+
+	function ClientEffectDetector:_deduplicated(fingerprint, channel, now)
+		local previous = self._recent[fingerprint]
+		self._recent[fingerprint] = { channel = channel, at = now }
+		if previous and previous.channel ~= channel and now - previous.at <= 0.03 then
+			self.Stats.Deduplicated = self.Stats.Deduplicated + 1
+			return true
+		end
+		if math.random(1, 32) == 1 then
+			for key, value in pairs(self._recent) do
+				if now - value.at > 0.25 then
+					self._recent[key] = nil
+				end
+			end
+		end
+		return false
+	end
+
+	function ClientEffectDetector:_emit(channel, name, data)
+		local id = tostring(name or "")
+		if id == "" then
+			return
+		end
+		if type(self._accept) == "function" and not self._accept("effect", id, nil) then
+			return
+		end
+		if type(data) ~= "table" then
+			data = {}
+		end
+
+		local owner, confidence = boundedOwner(data)
+		local instance, position = originFor(data, owner)
+		local fingerprint = fingerprintFor(id, owner, position)
+		local now = os.clock()
+		if self:_deduplicated(fingerprint, channel, now) then
+			return
+		end
+
+		self.Stats[channel] = (self.Stats[channel] or 0) + 1
+		local snapshot = shallowSnapshot(data)
+		self.Detected:Fire(DetectorEvent.new("effect", id, instance, {
+			entity = owner,
+			position = position,
+			startedAt = now,
+			metadata = {
+				channel = channel,
+				attributes = snapshot,
+				payload = snapshot,
+				ownershipConfidence = confidence,
+				fingerprint = fingerprint,
+			},
+		}))
+	end
+
+	function ClientEffectDetector:_hook(channel, remote)
+		if self._hooked[remote] or not CHANNELS[channel] then
+			return
+		end
+		local signal
+		if remote:IsA("RemoteEvent") then
+			signal = remote.OnClientEvent
+		elseif remote:IsA("BindableEvent") then
+			signal = remote.Event
+		end
+		if not signal then
+			return
+		end
+		self._hooked[remote] = true
+		self:_bind(signal, function(name, data)
+			self:_emit(channel, name, data)
+		end)
+	end
+
+	function ClientEffectDetector:start()
+		if self._running then
+			return
+		end
+		self._running = true
+		local requests = type(self._source) == "function" and self._source()
+			or self._source
+			or ReplicatedStorage:FindFirstChild("Requests")
+		if not requests then
+			self:_bind(ReplicatedStorage.ChildAdded, function(child)
+				if self._running and child.Name == "Requests" then
+					for channel in pairs(CHANNELS) do
+						local remote = child:FindFirstChild(channel)
+						if remote then
+							self:_hook(channel, remote)
+						end
+					end
+					self:_bind(child.ChildAdded, function(remote)
+						if CHANNELS[remote.Name] then
+							self:_hook(remote.Name, remote)
+						end
+					end)
+				end
+			end)
+			return
+		end
+		for channel in pairs(CHANNELS) do
+			local remote = requests:FindFirstChild(channel)
+			if remote then
+				self:_hook(channel, remote)
+			end
+		end
+		self:_bind(requests.ChildAdded, function(child)
+			if CHANNELS[child.Name] then
+				self:_hook(child.Name, child)
+			end
+		end)
+	end
+
+	function ClientEffectDetector:stop()
+		if not self._running then
+			return
+		end
+		self._running = false
+		for _, connection in ipairs(self._connections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		table.clear(self._connections)
+		table.clear(self._hooked)
+		table.clear(self._recent)
+	end
+
+	function ClientEffectDetector:Destroy()
+		self:stop()
+		self.Detected:Destroy()
+	end
+
+	return ClientEffectDetector
+  end
+  __clawEnvironment.__CLAW_MODULES[moduleName] = moduleFactory()
+end
+-- END MODULE: src/Combat/Detection/ClientEffectDetector.lua
+
 -- BEGIN MODULE: src/Combat/Detection/DetectorHub.lua
 do
   local moduleName = "src/Combat/Detection/DetectorHub.lua"
@@ -2243,6 +2927,7 @@ do
 	local SoundDetector = assert(modules["src/Combat/Detection/SoundDetector.lua"])
 	local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
 	local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
+	local ClientEffectDetector = assert(modules["src/Combat/Detection/ClientEffectDetector.lua"])
 	local Players = game:GetService("Players")
 
 	local DetectorHub = {}
@@ -2322,12 +3007,14 @@ do
 				Sounds = SoundDetector.new(detectorOptions(options.sound)),
 				Parts = PartDetector.new(detectorOptions(options.part)),
 				Effects = EffectDetector.new(detectorOptions(options.effect)),
+				ClientEffects = ClientEffectDetector.new(detectorOptions(options.clientEffect)),
 			},
 		}, DetectorHub)
 
 		for settingName, detector in pairs(self.Detectors) do
 			self.Connections[#self.Connections + 1] = detector.Detected:Connect(function(event)
-				if self.Settings:get("Detection." .. settingName) then
+				local setting = settingName == "ClientEffects" and "Effects" or settingName
+				if self.Settings:get("Detection." .. setting) then
 					self.Detected:Fire(event)
 				end
 			end)
@@ -2353,8 +3040,9 @@ do
 			return
 		end
 		for name, detector in pairs(self.Detectors) do
-			if not settingName or name == settingName then
-				if self.Settings:get("Detection." .. name) then
+			local setting = name == "ClientEffects" and "Effects" or name
+			if not settingName or setting == settingName then
+				if self.Settings:get("Detection." .. setting) then
 					detector:start()
 				else
 					detector:stop()
@@ -4111,7 +4799,9 @@ do
 
 	function ValidationEngine:_sourceCFrame(event, profile)
 		local source
-		if event.root and event.root.Parent then
+		if profile and profile.useHitboxCFrame and event.instance and event.instance:IsA("BasePart") then
+			source = event.instance.CFrame
+		elseif event.root and event.root.Parent then
 			source = event.root.CFrame
 		elseif event.instance and event.instance:IsA("BasePart") then
 			source = profile and profile.useHitboxCFrame and event.instance.CFrame or CFrame.new(event.instance.Position)
@@ -4122,7 +4812,12 @@ do
 
 		local seconds = profile.predictionSeconds > 0 and profile.predictionSeconds
 			or self.Settings:get("Validation.PredictionSeconds")
-		local movingPart = event.root or (event.instance and event.instance:IsA("BasePart") and event.instance)
+		local movingPart = profile.useHitboxCFrame
+			and event.instance
+			and event.instance:IsA("BasePart")
+			and event.instance
+			or event.root
+			or (event.instance and event.instance:IsA("BasePart") and event.instance)
 		if movingPart then
 			source = source + (movingPart.AssemblyLinearVelocity * seconds)
 		end
@@ -4679,7 +5374,9 @@ do
 		local metrics = state.Metrics
 		local native = context.native or {}
 		local stats = native.stats or {}
+		local clientEffects = context.clientEffects or {}
 		local settings = self.Settings
+		local threat = state.ThreatSummary or {}
 		local lines = {
 			"CLAW MARK DIAGNOSTIC REPORT",
 			"version=" .. tostring(context.version or "unknown"),
@@ -4692,6 +5389,20 @@ do
 			"timing_source=" .. tostring(context.timingSource or "unknown"),
 			"native=" .. tostring(native.status or "unknown"),
 			"native_last=" .. tostring(native.last or "idle"),
+			string.format(
+				"threat_guard=%s mode:%s active:%d noisy:%d",
+				settings:get("ThreatGuard.Enabled") and "on" or "off",
+				tostring(threat.mode or "unknown"),
+				tonumber(threat.activePlans) or 0,
+				tonumber(threat.noisySources) or 0
+			),
+			string.format(
+				"client_effects=normal:%d large:%d direct:%d deduplicated:%d",
+				clientEffects.ClientEffect or 0,
+				clientEffects.ClientEffectLarge or 0,
+				clientEffects.ClientEffectDirect or 0,
+				clientEffects.Deduplicated or 0
+			),
 			string.format(
 				"native_io=blocks:%d unblocks:%d retries:%d coalesced:%d dodges:%d cancels:%d",
 				stats.Blocks or 0,
@@ -4723,6 +5434,15 @@ do
 				metrics.Rejected or 0,
 				metrics.Cancelled or 0
 			),
+			string.format(
+				"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d corroborated:%d promoted:%d",
+				metrics.ThreatAdmitted or 0,
+				metrics.ThreatCoalesced or 0,
+				metrics.ThreatDropped or 0,
+				metrics.ThreatSpamBursts or 0,
+				metrics.ThreatCorroborated or 0,
+				metrics.ThreatPromoted or 0
+			),
 			"last_detection=" .. formatLast(state.LastDetection, function(value)
 				return tostring(value.detector) .. ":" .. tostring(value.id)
 			end),
@@ -4745,6 +5465,9 @@ do
 			end),
 			"last_failure=" .. formatLast(state.LastFailure, function(value)
 				return value.reason
+			end),
+			"last_threat=" .. formatLast(state.LastThreat, function(value)
+				return tostring(value.kind) .. ":" .. tostring(value.reason)
 			end),
 		}
 
@@ -5116,12 +5839,25 @@ do
 	function StateMonitor:refresh()
 		local character = self.State.Character
 		if not character then
+			for name in pairs(FLAGS) do
+				self:_setFlag(name, false)
+			end
+			self:_setFlag("WeaponEquipped", false)
 			return
 		end
 		for name, aliases in pairs(FLAGS) do
 			self:_setFlag(name, self:_has(character, aliases))
 		end
 		self:_setFlag("WeaponEquipped", character:FindFirstChildWhichIsA("Tool") ~= nil)
+	end
+
+	function StateMonitor:_watchValue(instance)
+		if not instance:IsA("ValueBase") then
+			return
+		end
+		self:_bind(self.CharacterConnections, instance.Changed, function()
+			self:queueRefresh()
+		end)
 	end
 
 	function StateMonitor:queueRefresh()
@@ -5144,7 +5880,8 @@ do
 			return
 		end
 
-		self:_bind(self.CharacterConnections, character.DescendantAdded, function()
+		self:_bind(self.CharacterConnections, character.DescendantAdded, function(descendant)
+			self:_watchValue(descendant)
 			self:queueRefresh()
 		end)
 		self:_bind(self.CharacterConnections, character.DescendantRemoving, function()
@@ -5158,6 +5895,9 @@ do
 				end)
 			end
 		end
+		for _, descendant in ipairs(character:GetDescendants()) do
+			self:_watchValue(descendant)
+		end
 		self:refresh()
 	end
 
@@ -5168,6 +5908,11 @@ do
 		self.Running = true
 		self:_bind(self.Connections, Players.LocalPlayer.CharacterAdded, function(character)
 			self:attach(character)
+		end)
+		self:_bind(self.Connections, Players.LocalPlayer.CharacterRemoving, function(character)
+			if self.State.Character == character then
+				self:attach(nil)
+			end
 		end)
 		self:attach(Players.LocalPlayer.Character)
 	end
@@ -5222,6 +5967,7 @@ do
 			UsePredictionMantra = false,
 			UsePunishmentMantra = false,
 		},
+		ThreatGuard = { Enabled = true },
 		Validation = {
 			Hitbox = true,
 			Facing = false,
@@ -5806,7 +6552,8 @@ do
 		validator,
 		probability,
 		fallbacks,
-		hitboxWaiter
+		hitboxWaiter,
+		threats
 	)
 		return setmetatable({
 			Settings = settings,
@@ -5819,6 +6566,7 @@ do
 			Probability = probability,
 			Fallbacks = fallbacks,
 			HitboxWaiter = hitboxWaiter,
+			Threats = threats,
 			Recent = {},
 			GenericRecent = setmetatable({}, { __mode = "k" }),
 			Repeats = {},
@@ -5840,9 +6588,26 @@ do
 	end
 
 	function DefenseEngine:_targetFor(entity, position)
+		local function live(target)
+			if not target or not target.Root or not target.Root.Parent then
+				return nil
+			end
+			local localRoot = self.State.Root
+			return {
+				Character = target.Character,
+				Player = target.Player,
+				Humanoid = target.Humanoid,
+				Root = target.Root,
+				Distance = localRoot and (target.Root.Position - localRoot.Position).Magnitude or target.Distance,
+				CrosshairDistance = target.CrosshairDistance,
+				FacingDot = target.FacingDot,
+				OnScreen = target.OnScreen,
+				HealthRatio = target.HealthRatio,
+			}
+		end
 		for _, target in ipairs(self.State.Targets) do
 			if target.Character == entity then
-				return target
+				return live(target)
 			end
 		end
 
@@ -5859,7 +6624,7 @@ do
 				nearestDistance = distance
 			end
 		end
-		return nearest
+		return live(nearest)
 	end
 
 	function DefenseEngine:_defaultAction()
@@ -5989,7 +6754,17 @@ do
 		if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 			return self:_reject("defense disabled before execution")
 		end
-		local currentTarget = self:_targetFor(event.entity, event.position) or target
+		local currentTarget
+		if event.entity == self.State.Character then
+			currentTarget = {
+				Character = self.State.Character,
+				Root = self.State.Root,
+				Humanoid = self.State.Humanoid,
+				Distance = 0,
+			}
+		else
+			currentTarget = self:_targetFor(event.entity, event.position)
+		end
 		if not currentTarget or not currentTarget.Root or not currentTarget.Root.Parent then
 			return self:_reject("target-lost")
 		end
@@ -6026,20 +6801,35 @@ do
 		if not profile.preferRepeat or profile.repeatDelay <= 0 then
 			return
 		end
+		local threatPlan
+		if self.Threats then
+			local admitted, claimed = self.Threats:claim(event, os.clock() + profile.repeatStartDelay)
+			if not admitted then
+				return
+			end
+			threatPlan = claimed
+		end
 		local token = {}
 		local startedAt = os.clock()
 		self.Repeats[key] = token
 
 		local function queue(delay)
-			self.Scheduler:schedule("repeat:" .. key, math.max(0.03, delay), {
+			local scheduled
+			scheduled = self.Scheduler:schedule("repeat:" .. key, math.max(0.03, delay), {
 				punishable = profile.punishableWindow,
 				after = profile.afterWindow,
 			}, function()
 				if self.Repeats[key] ~= token then
+					if self.Threats then
+						self.Threats:settle(threatPlan, scheduled, "repeat replaced")
+					end
 					return
 				end
 				if os.clock() - startedAt >= 10 then
 					self.Repeats[key] = nil
+					if self.Threats then
+						self.Threats:settle(threatPlan, scheduled, "repeat timeout")
+					end
 					return
 				end
 				if event.track then
@@ -6048,6 +6838,9 @@ do
 					end)
 					if not ok or not playing then
 						self.Repeats[key] = nil
+						if self.Threats then
+							self.Threats:settle(threatPlan, scheduled, "repeat animation ended")
+						end
 						return
 					end
 				end
@@ -6060,7 +6853,18 @@ do
 					self:_reject(reason)
 				end
 				queue(profile.repeatDelay)
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, "repeat advanced")
+				end
 			end)
+			if self.Threats then
+				self.Threats:register(threatPlan, scheduled)
+			end
+			scheduled.onCancel = function(reason)
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, reason or "repeat cancelled")
+				end
+			end
 		end
 
 		queue(profile.repeatStartDelay)
@@ -6072,6 +6876,9 @@ do
 		table.clear(self.Repeats)
 		table.clear(self.ModuleNotified)
 		self.HitboxWaiter:cancelAll()
+		if self.Threats then
+			self.Threats:reset()
+		end
 		self.LastPrune = 0
 	end
 
@@ -6087,6 +6894,12 @@ do
 
 		if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 			return false, "defense is disabled"
+		end
+		if self.Threats then
+			local observed, observeReason = self.Threats:observe(event)
+			if not observed then
+				return false, observeReason
+			end
 		end
 		local profile = self.Timings:get(event.detector, event.id)
 		if not profile then
@@ -6189,6 +7002,14 @@ do
 
 			local delay = self.Resolver:delay(resolved, event, target)
 			local scheduledAction = resolved
+			local threatPlan
+			if self.Threats then
+				local admitted, claimed = self.Threats:claim(event, os.clock() + delay)
+				if not admitted then
+					continue
+				end
+				threatPlan = claimed
+			end
 			self.State.LastPlan = {
 				kind = scheduledAction.kind,
 				name = scheduledAction.name,
@@ -6218,8 +7039,35 @@ do
 					stopConnection = nil
 				end
 				local executionKey = scheduled.identifier .. ":" .. tostring(scheduled.id)
-				return self:_execute(executionKey, event, profile, target, scheduledAction)
+				local called, ok, detail = pcall(
+					self._execute,
+					self,
+					executionKey,
+					event,
+					profile,
+					target,
+					scheduledAction
+				)
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, called and (detail or "executed") or "execution error")
+				end
+				if not called then
+					error(ok, 0)
+				end
+				return ok, detail
 			end)
+			if self.Threats then
+				self.Threats:register(threatPlan, scheduled)
+			end
+			scheduled.onCancel = function(reason)
+				if stopConnection then
+					stopConnection:Disconnect()
+					stopConnection = nil
+				end
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, reason or "plan cancelled")
+				end
+			end
 
 			if event.track and not profile.ignoreAnimationEnd and not scheduledAction.metadata.ignoreAnimationEnd then
 				stopConnection = event.track.Stopped:Connect(function()
@@ -6264,6 +7112,7 @@ do
 	local Targeting = assert(modules["src/Combat/Targeting.lua"])
 	local TimingStore = assert(modules["src/Combat/TimingStore.lua"])
 	local Scheduler = assert(modules["src/Combat/Scheduler.lua"])
+	local ThreatArbiter = assert(modules["src/Combat/ThreatArbiter.lua"])
 	local DetectorHub = assert(modules["src/Combat/Detection/DetectorHub.lua"])
 	local InputAdapter = assert(modules["src/Combat/InputAdapter.lua"])
 	local ActionExecutor = assert(modules["src/Combat/ActionExecutor.lua"])
@@ -6322,6 +7171,7 @@ do
 			Timings = TimingStore.new(),
 			Targeting = nil,
 			Scheduler = nil,
+			Threats = nil,
 			Detectors = nil,
 			Input = nil,
 			Executor = nil,
@@ -6346,6 +7196,7 @@ do
 
 		self.Targeting = Targeting.new(settings, options.targeting)
 		self.Scheduler = Scheduler.new(state)
+		self.Threats = ThreatArbiter.new(settings, state, self.Scheduler)
 		local inputOptions = {
 			custom = options.input and options.input.custom or nil,
 			settings = settings,
@@ -6400,7 +7251,8 @@ do
 			self.Validator,
 			self.Probability,
 			self.Fallbacks,
-			self.HitboxWaiter
+			self.HitboxWaiter,
+			self.Threats
 		)
 		self._lifetimeConnections[#self._lifetimeConnections + 1] = self.Detectors.Detected:Connect(function(event)
 			self.Defense:handle(event)
@@ -6524,6 +7376,9 @@ do
 		if path == "Validation.HistorySeconds" then
 			self.History:setWindow(value)
 		end
+		if path == "ThreatGuard.Enabled" then
+			self.Threats:reset()
+		end
 		if path == "Detection.OnlyConfigured" or path == "Detection.Sounds" then
 			self.Detectors:refresh()
 		end
@@ -6627,6 +7482,7 @@ do
 				last = self.Input.Native.LastTransition,
 				stats = self.Input.Native.Stats,
 			},
+			clientEffects = self.Detectors.Detectors.ClientEffects and self.Detectors.Detectors.ClientEffects.Stats or {},
 		})
 		if not copyToClipboard then
 			return report
@@ -6685,6 +7541,7 @@ do
 		self.Timings:Destroy()
 		self.Scheduler:Destroy()
 		self.History:clear()
+		self.Threats:Destroy()
 		self.State:Destroy()
 	end
 
@@ -6696,7 +7553,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.3.9
+--  CLAW MARK v0.4.0
 --
 --  TABS
 --    BURSTER
@@ -10189,7 +11046,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.9",
+	"CLAW MARK v0.4.0",
 	8,
 	0,
 	170,
@@ -10636,7 +11493,7 @@ local function refreshStatus()
 		local timingCount = combat.Timings:count()
 		defense = timingCount > 0 and ("DEF:READY/" .. tostring(timingCount)) or "DEF:GENERIC"
 	end
-	local targetCount = combat and #combat.State.Targets or 0
+	local threatCount = combat and combat.State.ThreatSummary and combat.State.ThreatSummary.activePlans or 0
 
 	Status.Text =
 		string.format(
@@ -10647,7 +11504,7 @@ local function refreshStatus()
 				and "ON"
 				or "OFF",
 			defense,
-			targetCount
+			threatCount
 		)
 end
 
@@ -13357,7 +14214,7 @@ else
 	combatNumber(tuningModal, "ROLL CANCEL", "Defense.RollCancelDelay", 10, 265, 0, 2)
 	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
 	combatToggle(tuningModal, "ANIM SANITY", "Validation.AnimationSanity", 10, 296, 198)
-	combatToggle(tuningModal, "SIGHTLESS FILTER", "Filters.SightlessBeam", 218, 296, 202)
+	combatToggle(tuningModal, "THREAT GUARD", "ThreatGuard.Enabled", 218, 296, 202)
 	combatNumber(tuningModal, "UNKNOWN DELAY", "Defense.UnknownAnimationDelay", 10, 323, 0, 3)
 	combatNumber(tuningModal, "UNKNOWN MAX SEC", "Defense.UnknownAnimationMaxLength", 218, 323, 0.1, 30)
 	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 354, 180, 226)
@@ -14489,6 +15346,7 @@ local DebugSummary =
 
 DebugSummary.TextWrapped = false
 DebugSummary.TextYAlignment = Enum.TextYAlignment.Top
+DebugSummary.TextSize = 9
 
 local DebugReasons =
 	mkLabel(debugStats, "", 8, 267, 304, 118, 9)
@@ -14519,12 +15377,27 @@ bind(RunService.Heartbeat, function(delta)
 	local lastAction = CombatRuntime.State.LastActionResult
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
+	local threatSummary = CombatRuntime.State.ThreatSummary or {}
+	local effectStats = CombatRuntime.Detectors.Detectors.ClientEffects
+		and CombatRuntime.Detectors.Detectors.ClientEffects.Stats
+		or {}
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
 		CombatRuntime.Timings:count(),
+		tostring(threatSummary.mode or "OFF"),
+		threatSummary.activePlans or 0,
+		threatSummary.noisySources or 0,
+		metrics.ThreatCoalesced or 0,
+		metrics.ThreatDropped or 0,
+		metrics.ThreatSpamBursts or 0,
+		metrics.ThreatPromoted or 0,
+		effectStats.ClientEffect or 0,
+		effectStats.ClientEffectLarge or 0,
+		effectStats.ClientEffectDirect or 0,
+		effectStats.Deduplicated or 0,
 		tostring(CombatRuntime.Input.Native.Status),
 		nativeStats.Blocks or 0,
 		nativeStats.Unblocks or 0,
@@ -15183,7 +16056,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.9 online"
+	"[CLAW] CLAW MARK v0.4.0 online"
 )
 
 -- END ENTRY: claw_mark.lua

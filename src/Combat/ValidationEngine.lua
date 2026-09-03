@@ -39,7 +39,9 @@ end
 
 function ValidationEngine:_sourceCFrame(event, profile)
 	local source
-	if event.root and event.root.Parent then
+	if profile and profile.useHitboxCFrame and event.instance and event.instance:IsA("BasePart") then
+		source = event.instance.CFrame
+	elseif event.root and event.root.Parent then
 		source = event.root.CFrame
 	elseif event.instance and event.instance:IsA("BasePart") then
 		source = profile and profile.useHitboxCFrame and event.instance.CFrame or CFrame.new(event.instance.Position)
@@ -50,7 +52,12 @@ function ValidationEngine:_sourceCFrame(event, profile)
 
 	local seconds = profile.predictionSeconds > 0 and profile.predictionSeconds
 		or self.Settings:get("Validation.PredictionSeconds")
-	local movingPart = event.root or (event.instance and event.instance:IsA("BasePart") and event.instance)
+	local movingPart = profile.useHitboxCFrame
+		and event.instance
+		and event.instance:IsA("BasePart")
+		and event.instance
+		or event.root
+		or (event.instance and event.instance:IsA("BasePart") and event.instance)
 	if movingPart then
 		source = source + (movingPart.AssemblyLinearVelocity * seconds)
 	end

@@ -53,6 +53,16 @@ local DEFAULTS = {
 		UsePredictionMantra = false,
 		UsePunishmentMantra = false,
 	},
+	ThreatGuard = {
+		Enabled = true,
+		BurstWindow = 0.35,
+		BurstLimit = 8,
+		QuarantineSeconds = 1.25,
+		MaxPendingPerSource = 2,
+		PlanSeparation = 0.08,
+		CorroborationWindow = 0.18,
+		NoisyPassInterval = 0.20,
+	},
 	Timing = {
 		Profile = "Balanced",
 		GlobalOffset = 0,

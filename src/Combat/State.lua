@@ -22,6 +22,13 @@ function State.new()
 	self.LastPlan = nil
 	self.LastActionResult = nil
 	self.LastFailure = nil
+	self.LastThreat = nil
+	self.ThreatSummary = {
+		enabled = false,
+		activePlans = 0,
+		noisySources = 0,
+		mode = "OFF",
+	}
 	self.Metrics = {
 		Detected = 0,
 		Scheduled = 0,
@@ -29,6 +36,12 @@ function State.new()
 		Failed = 0,
 		Cancelled = 0,
 		Rejected = 0,
+		ThreatAdmitted = 0,
+		ThreatCoalesced = 0,
+		ThreatDropped = 0,
+		ThreatSpamBursts = 0,
+		ThreatCorroborated = 0,
+		ThreatPromoted = 0,
 	}
 	self.Changed = Signal.new()
 	self.Event = Signal.new()
@@ -83,6 +96,13 @@ function State:resetRuntime()
 	self.LastPlan = nil
 	self.LastActionResult = nil
 	self.LastFailure = nil
+	self.LastThreat = nil
+	self.ThreatSummary = {
+		enabled = false,
+		activePlans = 0,
+		noisySources = 0,
+		mode = "OFF",
+	}
 end
 
 function State:Destroy()

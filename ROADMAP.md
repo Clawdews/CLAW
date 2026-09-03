@@ -2,6 +2,18 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Threat Guard foundation — v0.4.0
+
+- Per-attacker animation burst detection and quarantine; one noisy Animator does not disable other targets or detector channels.
+- Bounded pending threat plans per source and coalescing for signals predicting the same contact window.
+- Stronger part/effect evidence replaces an overlapping animation plan, while reserved non-animation capacity prevents animation spam from starving independent signals.
+- Three real Lycoris client-effect channels with bounded owner/origin extraction, scalar payload snapshots, and cross-channel-only deduplication.
+- Debug and copied diagnostics expose guard mode, active plans, noisy sources, admitted/coalesced/dropped/burst counts, and client-effect channel counts.
+- Executable Luau regression scenarios cover burst quarantine, per-source budgets, trusted-evidence admission, overlap coalescing, settlement, and reset.
+- Live target distance, hitbox-CFrame selection, ValueBase state changes, and character-removal cleanup corrected alongside the new pipeline.
+
+This is intentionally `Threat Guard v1`, not a breaker-proof claim. Animation remains a sensor; the current milestone contains floods and establishes the evidence channels required for later genuine-vs-fake research.
+
 ## Shipped foundation — v0.3.9
 
 - Safe/inert startup for every active feature.
@@ -14,8 +26,8 @@ This roadmap treats Lycoris as a behavioral reference and timing source while ke
 
 ## Phase 1 — Combat truth and effect coverage (P0)
 
-1. Add a three-channel client-effect detector for `ClientEffect`, `ClientEffectLarge`, and `ClientEffectDirect`.
-2. Normalize payload IDs, owners, origins, scalar attributes, and cross-channel duplicates without recursive unbounded scans.
+1. **Shipped v0.4.0:** three-channel client-effect detection for `ClientEffect`, `ClientEffectLarge`, and `ClientEffectDirect`.
+2. **Shipped v0.4.0:** bounded payload ID, owner, origin, scalar attribute, and cross-channel duplicate normalization.
 3. Add one replicated effect-state bridge for `ParryCool`, `NoRoll`, stun, equipped, attacking, and iframe state.
 4. Replace the string-only feature catalog with capability records: backend, dependencies, availability, safe default, and self-test.
 5. Show `NATIVE`, `KEYPRESS`, `BINDING REQUIRED`, or `UNAVAILABLE` beside every action/assistance feature.
@@ -81,4 +93,3 @@ Acceptance:
 - Lightweight visual and ambience QOL.
 
 Full farms, movement cheats, spoofing, teleports, and broad exploit packs are not core Animation Lab work. They must remain separate so CLAW does not inherit Lycoris's initialization and performance problems.
-

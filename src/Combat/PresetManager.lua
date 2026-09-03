@@ -28,6 +28,7 @@ local PRESET_BASE = {
 		UsePredictionMantra = false,
 		UsePunishmentMantra = false,
 	},
+	ThreatGuard = { Enabled = true },
 	Validation = {
 		Hitbox = true,
 		Facing = false,

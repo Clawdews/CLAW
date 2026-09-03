@@ -95,6 +95,9 @@ function Scheduler:cancel(id, reason)
 	if scheduled.thread then
 		pcall(task.cancel, scheduled.thread)
 	end
+	if type(scheduled.onCancel) == "function" then
+		pcall(scheduled.onCancel, scheduled.reason)
+	end
 	self._tasks[scheduled.id] = nil
 	self.state.ActiveTasks[scheduled.id] = nil
 	self.state:increment("Cancelled")

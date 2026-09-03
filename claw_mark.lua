@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.3.9
+--  CLAW MARK v0.4.0
 --
 --  TABS
 --    BURSTER
@@ -3492,7 +3492,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.3.9",
+	"CLAW MARK v0.4.0",
 	8,
 	0,
 	170,
@@ -3939,7 +3939,7 @@ local function refreshStatus()
 		local timingCount = combat.Timings:count()
 		defense = timingCount > 0 and ("DEF:READY/" .. tostring(timingCount)) or "DEF:GENERIC"
 	end
-	local targetCount = combat and #combat.State.Targets or 0
+	local threatCount = combat and combat.State.ThreatSummary and combat.State.ThreatSummary.activePlans or 0
 
 	Status.Text =
 		string.format(
@@ -3950,7 +3950,7 @@ local function refreshStatus()
 				and "ON"
 				or "OFF",
 			defense,
-			targetCount
+			threatCount
 		)
 end
 
@@ -6660,7 +6660,7 @@ else
 	combatNumber(tuningModal, "ROLL CANCEL", "Defense.RollCancelDelay", 10, 265, 0, 2)
 	combatNumber(tuningModal, "BLOCK HOLD", "Defense.BlockFallbackHold", 218, 265, 0, 3)
 	combatToggle(tuningModal, "ANIM SANITY", "Validation.AnimationSanity", 10, 296, 198)
-	combatToggle(tuningModal, "SIGHTLESS FILTER", "Filters.SightlessBeam", 218, 296, 202)
+	combatToggle(tuningModal, "THREAT GUARD", "ThreatGuard.Enabled", 218, 296, 202)
 	combatNumber(tuningModal, "UNKNOWN DELAY", "Defense.UnknownAnimationDelay", 10, 323, 0, 3)
 	combatNumber(tuningModal, "UNKNOWN MAX SEC", "Defense.UnknownAnimationMaxLength", 218, 323, 0.1, 30)
 	combatText(tuningModal, "TOGGLE DEFENSE KEY", "Bindings.ToggleDefense", 10, 354, 180, 226)
@@ -7792,6 +7792,7 @@ local DebugSummary =
 
 DebugSummary.TextWrapped = false
 DebugSummary.TextYAlignment = Enum.TextYAlignment.Top
+DebugSummary.TextSize = 9
 
 local DebugReasons =
 	mkLabel(debugStats, "", 8, 267, 304, 118, 9)
@@ -7822,12 +7823,27 @@ bind(RunService.Heartbeat, function(delta)
 	local lastAction = CombatRuntime.State.LastActionResult
 	local lastFailure = CombatRuntime.State.LastFailure
 	local nativeStats = CombatRuntime.Input.Native.Stats
+	local threatSummary = CombatRuntime.State.ThreatSummary or {}
+	local effectStats = CombatRuntime.Detectors.Detectors.ClientEffects
+		and CombatRuntime.Detectors.Detectors.ClientEffects.Stats
+		or {}
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
 		CombatRuntime.Timings:count(),
+		tostring(threatSummary.mode or "OFF"),
+		threatSummary.activePlans or 0,
+		threatSummary.noisySources or 0,
+		metrics.ThreatCoalesced or 0,
+		metrics.ThreatDropped or 0,
+		metrics.ThreatSpamBursts or 0,
+		metrics.ThreatPromoted or 0,
+		effectStats.ClientEffect or 0,
+		effectStats.ClientEffectLarge or 0,
+		effectStats.ClientEffectDirect or 0,
+		effectStats.Deduplicated or 0,
 		tostring(CombatRuntime.Input.Native.Status),
 		nativeStats.Blocks or 0,
 		nativeStats.Unblocks or 0,
@@ -8486,5 +8502,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.3.9 online"
+	"[CLAW] CLAW MARK v0.4.0 online"
 )

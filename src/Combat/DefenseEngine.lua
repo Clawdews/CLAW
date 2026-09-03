@@ -17,7 +17,8 @@ function DefenseEngine.new(
 	validator,
 	probability,
 	fallbacks,
-	hitboxWaiter
+	hitboxWaiter,
+	threats
 )
 	return setmetatable({
 		Settings = settings,
@@ -30,6 +31,7 @@ function DefenseEngine.new(
 		Probability = probability,
 		Fallbacks = fallbacks,
 		HitboxWaiter = hitboxWaiter,
+		Threats = threats,
 		Recent = {},
 		GenericRecent = setmetatable({}, { __mode = "k" }),
 		Repeats = {},
@@ -51,9 +53,26 @@ function DefenseEngine:_prune(now)
 end
 
 function DefenseEngine:_targetFor(entity, position)
+	local function live(target)
+		if not target or not target.Root or not target.Root.Parent then
+			return nil
+		end
+		local localRoot = self.State.Root
+		return {
+			Character = target.Character,
+			Player = target.Player,
+			Humanoid = target.Humanoid,
+			Root = target.Root,
+			Distance = localRoot and (target.Root.Position - localRoot.Position).Magnitude or target.Distance,
+			CrosshairDistance = target.CrosshairDistance,
+			FacingDot = target.FacingDot,
+			OnScreen = target.OnScreen,
+			HealthRatio = target.HealthRatio,
+		}
+	end
 	for _, target in ipairs(self.State.Targets) do
 		if target.Character == entity then
-			return target
+			return live(target)
 		end
 	end
 
@@ -70,7 +89,7 @@ function DefenseEngine:_targetFor(entity, position)
 			nearestDistance = distance
 		end
 	end
-	return nearest
+	return live(nearest)
 end
 
 function DefenseEngine:_defaultAction()
@@ -200,7 +219,17 @@ function DefenseEngine:_execute(key, event, profile, target, action, hitboxReady
 	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 		return self:_reject("defense disabled before execution")
 	end
-	local currentTarget = self:_targetFor(event.entity, event.position) or target
+	local currentTarget
+	if event.entity == self.State.Character then
+		currentTarget = {
+			Character = self.State.Character,
+			Root = self.State.Root,
+			Humanoid = self.State.Humanoid,
+			Distance = 0,
+		}
+	else
+		currentTarget = self:_targetFor(event.entity, event.position)
+	end
 	if not currentTarget or not currentTarget.Root or not currentTarget.Root.Parent then
 		return self:_reject("target-lost")
 	end
@@ -237,20 +266,35 @@ function DefenseEngine:_startRepeat(key, event, profile, target)
 	if not profile.preferRepeat or profile.repeatDelay <= 0 then
 		return
 	end
+	local threatPlan
+	if self.Threats then
+		local admitted, claimed = self.Threats:claim(event, os.clock() + profile.repeatStartDelay)
+		if not admitted then
+			return
+		end
+		threatPlan = claimed
+	end
 	local token = {}
 	local startedAt = os.clock()
 	self.Repeats[key] = token
 
 	local function queue(delay)
-		self.Scheduler:schedule("repeat:" .. key, math.max(0.03, delay), {
+		local scheduled
+		scheduled = self.Scheduler:schedule("repeat:" .. key, math.max(0.03, delay), {
 			punishable = profile.punishableWindow,
 			after = profile.afterWindow,
 		}, function()
 			if self.Repeats[key] ~= token then
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, "repeat replaced")
+				end
 				return
 			end
 			if os.clock() - startedAt >= 10 then
 				self.Repeats[key] = nil
+				if self.Threats then
+					self.Threats:settle(threatPlan, scheduled, "repeat timeout")
+				end
 				return
 			end
 			if event.track then
@@ -259,6 +303,9 @@ function DefenseEngine:_startRepeat(key, event, profile, target)
 				end)
 				if not ok or not playing then
 					self.Repeats[key] = nil
+					if self.Threats then
+						self.Threats:settle(threatPlan, scheduled, "repeat animation ended")
+					end
 					return
 				end
 			end
@@ -271,7 +318,18 @@ function DefenseEngine:_startRepeat(key, event, profile, target)
 				self:_reject(reason)
 			end
 			queue(profile.repeatDelay)
+			if self.Threats then
+				self.Threats:settle(threatPlan, scheduled, "repeat advanced")
+			end
 		end)
+		if self.Threats then
+			self.Threats:register(threatPlan, scheduled)
+		end
+		scheduled.onCancel = function(reason)
+			if self.Threats then
+				self.Threats:settle(threatPlan, scheduled, reason or "repeat cancelled")
+			end
+		end
 	end
 
 	queue(profile.repeatStartDelay)
@@ -283,6 +341,9 @@ function DefenseEngine:reset()
 	table.clear(self.Repeats)
 	table.clear(self.ModuleNotified)
 	self.HitboxWaiter:cancelAll()
+	if self.Threats then
+		self.Threats:reset()
+	end
 	self.LastPrune = 0
 end
 
@@ -298,6 +359,12 @@ function DefenseEngine:handle(event)
 
 	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 		return false, "defense is disabled"
+	end
+	if self.Threats then
+		local observed, observeReason = self.Threats:observe(event)
+		if not observed then
+			return false, observeReason
+		end
 	end
 	local profile = self.Timings:get(event.detector, event.id)
 	if not profile then
@@ -400,6 +467,14 @@ function DefenseEngine:handle(event)
 
 		local delay = self.Resolver:delay(resolved, event, target)
 		local scheduledAction = resolved
+		local threatPlan
+		if self.Threats then
+			local admitted, claimed = self.Threats:claim(event, os.clock() + delay)
+			if not admitted then
+				continue
+			end
+			threatPlan = claimed
+		end
 		self.State.LastPlan = {
 			kind = scheduledAction.kind,
 			name = scheduledAction.name,
@@ -429,8 +504,35 @@ function DefenseEngine:handle(event)
 				stopConnection = nil
 			end
 			local executionKey = scheduled.identifier .. ":" .. tostring(scheduled.id)
-			return self:_execute(executionKey, event, profile, target, scheduledAction)
+			local called, ok, detail = pcall(
+				self._execute,
+				self,
+				executionKey,
+				event,
+				profile,
+				target,
+				scheduledAction
+			)
+			if self.Threats then
+				self.Threats:settle(threatPlan, scheduled, called and (detail or "executed") or "execution error")
+			end
+			if not called then
+				error(ok, 0)
+			end
+			return ok, detail
 		end)
+		if self.Threats then
+			self.Threats:register(threatPlan, scheduled)
+		end
+		scheduled.onCancel = function(reason)
+			if stopConnection then
+				stopConnection:Disconnect()
+				stopConnection = nil
+			end
+			if self.Threats then
+				self.Threats:settle(threatPlan, scheduled, reason or "plan cancelled")
+			end
+		end
 
 		if event.track and not profile.ignoreAnimationEnd and not scheduledAction.metadata.ignoreAnimationEnd then
 			stopConnection = event.track.Stopped:Connect(function()

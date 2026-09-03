@@ -122,7 +122,9 @@ function Diagnostics:report(context)
 	local metrics = state.Metrics
 	local native = context.native or {}
 	local stats = native.stats or {}
+	local clientEffects = context.clientEffects or {}
 	local settings = self.Settings
+	local threat = state.ThreatSummary or {}
 	local lines = {
 		"CLAW MARK DIAGNOSTIC REPORT",
 		"version=" .. tostring(context.version or "unknown"),
@@ -135,6 +137,20 @@ function Diagnostics:report(context)
 		"timing_source=" .. tostring(context.timingSource or "unknown"),
 		"native=" .. tostring(native.status or "unknown"),
 		"native_last=" .. tostring(native.last or "idle"),
+		string.format(
+			"threat_guard=%s mode:%s active:%d noisy:%d",
+			settings:get("ThreatGuard.Enabled") and "on" or "off",
+			tostring(threat.mode or "unknown"),
+			tonumber(threat.activePlans) or 0,
+			tonumber(threat.noisySources) or 0
+		),
+		string.format(
+			"client_effects=normal:%d large:%d direct:%d deduplicated:%d",
+			clientEffects.ClientEffect or 0,
+			clientEffects.ClientEffectLarge or 0,
+			clientEffects.ClientEffectDirect or 0,
+			clientEffects.Deduplicated or 0
+		),
 		string.format(
 			"native_io=blocks:%d unblocks:%d retries:%d coalesced:%d dodges:%d cancels:%d",
 			stats.Blocks or 0,
@@ -166,6 +182,15 @@ function Diagnostics:report(context)
 			metrics.Rejected or 0,
 			metrics.Cancelled or 0
 		),
+		string.format(
+			"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d corroborated:%d promoted:%d",
+			metrics.ThreatAdmitted or 0,
+			metrics.ThreatCoalesced or 0,
+			metrics.ThreatDropped or 0,
+			metrics.ThreatSpamBursts or 0,
+			metrics.ThreatCorroborated or 0,
+			metrics.ThreatPromoted or 0
+		),
 		"last_detection=" .. formatLast(state.LastDetection, function(value)
 			return tostring(value.detector) .. ":" .. tostring(value.id)
 		end),
@@ -188,6 +213,9 @@ function Diagnostics:report(context)
 		end),
 		"last_failure=" .. formatLast(state.LastFailure, function(value)
 			return value.reason
+		end),
+		"last_threat=" .. formatLast(state.LastThreat, function(value)
+			return tostring(value.kind) .. ":" .. tostring(value.reason)
 		end),
 	}
 

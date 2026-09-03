@@ -37,13 +37,16 @@ const dynamicWeaponSource = sources.get("src/Combat/DynamicWeaponResolver.lua");
 const timingResolverSource = sources.get("src/Combat/TimingResolver.lua");
 const defenseSource = sources.get("src/Combat/DefenseEngine.lua");
 const schedulerSource = sources.get("src/Combat/Scheduler.lua");
+const threatSource = sources.get("src/Combat/ThreatArbiter.lua");
 const nativeBridgeSource = sources.get("src/Combat/NativeInputBridge.lua");
 const fallbackSource = sources.get("src/Combat/FallbackResolver.lua");
 const validationSource = sources.get("src/Combat/ValidationEngine.lua");
+const stateMonitorSource = sources.get("src/Combat/StateMonitor.lua");
 const actionExecutorSource = sources.get("src/Combat/ActionExecutor.lua");
 const diagnosticsSource = sources.get("src/Combat/Diagnostics.lua");
 const presetSource = sources.get("src/Combat/PresetManager.lua");
 const detectorHubSource = sources.get("src/Combat/Detection/DetectorHub.lua");
+const clientEffectSource = sources.get("src/Combat/Detection/ClientEffectDetector.lua");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -102,6 +105,19 @@ check(defenseSource.includes("native:isBusy()"), "generic defense does not guard
 check(defenseSource.includes("generic defense rearm"), "generic defense has no post-detection rearm guard");
 check(defenseSource.includes('sourceModule = weapon and "WeaponTest"'), "unknown weapon animations do not use the dynamic hitbox resolver");
 check(schedulerSource.includes("scheduled.detail = detail"), "scheduled validation failure detail is discarded");
+check(threatSource.includes('event.detector == "animation" and pendingPlans >= maximum'), "animation plans can consume an unbounded per-source budget");
+check(threatSource.includes('record.noisyUntil'), "source-scoped animation quarantine is missing");
+check(threatSource.includes('ThreatCoalesced'), "overlapping threat plans are not coalesced");
+check(threatSource.includes('ThreatPromoted'), "stronger evidence cannot supersede an animation plan");
+check(defenseSource.includes('self.Threats:claim'), "defense scheduling bypasses threat arbitration");
+check(entry.includes('"THREAT GUARD", "ThreatGuard.Enabled"'), "threat guard has no visible control");
+check(clientEffectSource.includes("ClientEffectLarge") && clientEffectSource.includes("ClientEffectDirect"), "three-channel client-effect detection is incomplete");
+check(clientEffectSource.includes("inspected >= 32") && clientEffectSource.includes("depth > 2"), "client-effect owner traversal is not bounded");
+check(clientEffectSource.includes('previous.channel ~= channel'), "cross-channel client-effect deduplication is missing");
+check(detectorHubSource.includes("ClientEffectDetector.new"), "client-effect detector is not connected to the detector hub");
+check(validationSource.includes("profile and profile.useHitboxCFrame"), "hitbox-CFrame profiles still prefer the owner root");
+check(stateMonitorSource.includes('instance:IsA("ValueBase")'), "replicated state values are not watched for changes");
+check(stateMonitorSource.includes("CharacterRemoving"), "character removal does not quiesce replicated state");
 check(timingDatabase.version === 1, "timing database version is invalid");
 check(timingProfiles.length >= 800, "attributed timing database is incomplete");
 check(timingActions.length >= 1000, "attributed timing actions are incomplete");
@@ -140,6 +156,25 @@ if (compilerPath) {
   const detail = `${compile.stdout ?? ""}${compile.stderr ?? ""}`.trim();
   check(compile.status === 0, `Luau compilation failed${detail ? `: ${detail}` : ""}`);
   if (compile.status === 0) console.log("Official Luau compile check passed.");
+}
+
+const runtimeCandidates = process.platform === "win32"
+  ? [path.join(root, ".tools", "luau", "bin", "luau.exe")]
+  : [path.join(root, ".tools", "luau", "bin", "luau")];
+for (const runtimePath of runtimeCandidates) {
+  try {
+    await access(runtimePath);
+  } catch {
+    continue;
+  }
+  const scenarios = spawnSync(runtimePath, [path.join(root, "tests", "ThreatArbiter.spec.luau")], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const detail = `${scenarios.stdout ?? ""}${scenarios.stderr ?? ""}`.trim();
+  check(scenarios.status === 0, `ThreatArbiter scenarios failed${detail ? `: ${detail}` : ""}`);
+  if (scenarios.status === 0) console.log(detail || "ThreatArbiter scenarios passed.");
+  break;
 }
 
 if (failures.length > 0) {

@@ -5,6 +5,7 @@ local AnimationDetector = assert(modules["src/Combat/Detection/AnimationDetector
 local SoundDetector = assert(modules["src/Combat/Detection/SoundDetector.lua"])
 local PartDetector = assert(modules["src/Combat/Detection/PartDetector.lua"])
 local EffectDetector = assert(modules["src/Combat/Detection/EffectDetector.lua"])
+local ClientEffectDetector = assert(modules["src/Combat/Detection/ClientEffectDetector.lua"])
 local Players = game:GetService("Players")
 
 local DetectorHub = {}
@@ -84,12 +85,14 @@ function DetectorHub.new(settings, timings, options)
 			Sounds = SoundDetector.new(detectorOptions(options.sound)),
 			Parts = PartDetector.new(detectorOptions(options.part)),
 			Effects = EffectDetector.new(detectorOptions(options.effect)),
+			ClientEffects = ClientEffectDetector.new(detectorOptions(options.clientEffect)),
 		},
 	}, DetectorHub)
 
 	for settingName, detector in pairs(self.Detectors) do
 		self.Connections[#self.Connections + 1] = detector.Detected:Connect(function(event)
-			if self.Settings:get("Detection." .. settingName) then
+			local setting = settingName == "ClientEffects" and "Effects" or settingName
+			if self.Settings:get("Detection." .. setting) then
 				self.Detected:Fire(event)
 			end
 		end)
@@ -115,8 +118,9 @@ function DetectorHub:sync(settingName)
 		return
 	end
 	for name, detector in pairs(self.Detectors) do
-		if not settingName or name == settingName then
-			if self.Settings:get("Detection." .. name) then
+		local setting = name == "ClientEffects" and "Effects" or name
+		if not settingName or setting == settingName then
+			if self.Settings:get("Detection." .. setting) then
 				detector:start()
 			else
 				detector:stop()

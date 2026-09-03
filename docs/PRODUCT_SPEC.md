@@ -51,6 +51,7 @@ Each entry records ID, speed, lifetime, fade, target weight, visible cap, maximu
 detector event
   → timing/profile resolution
   → stable planning validation
+  → per-source threat admission / overlap coalescing
   → scheduled due time
   → live target/state validation
   → fallback selection if the requested input is unavailable
@@ -60,6 +61,8 @@ detector event
 ```
 
 Transient state such as `ParryCool`, dodge cooldown, stun, iframes, and current attack state belongs at scheduled execution time. Geometry/profile validity can be checked while planning. A fallback must not discard the original attack's due time.
+
+Animation volume is never equivalent to danger. Threat Guard maintains a bounded plan budget per source, quarantines only the noisy source's animation channel, and reserves capacity for stronger part/effect/projectile evidence. It does not add a fixed validation sleep and does not present a heuristic distinction as proof that an attack is genuine.
 
 ## Capability states
 
@@ -90,4 +93,3 @@ Every public release must pass:
 3. Safe-start and secret/private-source verification.
 4. Scenario checks for pending-action shutdown, repeated dodge cancellation, simultaneous identical attackers, and fallback timing.
 5. Public loader, bundle, timing database, and immutable fallback HTTP verification.
-

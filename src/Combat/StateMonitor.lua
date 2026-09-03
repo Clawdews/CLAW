@@ -83,12 +83,25 @@ end
 function StateMonitor:refresh()
 	local character = self.State.Character
 	if not character then
+		for name in pairs(FLAGS) do
+			self:_setFlag(name, false)
+		end
+		self:_setFlag("WeaponEquipped", false)
 		return
 	end
 	for name, aliases in pairs(FLAGS) do
 		self:_setFlag(name, self:_has(character, aliases))
 	end
 	self:_setFlag("WeaponEquipped", character:FindFirstChildWhichIsA("Tool") ~= nil)
+end
+
+function StateMonitor:_watchValue(instance)
+	if not instance:IsA("ValueBase") then
+		return
+	end
+	self:_bind(self.CharacterConnections, instance.Changed, function()
+		self:queueRefresh()
+	end)
 end
 
 function StateMonitor:queueRefresh()
@@ -111,7 +124,8 @@ function StateMonitor:attach(character)
 		return
 	end
 
-	self:_bind(self.CharacterConnections, character.DescendantAdded, function()
+	self:_bind(self.CharacterConnections, character.DescendantAdded, function(descendant)
+		self:_watchValue(descendant)
 		self:queueRefresh()
 	end)
 	self:_bind(self.CharacterConnections, character.DescendantRemoving, function()
@@ -125,6 +139,9 @@ function StateMonitor:attach(character)
 			end)
 		end
 	end
+	for _, descendant in ipairs(character:GetDescendants()) do
+		self:_watchValue(descendant)
+	end
 	self:refresh()
 end
 
@@ -135,6 +152,11 @@ function StateMonitor:start()
 	self.Running = true
 	self:_bind(self.Connections, Players.LocalPlayer.CharacterAdded, function(character)
 		self:attach(character)
+	end)
+	self:_bind(self.Connections, Players.LocalPlayer.CharacterRemoving, function(character)
+		if self.State.Character == character then
+			self:attach(nil)
+		end
 	end)
 	self:attach(Players.LocalPlayer.Character)
 end

@@ -9,6 +9,7 @@ local EntityHistory = assert(modules["src/Combat/EntityHistory.lua"])
 local Targeting = assert(modules["src/Combat/Targeting.lua"])
 local TimingStore = assert(modules["src/Combat/TimingStore.lua"])
 local Scheduler = assert(modules["src/Combat/Scheduler.lua"])
+local ThreatArbiter = assert(modules["src/Combat/ThreatArbiter.lua"])
 local DetectorHub = assert(modules["src/Combat/Detection/DetectorHub.lua"])
 local InputAdapter = assert(modules["src/Combat/InputAdapter.lua"])
 local ActionExecutor = assert(modules["src/Combat/ActionExecutor.lua"])
@@ -67,6 +68,7 @@ function Combat.new(options)
 		Timings = TimingStore.new(),
 		Targeting = nil,
 		Scheduler = nil,
+		Threats = nil,
 		Detectors = nil,
 		Input = nil,
 		Executor = nil,
@@ -91,6 +93,7 @@ function Combat.new(options)
 
 	self.Targeting = Targeting.new(settings, options.targeting)
 	self.Scheduler = Scheduler.new(state)
+	self.Threats = ThreatArbiter.new(settings, state, self.Scheduler)
 	local inputOptions = {
 		custom = options.input and options.input.custom or nil,
 		settings = settings,
@@ -145,7 +148,8 @@ function Combat.new(options)
 		self.Validator,
 		self.Probability,
 		self.Fallbacks,
-		self.HitboxWaiter
+		self.HitboxWaiter,
+		self.Threats
 	)
 	self._lifetimeConnections[#self._lifetimeConnections + 1] = self.Detectors.Detected:Connect(function(event)
 		self.Defense:handle(event)
@@ -269,6 +273,9 @@ function Combat:set(path, value, persist)
 	if path == "Validation.HistorySeconds" then
 		self.History:setWindow(value)
 	end
+	if path == "ThreatGuard.Enabled" then
+		self.Threats:reset()
+	end
 	if path == "Detection.OnlyConfigured" or path == "Detection.Sounds" then
 		self.Detectors:refresh()
 	end
@@ -372,6 +379,7 @@ function Combat:diagnosticReport(copyToClipboard)
 			last = self.Input.Native.LastTransition,
 			stats = self.Input.Native.Stats,
 		},
+		clientEffects = self.Detectors.Detectors.ClientEffects and self.Detectors.Detectors.ClientEffects.Stats or {},
 	})
 	if not copyToClipboard then
 		return report
@@ -430,6 +438,7 @@ function Combat:Destroy()
 	self.Timings:Destroy()
 	self.Scheduler:Destroy()
 	self.History:clear()
+	self.Threats:Destroy()
 	self.State:Destroy()
 end
 
