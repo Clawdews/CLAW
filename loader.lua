@@ -1,5 +1,9 @@
--- CLAW MARK's experimental combat and animation runtime is retired.
--- Keep this endpoint inert so an old loadstring cannot unexpectedly launch a
--- different script. Project Rain remains a separate, explicitly run script.
-warn("[CLAW] CLAW MARK combat/animation runtime retired; no code was executed")
-return nil
+local HttpService = game:GetService("HttpService")
+local url = "https://raw.githubusercontent.com/Clawdews/CLAW/main/relay.lua"
+url = url .. "?claw_cache=" .. HttpService:GenerateGUID(false)
+
+local source = game:HttpGet(url)
+assert(type(source) == "string" and #source > 1024, "CLAW RELAY download was empty or incomplete")
+local chunk, compileError = loadstring(source, "@CLAW/relay.lua")
+assert(chunk, compileError)
+return chunk()

@@ -1,9 +1,45 @@
-# CLAW
+# CLAW RELAY
 
-CLAW's experimental combat, animation, timing, and recorder stack has been retired from the active branch. `main` is now an inert clean slate for any future PvE or quality-of-life work.
+CLAW RELAY is a small, no-UI controller for moving and managing the user's own alternate accounts from one trusted Roblox account. It contains no combat automation, animation recorder, timing database, or Project Rain code.
 
-The existing Project Rain integration and its standalone loot webhook notifier remain local, private, and unchanged by this cleanup. They are intentionally excluded by `.gitignore`; neither that runtime nor webhook credentials are published here.
+The former CLAW MARK v0.4.7 source remains archived under the `legacy-combat-v0.4.7` tag. The existing local Project Rain loot notifier remains private, ignored, and untouched.
 
-The former CLAW MARK v0.4.7 source remains available in Git history under the `legacy-combat-v0.4.7` tag. It is archived for reference and is no longer supported by the main loader.
+## Start each follower account
 
-`loader.lua` is retained only as a safe retirement notice for old CLAW loadstrings. It does not execute Project Rain or any other script.
+Set the controller to the exact username of the main account, then execute the loader on every alt:
+
+```lua
+getgenv().CLAW_RELAY_CONFIG = {
+    ControllerName = "ExactMainUsername",
+
+    -- Optional safety roster. Numeric UserIds are recommended.
+    TrustedUserIds = {},
+    ProximitySafety = false,
+}
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/loader.lua?t=" .. tostring(os.time())))()
+```
+
+`ControllerUserId` may be used instead of `ControllerName` and takes priority when both are supplied. The configured controller account deliberately does not start the follower runtime.
+
+## Controller commands
+
+Type these in chat from the configured controller account while the alts share its server:
+
+```text
+;alts bring
+;alts bring 5
+;alts stop
+;alts phase on
+;alts phase off
+;alts menu
+;alts join <jobId>
+;alts safety on
+;alts safety off
+;alts status
+;alts help
+```
+
+`bring` assigns each alt a stable formation position instead of stacking every character on one point. Movement noclip is temporary and restores the character's collision state afterward. `join` queues CLAW RELAY across the teleport when the executor supports `queue_on_teleport`; otherwise, run the loader again after joining.
+
+Proximity safety is disabled by default. Before enabling it, list the UserIds of the main account and every alt in `TrustedUserIds`. An unlisted player who stays within `ProximityDistance` for `ProximityGraceSeconds` causes that alt to request the main menu.
