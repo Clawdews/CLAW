@@ -124,6 +124,8 @@ function cleanCandidate(event) {
 }
 
 const outcomes = events.filter((event) => event.type === "outcome");
+const offenseOutcomes = events.filter((event) => event.type === "offense_outcome");
+const localStarts = events.filter((event) => event.type === "local_animation_start");
 const effectAdds = events.filter((event) => event.type === "effect_added");
 const outcomeCounts = new Map();
 const effectCounts = new Map();
@@ -162,6 +164,8 @@ function resultFor(id) {
       damageTicks: 0,
       damages: [],
       attemptDelays: [],
+      successDelays: [],
+      failedDelays: [],
       hitDelays: [],
       ranks: [],
     };
@@ -176,7 +180,12 @@ for (const attempt of attempts) {
   result.attempts += 1;
   result.attemptDelays.push(Number(candidate.delay));
   result.ranks.push(Number(candidate.rank));
-  if (pairedAttemptSequences.has(attempt.seq)) result.successes += 1;
+  if (pairedAttemptSequences.has(attempt.seq)) {
+    result.successes += 1;
+    result.successDelays.push(Number(candidate.delay));
+  } else {
+    result.failedDelays.push(Number(candidate.delay));
+  }
 }
 for (const hit of outcomes.filter((event) => event.kind === "health_hit")) {
   const candidate = cleanCandidate(hit);
@@ -235,17 +244,67 @@ const resultRows = [...resultGroups.values()]
     totalDamage: fixed(result.damages.reduce((sum, value) => sum + value, 0), 1),
     damageMedian: fixed(median(result.damages), 2),
     attemptMedian: fixed(median(result.attemptDelays)),
+    successMedian: fixed(median(result.successDelays)),
+    failedMedian: fixed(median(result.failedDelays)),
     hitMedian: fixed(median(result.hitDelays)),
     candidateRankMedian: fixed(median(result.ranks), 1),
   }))
   .filter((result) => result.attempts > 0 || result.damageTicks > 0)
   .sort((left, right) => (right.attempts + right.damageTicks) - (left.attempts + left.damageTicks));
 
+const offenseGroups = new Map();
+function offenseFor(id) {
+  const key = String(id ?? "unlinked");
+  let result = offenseGroups.get(key);
+  if (!result) {
+    result = {
+      id: key,
+      name: profileName(key),
+      observations: Number(catalogExport?.offenseCatalog?.[key]?.observations) || 0,
+      parried: 0,
+      landed: 0,
+      parriedDelays: [],
+      landedDelays: [],
+    };
+    offenseGroups.set(key, result);
+  }
+  return result;
+}
+for (const [id, detail] of Object.entries(catalogExport?.offenseCatalog ?? {})) {
+  const result = offenseFor(id);
+  result.observations = Number(detail?.observations) || 0;
+}
+for (const outcome of offenseOutcomes) {
+  const match = outcome.match ?? cleanCandidate(outcome);
+  if (!match) continue;
+  const result = offenseFor(match.animationId);
+  if (outcome.kind === "local_attack_parried") {
+    result.parried += 1;
+    result.parriedDelays.push(Number(match.delay));
+  } else if (outcome.kind === "local_attack_landed") {
+    result.landed += 1;
+    result.landedDelays.push(Number(match.delay));
+  }
+}
+const offenseRows = [...offenseGroups.values()]
+  .map((result) => ({
+    id: result.id,
+    name: result.name,
+    observations: result.observations,
+    parried: result.parried,
+    landed: result.landed,
+    parriedMedian: fixed(median(result.parriedDelays)),
+    landedMedian: fixed(median(result.landedDelays)),
+  }))
+  .filter((result) => result.observations > 0 || result.parried > 0 || result.landed > 0)
+  .sort((left, right) => (right.parried + right.landed + right.observations) - (left.parried + left.landed + left.observations));
+
 console.log(`Session: ${path.basename(sessionDir)}`);
 console.log(`Duration: ${fixed(duration, 1)}s | event files: ${names.length} | retained events: ${events.length}`);
 console.log(`Animations: ${starts.length} | sources: ${sourceRows.length} | outcomes: ${outcomes.length}`);
 console.log(`Parry attempts: ${attempts.length} | confirmed ParrySuccess: ${confirmedSuccesses.length} | paired: ${successPairs.length}`);
 console.log(`Health-loss ticks: ${outcomeCounts.get("health_hit") ?? 0}`);
+console.log(`Local offensive mirror: ${catalogExport?.session?.localAnimations ?? localStarts.length} animations | ${offenseOutcomes.length} replies`);
 console.log("\nSources");
 console.table(sourceRows);
 console.log("\nDetected breaker cluster");
@@ -253,6 +312,9 @@ if (breakerRows.length > 0) console.table(breakerRows);
 else console.log("none");
 console.log("\nRecovered combat associations (breaker IDs excluded)");
 console.table(resultRows.slice(0, 40));
+console.log("\nOpponent responses to local attacks");
+if (offenseRows.length > 0) console.table(offenseRows.slice(0, 40));
+else console.log("not recorded (requires CLAW Recorder v0.3+)");
 console.log("\nOutcome counts");
 console.table([...outcomeCounts.entries()].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count));
 console.log("\nSelected effect counts");

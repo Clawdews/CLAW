@@ -65,6 +65,10 @@ check(recorderSource.includes('pushEvent("animation_end"'), "recorder does not c
 check(recorderSource.includes('recordOutcome("health_hit"'), "recorder does not capture definite health hits");
 check(recorderSource.includes('ParryCool = "parry_attempt"'), "recorder does not capture observed parry attempts");
 check(recorderSource.includes('ParrySuccess = "parry_success"'), "recorder does not capture confirmed parry success");
+check(recorderSource.includes('pushEvent("local_animation_start"'), "recorder does not mirror local offensive animations");
+check(recorderSource.includes('recordOffenseOutcome("local_attack_parried"'), "recorder does not correlate opponent parries to local attacks");
+check(recorderSource.includes('recordOffenseOutcome("local_attack_landed"'), "recorder does not correlate landed local attacks");
+check(!recorderSource.includes('Parried = "parried_signal"'), "recorder still misclassifies local Parried as incoming defense evidence");
 check(recorderSource.includes("candidates = candidates"), "recorder discards alternate animation correlations");
 check(recorderSource.includes("sourceId = sourceId"), "recorder does not preserve anonymous animation sources");
 check(recorderSource.includes("attack.suspicious = classifyAnimation"), "recorder does not classify sustained animation floods");

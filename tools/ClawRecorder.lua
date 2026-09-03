@@ -1,4 +1,4 @@
--- CLAW RECORDER v0.2.0
+-- CLAW RECORDER v0.3.0
 -- Passive combat telemetry for building timing catalogs alongside another hub.
 
 local ENV = getgenv and getgenv() or _G
@@ -90,13 +90,14 @@ local function pingMilliseconds()
 end
 
 local State = {
-	Version = "0.2.0",
+	Version = "0.3.0",
 	Destroyed = false,
 	Recording = true,
 	Connections = {},
 	CharacterConnections = {},
 	AnimatorConnections = setmetatable({}, { __mode = "k" }),
 	TrackConnections = {},
+	LocalTrackConnections = {},
 	EffectLifetimes = setmetatable({}, { __mode = "k" }),
 	EntityIds = setmetatable({}, { __mode = "k" }),
 	EntitySequence = 0,
@@ -108,16 +109,23 @@ local State = {
 	EffectClassesSeen = {},
 	Active = setmetatable({}, { __mode = "k" }),
 	Recent = {},
+	LocalActive = setmetatable({}, { __mode = "k" }),
+	LocalRecent = {},
 	Catalog = {},
+	OffenseCatalog = {},
 	Buffer = {},
 	Chunks = {},
 	Sequence = 0,
 	ChunkSequence = 0,
 	AnimationCount = 0,
+	LocalAnimationCount = 0,
 	OutcomeCount = 0,
+	OffenseOutcomeCount = 0,
 	LinkedCount = 0,
+	OffenseLinkedCount = 0,
 	DroppedCount = 0,
 	LastOutcome = nil,
+	LastOffenseOutcome = nil,
 	LastSave = 0,
 	LastError = nil,
 	Flushing = false,
@@ -192,12 +200,10 @@ local function catalogCount()
 	return count
 end
 
-local function suspiciousCount()
+local function offenseCatalogCount()
 	local count = 0
-	for _, animations in pairs(State.SuspiciousAnimations) do
-		for _ in pairs(animations) do
-			count = count + 1
-		end
+	for _ in pairs(State.OffenseCatalog) do
+		count = count + 1
 	end
 	return count
 end
@@ -343,6 +349,24 @@ local function catalogFor(id)
 		sources = {},
 	}
 	State.Catalog[id] = catalog
+	return catalog
+end
+
+local function offenseCatalogFor(id)
+	local catalog = State.OffenseCatalog[id]
+	if catalog then
+		return catalog
+	end
+	catalog = {
+		id = id,
+		observations = 0,
+		completed = 0,
+		outcomes = {},
+		samples = {},
+		playback = {},
+		durations = {},
+	}
+	State.OffenseCatalog[id] = catalog
 	return catalog
 end
 
@@ -558,6 +582,94 @@ local function beginAnimation(animator, track)
 	end
 end
 
+-- The local mirror is intentionally read-only. It lets the catalog distinguish
+-- "APC defended an incoming attack" from "the opponent defended my attack."
+local function beginLocalAnimation(track)
+	if State.Destroyed or not State.Recording then
+		return
+	end
+	local properties = animationProperties(track)
+	if properties.id == "unknown"
+		or properties.id == ""
+		or not string.find(properties.priority or "", "Action", 1, true)
+	then
+		return
+	end
+
+	local now = os.clock()
+	State.AnimationSequence = State.AnimationSequence + 1
+	local attack = {
+		seq = State.AnimationSequence,
+		startedAt = now,
+		endedAt = nil,
+		id = properties.id,
+		track = track,
+		start = properties,
+		weapon = weaponSnapshot(LocalPlayer.Character),
+		lastTimePosition = properties.timePosition,
+	}
+	attack.rawLogged = shouldLogAnimation("local:" .. properties.id, now)
+	State.LocalActive[track] = attack
+	appendBounded(State.LocalRecent, attack, 80)
+	State.LocalAnimationCount = State.LocalAnimationCount + 1
+
+	local catalog = offenseCatalogFor(properties.id)
+	catalog.observations = catalog.observations + 1
+	appendBounded(catalog.playback, {
+		speed = properties.speed,
+		length = properties.length,
+		priority = properties.priority,
+		weapon = attack.weapon,
+		ping = pingMilliseconds(),
+	}, MAX_SAMPLES_PER_OUTCOME)
+
+	if attack.rawLogged then
+		pushEvent("local_animation_start", {
+			animationEventSeq = attack.seq,
+			animation = properties,
+			weapon = attack.weapon,
+			ping = pingMilliseconds(),
+		})
+	end
+
+	local okStopped, stoppedConnection = pcall(function()
+		return track.Stopped:Connect(function()
+			disconnectMapped(State.LocalTrackConnections, track)
+			if State.Destroyed then
+				return
+			end
+			local active = State.LocalActive[track]
+			if not active then
+				return
+			end
+			local stoppedAt = os.clock()
+			active.endedAt = stoppedAt
+			local final = animationProperties(track)
+			local elapsed = stoppedAt - active.startedAt
+			local observedPosition = math.max(active.lastTimePosition or 0, final.timePosition or 0)
+			local entry = offenseCatalogFor(active.id)
+			entry.completed = entry.completed + 1
+			appendBounded(entry.durations, {
+				elapsed = round(elapsed, 6),
+				observedTimePosition = round(observedPosition, 5),
+			}, MAX_SAMPLES_PER_OUTCOME)
+			if active.rawLogged then
+				pushEvent("local_animation_end", {
+					animationEventSeq = active.seq,
+					animationId = active.id,
+					elapsed = round(elapsed, 6),
+					observedTimePosition = round(observedPosition, 5),
+					final = final,
+				})
+			end
+			State.LocalActive[track] = nil
+		end)
+	end)
+	if okStopped and stoppedConnection then
+		State.LocalTrackConnections[track] = stoppedConnection
+	end
+end
+
 local function attachAnimator(animator)
 	if State.AnimatorConnections[animator] then
 		return
@@ -693,8 +805,90 @@ local function recordOutcome(kind, source, detail)
 		kind = kind,
 		animationId = match and match.animationId or nil,
 		delay = match and match.delay or nil,
+		at = now,
 	}
 	pushEvent("outcome", {
+		kind = kind,
+		source = source,
+		detail = scalarSnapshot(detail),
+		match = match,
+		candidates = candidates,
+	})
+end
+
+local function bestLocalAttack(now)
+	local candidates = {}
+	for index = #State.LocalRecent, 1, -1 do
+		local attack = State.LocalRecent[index]
+		local age = now - attack.startedAt
+		if age > 3 then
+			break
+		end
+		if age >= 0 then
+			local score = age * 0.35
+			if attack.endedAt and now - attack.endedAt > 0.4 then
+				score = score + 1
+			end
+			candidates[#candidates + 1] = { attack = attack, score = score }
+		end
+	end
+	table.sort(candidates, function(left, right)
+		return left.score < right.score
+	end)
+	local best = candidates[1]
+	local snapshots = {}
+	for index = 1, math.min(#candidates, 6) do
+		local candidate = candidates[index]
+		local attack = candidate.attack
+		snapshots[#snapshots + 1] = {
+			animationEventSeq = attack.seq,
+			animationId = attack.id,
+			delay = round(now - attack.startedAt, 6),
+			score = round(candidate.score, 5),
+			priority = attack.start.priority,
+			active = attack.endedAt == nil,
+		}
+	end
+	return best and best.attack or nil, best and best.score or math.huge, snapshots
+end
+
+local function recordOffenseOutcome(kind, source, detail)
+	if State.Destroyed or not State.Recording then
+		return
+	end
+	local now = os.clock()
+	local dedupe = "offense:" .. tostring(kind) .. ":" .. tostring(source)
+	if now - (lastOutcomeAt[dedupe] or 0) < 0.025 then
+		return
+	end
+	lastOutcomeAt[dedupe] = now
+	State.OffenseOutcomeCount = State.OffenseOutcomeCount + 1
+	local attack, score, candidates = bestLocalAttack(now)
+	local match
+	if attack then
+		State.OffenseLinkedCount = State.OffenseLinkedCount + 1
+		match = {
+			animationEventSeq = attack.seq,
+			animationId = attack.id,
+			delay = round(now - attack.startedAt, 6),
+			score = round(score, 5),
+			startSpeed = attack.start.speed,
+			length = attack.start.length,
+			weapon = attack.weapon,
+			ping = pingMilliseconds(),
+		}
+		local catalog = offenseCatalogFor(attack.id)
+		catalog.outcomes[kind] = (catalog.outcomes[kind] or 0) + 1
+		catalog.samples[kind] = catalog.samples[kind] or {}
+		appendBounded(catalog.samples[kind], match, MAX_SAMPLES_PER_OUTCOME)
+	end
+	State.LastOffenseOutcome = {
+		kind = kind,
+		animationId = match and match.animationId or nil,
+		delay = match and match.delay or nil,
+		at = now,
+	}
+	pushEvent("offense_outcome", {
 		kind = kind,
 		source = source,
 		detail = scalarSnapshot(detail),
@@ -708,7 +902,6 @@ local EFFECT_OUTCOMES = {
 	ParryFrame = "parry_frame",
 	Parry = "parry_signal",
 	ParrySuccess = "parry_success",
-	Parried = "parried_signal",
 	Blocking = "block_state",
 	Stun = "stun",
 	Knocked = "knocked",
@@ -786,6 +979,11 @@ local function attachEffects()
 		if outcome then
 			recordOutcome(outcome, "effect:" .. class, { class = class })
 		end
+		if class == "Parried" then
+			recordOffenseOutcome("local_attack_parried", "effect:Parried", { class = class })
+		elseif class == "LandedLightAttack" then
+			recordOffenseOutcome("local_attack_landed", "effect:LandedLightAttack", { class = class })
+		end
 	end)
 	connect(effects.EffectRemoved, function(effect)
 		local lifetime = effect ~= nil and State.EffectLifetimes[effect] or nil
@@ -834,9 +1032,18 @@ end
 
 local function attachCharacter(character)
 	disconnectAll(State.CharacterConnections)
+	for track in pairs(State.LocalTrackConnections) do
+		disconnectMapped(State.LocalTrackConnections, track)
+	end
+	table.clear(State.LocalActive)
+	table.clear(State.LocalRecent)
 	table.clear(watchedMeters)
 	local humanoid = character:FindFirstChildWhichIsA("Humanoid") or character:WaitForChild("Humanoid", 10)
 	if humanoid then
+		local animator = humanoid:FindFirstChildWhichIsA("Animator") or humanoid:WaitForChild("Animator", 5)
+		if animator then
+			connect(animator.AnimationPlayed, beginLocalAnimation, State.CharacterConnections)
+		end
 		local lastHealth = humanoid.Health
 		connect(humanoid.HealthChanged, function(health)
 			local previousHealth = lastHealth
@@ -891,7 +1098,7 @@ end
 
 local function exportCatalog()
 	return {
-		version = 2,
+		version = 3,
 		recorderVersion = State.Version,
 		session = {
 			id = SESSION_ID,
@@ -899,13 +1106,17 @@ local function exportCatalog()
 			placeId = game.PlaceId,
 			duration = relativeTime(),
 			animations = State.AnimationCount,
+			localAnimations = State.LocalAnimationCount,
 			outcomes = State.OutcomeCount,
+			offenseOutcomes = State.OffenseOutcomeCount,
 			linked = State.LinkedCount,
+			offenseLinked = State.OffenseLinkedCount,
 			dropped = State.DroppedCount,
 		},
 		effectCounts = State.EffectCounts,
 		suspiciousAnimations = State.SuspiciousAnimations,
 		catalog = State.Catalog,
+		offenseCatalog = State.OffenseCatalog,
 	}
 end
 
@@ -1076,7 +1287,7 @@ local function button(parent, text, x, y, width, callback)
 	return item
 end
 
-label(Header, "CLAW RECORDER v0.2", 9, 0, 230, 28, 13, Color3.fromRGB(189, 151, 255))
+label(Header, "CLAW RECORDER v0.3", 9, 0, 230, 28, 13, Color3.fromRGB(189, 151, 255))
 local Close = button(Header, "X", 327, 2, 27, function()
 	State:Destroy()
 end)
@@ -1175,15 +1386,34 @@ connect(RunService.Heartbeat, function()
 			end
 		end
 	end
+	for track, attack in pairs(State.LocalActive) do
+		if now - attack.startedAt > MAX_ACTIVE_AGE then
+			State.LocalActive[track] = nil
+		else
+			local properties = animationProperties(track)
+			attack.lastTimePosition = math.max(attack.lastTimePosition or 0, properties.timePosition or 0)
+		end
+	end
 	for index = #State.Recent, 1, -1 do
 		if now - State.Recent[index].startedAt > 6 then
 			table.remove(State.Recent, index)
+		end
+	end
+	for index = #State.LocalRecent, 1, -1 do
+		if now - State.LocalRecent[index].startedAt > 6 then
+			table.remove(State.LocalRecent, index)
 		end
 	end
 	for track in pairs(State.TrackConnections) do
 		if not State.Active[track] or now - State.Active[track].startedAt > MAX_ACTIVE_AGE then
 			State.Active[track] = nil
 			disconnectMapped(State.TrackConnections, track)
+		end
+	end
+	for track in pairs(State.LocalTrackConnections) do
+		if not State.LocalActive[track] or now - State.LocalActive[track].startedAt > MAX_ACTIVE_AGE then
+			State.LocalActive[track] = nil
+			disconnectMapped(State.LocalTrackConnections, track)
 		end
 	end
 	for animator, connection in pairs(State.AnimatorConnections) do
@@ -1206,13 +1436,18 @@ connect(RunService.Heartbeat, function()
 	)
 	Status.TextColor3 = State.Recording and Color3.fromRGB(112, 210, 133) or Color3.fromRGB(220, 178, 92)
 	Counters.Text = string.format(
-		"animations:%d  unique:%d  outcomes:%d  noise:%d",
+		"enemy:%d/%d  local:%d/%d  defense:%d  reply:%d",
 		State.AnimationCount,
 		catalogCount(),
+		State.LocalAnimationCount,
+		offenseCatalogCount(),
 		State.OutcomeCount,
-		suspiciousCount()
+		State.OffenseOutcomeCount
 	)
 	local last = State.LastOutcome
+	if State.LastOffenseOutcome and (not last or (State.LastOffenseOutcome.at or 0) > (last.at or 0)) then
+		last = State.LastOffenseOutcome
+	end
 	Detail.Text = last and string.format(
 		"last: %s  %s  %s",
 		last.kind,
@@ -1252,6 +1487,9 @@ function State:Destroy()
 	disconnectAll(self.Connections)
 	for track in pairs(self.TrackConnections) do
 		disconnectMapped(self.TrackConnections, track)
+	end
+	for track in pairs(self.LocalTrackConnections) do
+		disconnectMapped(self.LocalTrackConnections, track)
 	end
 	for animator, connection in pairs(self.AnimatorConnections) do
 		pcall(function()
