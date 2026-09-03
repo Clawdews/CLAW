@@ -580,7 +580,10 @@ function NativeInputBridge:_updateQueue()
 		end
 		if blocking then
 			self:_attemptUnblock("waiting for clear", now)
-		elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
+		elseif not self:_hasEffect("Knocked") then
+			-- Do not wait for Action to clear. A defensive Block edge is the
+			-- mechanism that can interrupt/cancel a local swing; waiting here made
+			-- the queued parry arrive only after the threat had already landed.
 			local fired = self:_sendBlock(false)
 			if fired then
 				for _, item in pairs(self.Queue) do
@@ -604,7 +607,6 @@ function NativeInputBridge:_updateQueue()
 			not blocking
 			and now >= self.NextBlockRetry
 			and self.BlockRetryCount < 1
-			and not self:_hasEffect("Action")
 			and not self:_hasEffect("Knocked")
 		then
 			self.BlockRetryCount = self.BlockRetryCount + 1

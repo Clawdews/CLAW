@@ -450,7 +450,12 @@ function DefenseEngine:handle(event)
 		end
 
 		local valid, validationReason = self.Validator:validate(event, profile, target, resolved, {
-			skipHitbox = profile.delayUntilHitbox,
+			-- Detection is an observation, not the impact frame.  Rushes, lunges,
+			-- projectiles, and turning attacks routinely start outside their final
+			-- hitbox/facing geometry.  Schedule them from the timing profile and
+			-- perform the authoritative geometry checks at execution time.
+			skipHitbox = true,
+			skipFacing = true,
 			skipTransient = true,
 		})
 		if not valid then

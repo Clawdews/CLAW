@@ -2,6 +2,14 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Live-combat admission repair — v0.4.7
+
+- Added an explicit defend-while-attacking policy, enabled in the baseline and presets. Native Parry/Block edges are now attempted during local attack/action windows instead of turning auto-defense into an implicit attack lock.
+- Moved hitbox and facing admission from animation-start time to the scheduled execution frame. A rush, lunge, projectile, or turning attack can no longer be discarded merely because its opening frame begins outside the final impact geometry.
+- Removed the native queue's `Action` wait for pending and bounded retry Block edges. The defensive edge can now interrupt a swing instead of being held until after the threat lands.
+- Changed the Stable preset's global facing gate to off; profile hitboxes remain active, while legitimate AoE, pull, aerial, and turning attacks are no longer rejected by a one-size-fits-all attacker-root dot product.
+- Extended the recorder analyzer with local effect-state snapshots at every defense attempt and damage event, making mid-swing suppression visible instead of inferring it from aggregate counts.
+
 ## Attack-episode isolation — v0.4.6
 
 - Replaced whole-Animator animation quarantine with per-signature isolation. A raw burst, paced plan churn, or repeated early abort now mutes only implicated animation IDs.

@@ -31,6 +31,12 @@ local DEFAULTS = {
 		Enabled = false,
 		Preferred = "Parry",
 		Fallback = "Dodge",
+		-- Native defensive edges must still be attempted while the local
+		-- character is inside an attack/action window.  Turning defense into an
+		-- attack lock is exactly what makes conventional input blockers fold in
+		-- real fights: once pressure starts, they stop letting the player fight
+		-- and still miss the next defense.
+		DefendWhileAttacking = true,
 		UnknownAnimationDelay = 0.16,
 		UnknownAnimationMaxLength = 10,
 		AllowParry = true,

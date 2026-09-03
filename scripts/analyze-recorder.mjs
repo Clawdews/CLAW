@@ -132,6 +132,42 @@ const effectCounts = new Map();
 for (const outcome of outcomes) increment(outcomeCounts, outcome.kind ?? "unknown");
 for (const effect of effectAdds) increment(effectCounts, effect.class ?? "unknown");
 
+const selectedStateNames = [
+  "LightAttack",
+  "MidAttack",
+  "UsingAbility",
+  "UsingSpell",
+  "Stun",
+  "ParryCool",
+  "Blocking",
+  "Dodge",
+  "NoAttack",
+  "WeaponEndlag",
+];
+const activeEffectCounts = new Map();
+const damageStateCounts = new Map();
+const attemptStateCounts = new Map();
+let damageSnapshots = 0;
+let attemptSnapshots = 0;
+for (const event of events) {
+  const effectClass = event.class;
+  if (event.type === "effect_added" && effectClass) {
+    increment(activeEffectCounts, effectClass);
+  } else if (event.type === "effect_removed" && effectClass) {
+    activeEffectCounts.set(effectClass, Math.max(0, (activeEffectCounts.get(effectClass) ?? 0) - 1));
+  }
+  const isDamage = event.type === "outcome" && event.kind === "health_hit";
+  const isAttempt = event.type === "outcome" && event.kind === "parry_attempt";
+  if (!isDamage && !isAttempt) continue;
+  if (isDamage) damageSnapshots += 1;
+  if (isAttempt) attemptSnapshots += 1;
+  for (const name of selectedStateNames) {
+    if ((activeEffectCounts.get(name) ?? 0) <= 0) continue;
+    if (isDamage) increment(damageStateCounts, name);
+    if (isAttempt) increment(attemptStateCounts, name);
+  }
+}
+
 const attempts = outcomes.filter((event) => event.kind === "parry_attempt");
 const confirmedSuccesses = effectAdds.filter((event) => event.class === "ParrySuccess");
 const pairedAttemptSequences = new Set();
@@ -320,3 +356,11 @@ console.table([...outcomeCounts.entries()].map(([kind, count]) => ({ kind, count
 console.log("\nSelected effect counts");
 const selectedEffects = ["ParryCool", "ParrySuccess", "Parry", "Parried", "Blocking", "Dodge", "Stun", "Knocked"];
 console.table(selectedEffects.map((name) => ({ name, count: effectCounts.get(name) ?? 0 })));
+console.log("\nLocal effect state at defense attempts and damage");
+console.table(selectedStateNames.map((name) => ({
+  name,
+  attemptsActive: attemptStateCounts.get(name) ?? 0,
+  attemptsTotal: attemptSnapshots,
+  damageActive: damageStateCounts.get(name) ?? 0,
+  damageTotal: damageSnapshots,
+})));

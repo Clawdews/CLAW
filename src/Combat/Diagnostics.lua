@@ -163,8 +163,9 @@ function Diagnostics:report(context)
 			stats.DodgeCancels or 0
 		),
 		string.format(
-			"settings=primary:%s dodge_fallback:%s roll_on_cd:%s roll_cancel:%s direct_roll:%s indexed_only:%s unknown_anims:%s hitbox:%s facing:%s prediction:%s",
+			"settings=primary:%s defend_mid_swing:%s dodge_fallback:%s roll_on_cd:%s roll_cancel:%s direct_roll:%s indexed_only:%s unknown_anims:%s hitbox:%s facing:%s prediction:%s",
 			tostring(settings:get("Defense.Preferred")),
+			settings:get("Defense.DefendWhileAttacking") and "on" or "off",
 			settings:get("Defense.DodgeFallback") and "on" or "off",
 			settings:get("Defense.RollOnParryCooldown") and "on" or "off",
 			settings:get("Defense.RollCancel") and "on" or "off",

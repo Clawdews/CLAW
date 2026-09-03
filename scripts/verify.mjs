@@ -123,6 +123,9 @@ check(inputSource.includes("DodgeCancelGeneration"), "stale dodge-cancel jobs ar
 check(inputSource.includes("dodge cancel skipped: roll not observed"), "roll cancellation can fire without observing a dodge");
 check(nativeBridgeSource.includes("function NativeInputBridge:releaseAll"), "native safe-reset release is missing");
 check(validationSource.includes("options.skipTransient"), "planning cannot defer volatile readiness checks");
+check(validationSource.includes('self.Settings:get("Defense.DefendWhileAttacking")'), "mid-swing defense policy is not enforced");
+check(defenseSource.includes("skipHitbox = true") && defenseSource.includes("skipFacing = true"), "planning still rejects threats on opening-frame geometry");
+check(!nativeBridgeSource.includes('and not self:_hasEffect("Action")'), "native parry queue still waits for the local Action window to end");
 check(defenseSource.includes('scheduled.identifier .. ":" .. tostring(scheduled.id)'), "hitbox waits are not plan-unique");
 check(defenseSource.includes('return self:_reject("defense disabled before execution")'), "disabled defense can execute pending plans");
 check(diagnosticsSource.includes("function Diagnostics:report"), "shareable diagnostic reporting is missing");

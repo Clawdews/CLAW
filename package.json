@@ -1,7 +1,7 @@
 {
   "name": "claw-mark",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.4.7",
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check && node scripts/verify.mjs",

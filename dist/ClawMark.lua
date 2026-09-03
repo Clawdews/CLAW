@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.4.6"
+	environment.CLAW.Version = "0.4.7"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -198,6 +198,12 @@ do
 			Enabled = false,
 			Preferred = "Parry",
 			Fallback = "Dodge",
+			-- Native defensive edges must still be attempted while the local
+			-- character is inside an attack/action window.  Turning defense into an
+			-- attack lock is exactly what makes conventional input blockers fold in
+			-- real fights: once pressure starts, they stop letting the player fight
+			-- and still miss the next defense.
+			DefendWhileAttacking = true,
 			UnknownAnimationDelay = 0.16,
 			UnknownAnimationMaxLength = 10,
 			AllowParry = true,
@@ -3968,7 +3974,10 @@ do
 			end
 			if blocking then
 				self:_attemptUnblock("waiting for clear", now)
-			elseif not self:_hasEffect("Action") and not self:_hasEffect("Knocked") then
+			elseif not self:_hasEffect("Knocked") then
+				-- Do not wait for Action to clear. A defensive Block edge is the
+				-- mechanism that can interrupt/cancel a local swing; waiting here made
+				-- the queued parry arrive only after the threat had already landed.
 				local fired = self:_sendBlock(false)
 				if fired then
 					for _, item in pairs(self.Queue) do
@@ -3992,7 +4001,6 @@ do
 				not blocking
 				and now >= self.NextBlockRetry
 				and self.BlockRetryCount < 1
-				and not self:_hasEffect("Action")
 				and not self:_hasEffect("Knocked")
 			then
 				self.BlockRetryCount = self.BlockRetryCount + 1
@@ -5522,7 +5530,12 @@ do
 		then
 			return false, "stunned"
 		end
-		if not options.skipTransient and self.State.Flags.Attacking and not profile.allowAttacking then
+		if
+			not options.skipTransient
+			and self.State.Flags.Attacking
+			and not profile.allowAttacking
+			and not self.Settings:get("Defense.DefendWhileAttacking")
+		then
 			return false, "already-attacking"
 		end
 
@@ -5543,9 +5556,11 @@ do
 				return false, hitboxReason
 			end
 		end
-		local facing, facingReason = self:_facing(event, profile)
-		if not facing then
-			return false, facingReason
+		if not options.skipFacing then
+			local facing, facingReason = self:_facing(event, profile)
+			if not facing then
+				return false, facingReason
+			end
 		end
 		local visible, visibleReason = self:_visible(event, profile)
 		if not visible then
@@ -5869,8 +5884,9 @@ do
 				stats.DodgeCancels or 0
 			),
 			string.format(
-				"settings=primary:%s dodge_fallback:%s roll_on_cd:%s roll_cancel:%s direct_roll:%s indexed_only:%s unknown_anims:%s hitbox:%s facing:%s prediction:%s",
+				"settings=primary:%s defend_mid_swing:%s dodge_fallback:%s roll_on_cd:%s roll_cancel:%s direct_roll:%s indexed_only:%s unknown_anims:%s hitbox:%s facing:%s prediction:%s",
 				tostring(settings:get("Defense.Preferred")),
+				settings:get("Defense.DefendWhileAttacking") and "on" or "off",
 				settings:get("Defense.DodgeFallback") and "on" or "off",
 				settings:get("Defense.RollOnParryCooldown") and "on" or "off",
 				settings:get("Defense.RollCancel") and "on" or "off",
@@ -6418,6 +6434,7 @@ do
 		Defense = {
 			Enabled = true,
 			Preferred = "Parry",
+			DefendWhileAttacking = true,
 			RollCancel = false,
 			DirectRoll = false,
 			RollOnParryCooldown = false,
@@ -6487,7 +6504,10 @@ do
 				MaxDistance = 3000,
 				FOVDegrees = 360,
 			},
-			Validation = { Hitbox = true, Facing = true, Prediction = false },
+			-- Facing is a useful per-attack geometry hint, but the global facing
+			-- gate drops legitimate AoE, pull, aerial, and turning attacks.  Stable
+			-- therefore leaves it off and relies on each profile's hitbox geometry.
+			Validation = { Hitbox = true, Facing = false, Prediction = false },
 			Diagnostics = { AdaptiveScan = true, PerformanceBudgetMs = 2 },
 		},
 		Legit = {
@@ -7446,7 +7466,12 @@ do
 			end
 
 			local valid, validationReason = self.Validator:validate(event, profile, target, resolved, {
-				skipHitbox = profile.delayUntilHitbox,
+				-- Detection is an observation, not the impact frame.  Rushes, lunges,
+				-- projectiles, and turning attacks routinely start outside their final
+				-- hitbox/facing geometry.  Schedule them from the timing profile and
+				-- perform the authoritative geometry checks at execution time.
+				skipHitbox = true,
+				skipFacing = true,
 				skipTransient = true,
 			})
 			if not valid then

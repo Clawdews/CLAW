@@ -18,6 +18,7 @@ local PRESET_BASE = {
 	Defense = {
 		Enabled = true,
 		Preferred = "Parry",
+		DefendWhileAttacking = true,
 		RollCancel = false,
 		DirectRoll = false,
 		RollOnParryCooldown = false,
@@ -87,7 +88,10 @@ local PRESETS = {
 			MaxDistance = 3000,
 			FOVDegrees = 360,
 		},
-		Validation = { Hitbox = true, Facing = true, Prediction = false },
+		-- Facing is a useful per-attack geometry hint, but the global facing
+		-- gate drops legitimate AoE, pull, aerial, and turning attacks.  Stable
+		-- therefore leaves it off and relies on each profile's hitbox geometry.
+		Validation = { Hitbox = true, Facing = false, Prediction = false },
 		Diagnostics = { AdaptiveScan = true, PerformanceBudgetMs = 2 },
 	},
 	Legit = {

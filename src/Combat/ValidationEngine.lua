@@ -317,7 +317,12 @@ function ValidationEngine:validate(event, profile, target, action, options)
 	then
 		return false, "stunned"
 	end
-	if not options.skipTransient and self.State.Flags.Attacking and not profile.allowAttacking then
+	if
+		not options.skipTransient
+		and self.State.Flags.Attacking
+		and not profile.allowAttacking
+		and not self.Settings:get("Defense.DefendWhileAttacking")
+	then
 		return false, "already-attacking"
 	end
 
@@ -338,9 +343,11 @@ function ValidationEngine:validate(event, profile, target, action, options)
 			return false, hitboxReason
 		end
 	end
-	local facing, facingReason = self:_facing(event, profile)
-	if not facing then
-		return false, facingReason
+	if not options.skipFacing then
+		local facing, facingReason = self:_facing(event, profile)
+		if not facing then
+			return false, facingReason
+		end
 	end
 	local visible, visibleReason = self:_visible(event, profile)
 	if not visible then
