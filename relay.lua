@@ -16,7 +16,7 @@ assert(LocalPlayer, "CLAW RELAY: LocalPlayer is unavailable")
 local DEFAULTS = {
 	ControllerUserId = 0,
 	ControllerName = "",
-	CommandPrefix = ";alts",
+	CommandPrefix = "alts",
 	BringSeconds = 0,
 	BringSpeed = 200,
 	BringVerticalSpeed = 24,
@@ -65,7 +65,7 @@ local function loadConfig()
 	end
 	config.ControllerUserId = math.max(0, math.floor(tonumber(config.ControllerUserId) or 0))
 	config.ControllerName = tostring(config.ControllerName or ""):match("^%s*(.-)%s*$")
-	config.CommandPrefix = tostring(config.CommandPrefix or ";alts"):match("^%s*(.-)%s*$")
+	config.CommandPrefix = tostring(config.CommandPrefix or "alts"):match("^%s*(.-)%s*$")
 	config.BringSeconds = math.clamp(finiteNumber(config.BringSeconds) or 0, 0, 600)
 	config.BringSpeed = math.clamp(finiteNumber(config.BringSpeed) or 200, 5, 200)
 	config.BringVerticalSpeed = math.clamp(finiteNumber(config.BringVerticalSpeed) or 24, 2, 60)
@@ -111,7 +111,7 @@ end
 
 local Relay = {
 	Name = "CLAW RELAY",
-	Version = "0.2.1",
+	Version = "0.2.2",
 	Config = Config,
 	Running = true,
 	Connections = {},
@@ -553,11 +553,18 @@ function Relay:_executeCommand(commandLine)
 	local command, remainder = string.match(commandLine, "^(%S+)%s*(.-)%s*$")
 	command = string.lower(command or "")
 	if command == "" or command == "help" then
-		log("commands: bring [pace seconds; 0=off], speed [5-200], yspeed [2-60], stop, phase [on/off], menu, safety [on/off], status")
+		log("commands: bring (200 XZ / 24 Y, no pacing), bring [pace seconds; 0=custom speeds], speed [5-200], yspeed [2-60], stop, phase [on/off], menu, safety [on/off], status")
 	elseif command == "bring" or command == "tween" then
 		local seconds = finiteNumber(remainder)
 		if remainder ~= "" and (not seconds or seconds < 0 or seconds > 600) then
 			return warnRelay("usage: bring [pace seconds: 0-600; 0=off]")
+		end
+		-- Bare bring is the one-command travel preset, even with an older saved config.
+		if remainder == "" then
+			Config.BringSpeed = DEFAULTS.BringSpeed
+			Config.BringVerticalSpeed = DEFAULTS.BringVerticalSpeed
+			Config.BringSeconds = 0
+			seconds = 0
 		end
 		local ok, reason = self:bring(seconds)
 		if not ok then warnRelay(reason) end
@@ -603,6 +610,11 @@ end
 function Relay:_onChat(message)
 	message = tostring(message or ""):match("^%s*(.-)%s*$")
 	local prefix = Config.CommandPrefix
+	if string.lower(prefix) == "alts" or string.lower(prefix) == ";alts" then
+		prefix = message:match("^(%S+)") or ""
+		local token = string.lower(prefix)
+		if token ~= "alts" and token ~= ";alts" then return end
+	end
 	if string.lower(string.sub(message, 1, #prefix)) ~= string.lower(prefix) then
 		return
 	end
