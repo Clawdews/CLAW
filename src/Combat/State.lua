@@ -44,6 +44,7 @@ function State.new()
 		ThreatRearmDrops = 0,
 		ThreatAborted = 0,
 		ThreatInputReleases = 0,
+		ThreatSignaturesMuted = 0,
 		ThreatCorroborated = 0,
 		ThreatPromoted = 0,
 	}

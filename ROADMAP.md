@@ -2,6 +2,14 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Attack-episode isolation — v0.4.6
+
+- Replaced whole-Animator animation quarantine with per-signature isolation. A raw burst, paced plan churn, or repeated early abort now mutes only implicated animation IDs.
+- Added a 2.5-second multi-ID episode detector for passive breakers that stay under the old 350ms burst ceiling. Repeating IDs are learned inside the episode while a novel strike from the same attacker remains observable.
+- Stopped Threat Guard from cancelling every animation plan and force-releasing native block input when noise appears. Already admitted unrelated plans and stronger part/effect/projectile evidence remain live.
+- During degraded mode, the source-wide rearm lease no longer lets one fake ID starve a different real ID. Same-ID rearm, plan budgets, and stronger-evidence promotion remain enforced.
+- Added explicit isolated-signature metrics and regression scenarios for raw bursts, paced churn, repeated aborts, a six-ID passive breaker, same-source escape, cross-source isolation, and trusted evidence.
+
 ## Live weapon builders — v0.4.5
 
 - Restored the runtime profile mutations used by Lycoris's `WeaponTest`, `WeaponFlourishTest`, `WeaponRunningAttackTest`, `WeaponAerialAttackTest`, and `WeaponUppercutTest` modules instead of converting only their generated action delays.

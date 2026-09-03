@@ -360,12 +360,6 @@ function DefenseEngine:handle(event)
 	if not self.Settings:get("Enabled") or not self.Settings:get("Defense.Enabled") then
 		return false, "defense is disabled"
 	end
-	if self.Threats then
-		local observed, observeReason = self.Threats:observe(event)
-		if not observed then
-			return false, observeReason
-		end
-	end
 	local profile = self.Timings:get(event.detector, event.id)
 	if not profile then
 		local reason
@@ -377,6 +371,12 @@ function DefenseEngine:handle(event)
 			event = event,
 			profile = profile,
 		})
+	end
+	if self.Threats then
+		local observed, observeReason = self.Threats:observe(event)
+		if not observed then
+			return false, observeReason
+		end
 	end
 	if profile.genericUnknown then
 		local now = os.clock()

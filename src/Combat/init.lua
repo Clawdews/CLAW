@@ -98,9 +98,7 @@ function Combat.new(options)
 		settings = settings,
 	}
 	self.Input = InputAdapter.new(inputOptions)
-	self.Threats = ThreatArbiter.new(settings, state, self.Scheduler, nil, function(reason)
-		return self.Input.Native:releaseAll("threat guard: " .. tostring(reason))
-	end)
+	self.Threats = ThreatArbiter.new(settings, state, self.Scheduler)
 	self.Executor = ActionExecutor.new(settings, state, self.Input)
 	self.Resolver = TimingResolver.new(settings)
 	self.Performance = Performance.new(settings)

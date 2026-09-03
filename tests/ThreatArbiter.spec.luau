@@ -10,6 +10,10 @@ local values = {
 	["ThreatGuard.PlanSeparation"] = 0.08,
 	["ThreatGuard.SourceRearm"] = 0.16,
 	["ThreatGuard.SameAnimationRearm"] = 0.30,
+	["ThreatGuard.EpisodeWindow"] = 2.50,
+	["ThreatGuard.EpisodeMinimum"] = 12,
+	["ThreatGuard.EpisodeUnique"] = 5,
+	["ThreatGuard.EpisodeRepeat"] = 2,
 	["ThreatGuard.ChurnWindow"] = 2.00,
 	["ThreatGuard.ChurnLimit"] = 5,
 	["ThreatGuard.AbortWindow"] = 1.50,
@@ -41,12 +45,8 @@ function scheduler:cancel(scheduled, reason)
 	return true
 end
 
-local safetyReleases = 0
 local arbiter = ThreatArbiter.new(settings, state, scheduler, function()
 	return now
-end, function()
-	safetyReleases = safetyReleases + 1
-	return true
 end)
 local attacker = { Name = "Breaker" }
 
@@ -65,14 +65,18 @@ for index = 1, 8 do
 	now = now + 0.01
 end
 local ninthAllowed, ninthReason = arbiter:observe(animation(9))
-assert(ninthAllowed == false and ninthReason == "animation burst quarantined", "burst did not quarantine")
+assert(ninthAllowed == false and ninthReason == "animation burst signature isolated", "burst was not contained")
 assert(state.Metrics.ThreatSpamBursts == 1, "spam burst was not counted")
-assert(safetyReleases == 1, "raw burst quarantine did not release defense input")
+assert((state.Metrics.ThreatSignaturesMuted or 0) == 1, "isolated signature was not counted")
 
-local duringAllowed, duringReason = arbiter:observe(animation(10))
-assert(duringAllowed == false and duringReason == "animation spam quarantine", "quarantine did not hold")
+local repeatedBurstAllowed, repeatedBurstReason = arbiter:observe(animation(9))
+assert(
+	repeatedBurstAllowed == false and repeatedBurstReason == "animation signature isolated",
+	"isolated burst signature was admitted"
+)
+assert(arbiter:observe(animation(10)) == true, "a novel animation could not escape signature isolation")
 
-now = now + 2
+now = now + 3
 local first = animation("first")
 local second = animation("second")
 local third = animation("third")
@@ -195,12 +199,13 @@ end
 local pacedBreaker = animation("paced-breaker")
 assert(arbiter:observe(pacedBreaker))
 local pacedAllowed, _, pacedReason = arbiter:claim(pacedBreaker, now + 0.30)
-assert(pacedAllowed == false and pacedReason == "source churn quarantined", "paced churn escaped quarantine")
+assert(pacedAllowed == false and pacedReason == "churning animation signature isolated", "paced churn escaped isolation")
 assert((state.Metrics.ThreatChurnBursts or 0) == churnBefore + 1, "paced churn metric was not counted")
-assert(safetyReleases == 2, "paced churn quarantine did not release defense input")
+local realDuringChurn = animation("real-during-churn")
+assert(arbiter:observe(realDuringChurn), "churn isolation shut down the entire Animator")
 
 -- Repeated early track aborts are a second breaker signature. A single feint
--- is harmless; three rapid aborts quarantine only that attacker's animations.
+-- is harmless; three rapid aborts isolate only the repeatedly aborted ID.
 arbiter:reset()
 now = now + 2
 local abortBefore = state.Metrics.ThreatChurnBursts or 0
@@ -215,20 +220,24 @@ for index = 1, 3 do
 	now = now + 0.18
 end
 assert((state.Metrics.ThreatAborted or 0) == 3, "early abort outcomes were not counted")
-assert((state.Metrics.ThreatChurnBursts or 0) == abortBefore + 1, "early aborts did not quarantine")
-assert(safetyReleases == 3, "abort quarantine did not release defense input")
-local noisyAnimation = animation("quarantined")
-local noisyAllowed = arbiter:observe(noisyAnimation)
-assert(noisyAllowed == false, "animation quarantine did not hold after abort churn")
+assert((state.Metrics.ThreatChurnBursts or 0) == abortBefore + 1, "early aborts did not trigger isolation")
+local repeatedAbort = animation("abort-3")
+local repeatedAbortAllowed, repeatedAbortReason = arbiter:observe(repeatedAbort)
+assert(
+	repeatedAbortAllowed == false and repeatedAbortReason == "animation signature isolated",
+	"aborted signature was admitted again"
+)
+local noisyEscape = animation("real-during-abort-noise")
+assert(arbiter:observe(noisyEscape), "abort isolation shut down unrelated animation IDs")
 local trustedDuringQuarantine = {
 	detector = "part",
 	id = "real-hitbox",
 	entity = attacker,
 	instance = attacker,
 }
-assert(arbiter:observe(trustedDuringQuarantine), "trusted detector was quarantined with animations")
+assert(arbiter:observe(trustedDuringQuarantine), "trusted detector was isolated with animations")
 local trustedAllowed = arbiter:claim(trustedDuringQuarantine, now + 0.40)
-assert(trustedAllowed == true, "trusted detector could not bypass animation quarantine")
+assert(trustedAllowed == true, "trusted detector could not bypass animation isolation")
 local otherAttacker = { Name = "LegitimateSource" }
 local isolatedEvent = animation("isolated-source", otherAttacker)
 assert(arbiter:observe(isolatedEvent), "one source quarantined a different attacker")
@@ -236,8 +245,46 @@ local isolatedAllowed = arbiter:claim(isolatedEvent, now + 0.40)
 assert(isolatedAllowed == true, "one source consumed a different attacker's plan budget")
 now = now + 2
 local recoveredEvent = animation("recovered")
-assert(arbiter:observe(recoveredEvent), "source did not leave quarantine")
+assert(arbiter:observe(recoveredEvent), "source did not leave isolation")
 local recoveredAllowed = arbiter:claim(recoveredEvent, now + 0.40)
-assert(recoveredAllowed == true, "source plan admission did not recover after quarantine")
+assert(recoveredAllowed == true, "source plan admission did not recover after isolation")
+
+-- A passive seven-ID breaker stays under the short burst threshold. The
+-- episode detector must learn and isolate the repeating signatures without
+-- blocking a new real animation from the same character.
+arbiter:reset()
+now = now + 3
+local protected = animation("protected-real")
+local protectedAllowed, protectedPlan = arbiter:claim(protected, now + 0.50)
+assert(protectedAllowed and protectedPlan, "protected plan setup failed")
+local protectedTask = {}
+protectedTask.onCancel = function(reason)
+	arbiter:settle(protectedPlan, protectedTask, reason)
+end
+arbiter:register(protectedPlan, protectedTask)
+local cancelledBeforeEpisode = scheduler.Cancelled
+local episodeIDs = { "fake-1", "fake-2", "fake-3", "fake-4", "fake-5", "fake-6" }
+for index = 1, 11 do
+	assert(arbiter:observe(animation(episodeIDs[((index - 1) % #episodeIDs) + 1])))
+	now = now + 0.08
+end
+local episodeAllowed, episodeReason = arbiter:observe(animation("fake-6"))
+assert(
+	episodeAllowed == false and episodeReason == "animation signature isolated",
+	"repeating multi-ID episode was not isolated"
+)
+local repeatedFakeAllowed = arbiter:observe(animation("fake-1"))
+assert(repeatedFakeAllowed == false, "known episode signature escaped isolation")
+assert(arbiter:observe(animation("actual-strike")), "episode isolation blocked a novel real strike")
+assert(scheduler.Cancelled == cancelledBeforeEpisode, "episode isolation cancelled an unrelated pending plan")
+
+-- The evidence windows themselves remain bounded under an absurd unique-ID
+-- flood; this should exercise fixed-size work rather than growing per event.
+arbiter:reset()
+now = now + 3
+for index = 1, 5000 do
+	arbiter:observe(animation("unique-" .. tostring(index)))
+end
+assert(arbiter:observe(animation("real-after-flood")), "bounded unique flood closed the source channel")
 
 print("ThreatArbiter scenarios passed")

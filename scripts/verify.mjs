@@ -137,7 +137,12 @@ check(defenseSource.includes("generic defense rearm"), "generic defense has no p
 check(defenseSource.includes('sourceModule = weapon and "WeaponTest"'), "unknown weapon animations do not use the dynamic hitbox resolver");
 check(schedulerSource.includes("scheduled.detail = detail"), "scheduled validation failure detail is discarded");
 check(threatSource.includes('event.detector == "animation" and pendingPlans >= maximum'), "animation plans can consume an unbounded per-source budget");
-check(threatSource.includes('record.noisyUntil'), "source-scoped animation quarantine is missing");
+check(threatSource.includes('record.noisyUntil'), "source-scoped degraded-mode tracking is missing");
+check(threatSource.includes("record.animationEvents"), "attack-episode detection is missing");
+check(threatSource.includes("local MAX_EPISODE_EVENTS = 64"), "attack-episode evidence is not hard-bounded");
+check(threatSource.includes("record.mutedAnimations"), "repeating animation signatures are not isolated");
+check(threatSource.includes('self.State:increment("ThreatSignaturesMuted"'), "signature-isolation metrics are missing");
+check(!combatSource.includes('releaseAll("threat guard:'), "animation noise can still force-release native defense input");
 check(threatSource.includes('ThreatCoalesced'), "overlapping threat plans are not coalesced");
 check(threatSource.includes('ThreatPromoted'), "stronger evidence cannot supersede an animation plan");
 check(defenseSource.includes('self.Threats:claim'), "defense scheduling bypasses threat arbitration");

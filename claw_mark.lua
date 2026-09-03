@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.4.5
+--  CLAW MARK v0.4.6
 --
 --  TABS
 --    BURSTER
@@ -3431,7 +3431,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.5",
+	"CLAW MARK v0.4.6",
 	8,
 	0,
 	170,
@@ -7769,7 +7769,7 @@ bind(RunService.Heartbeat, function(delta)
 		and CombatRuntime.Detectors.Detectors.ClientEffects.Stats
 		or {}
 	DebugSummary.Text = string.format(
-		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dH %dR %dA %dS %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dL %dS %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
+		"RUNNING      %s\nDEFENSE      %s\nTARGETS      %d\nTIMINGS      %d\nTHREAT GUARD %s A:%d N:%d\nGUARD EVENTS %dC %dD %dB %dH %dR %dA %dI %dP\nEFFECT IO    %dN %dL %dD %dX\nNATIVE       %s\nNATIVE IO    %dB %dU %dR %dC %dL %dS %dD %dX\nNATIVE LAST  %s\nDETECTED     %d\nSCHEDULED    %d\nEXECUTED     %d\nFAILED       %d\nREJECTED     %d\nCANCELLED    %d\nLAST DETECT  %s\nLAST REJECT  %s\nLAST PLAN    %s\nPLAN NAME    %s\nLAST ACTION  %s\nLAST FAIL    %s\nSCAN AVG     %.3f ms\nBACKOFF      %.2fx",
 		CombatRuntime.State.Running and "YES" or "NO",
 		CombatRuntime.Settings:get("Defense.Enabled") and "ON" or "OFF",
 		#CombatRuntime.State.Targets,
@@ -7783,7 +7783,7 @@ bind(RunService.Heartbeat, function(delta)
 		metrics.ThreatChurnBursts or 0,
 		metrics.ThreatRearmDrops or 0,
 		metrics.ThreatAborted or 0,
-		metrics.ThreatInputReleases or 0,
+		metrics.ThreatSignaturesMuted or 0,
 		metrics.ThreatPromoted or 0,
 		effectStats.ClientEffect or 0,
 		effectStats.ClientEffectLarge or 0,
@@ -8451,5 +8451,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.5 online"
+	"[CLAW] CLAW MARK v0.4.6 online"
 )

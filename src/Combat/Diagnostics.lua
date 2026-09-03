@@ -185,7 +185,7 @@ function Diagnostics:report(context)
 			metrics.Cancelled or 0
 		),
 		string.format(
-			"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d churn:%d rearm:%d aborts:%d releases:%d corroborated:%d promoted:%d",
+			"threat_metrics=admitted:%d coalesced:%d dropped:%d bursts:%d churn:%d rearm:%d aborts:%d isolated:%d releases:%d corroborated:%d promoted:%d",
 			metrics.ThreatAdmitted or 0,
 			metrics.ThreatCoalesced or 0,
 			metrics.ThreatDropped or 0,
@@ -193,6 +193,7 @@ function Diagnostics:report(context)
 			metrics.ThreatChurnBursts or 0,
 			metrics.ThreatRearmDrops or 0,
 			metrics.ThreatAborted or 0,
+			metrics.ThreatSignaturesMuted or 0,
 			metrics.ThreatInputReleases or 0,
 			metrics.ThreatCorroborated or 0,
 			metrics.ThreatPromoted or 0

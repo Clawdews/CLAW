@@ -62,7 +62,7 @@ detector event
 
 Transient state such as `ParryCool`, dodge cooldown, stun, iframes, and current attack state belongs at scheduled execution time. Geometry/profile validity can be checked while planning. A fallback must not discard the original attack's due time.
 
-Animation volume is never equivalent to danger. Threat Guard maintains a bounded plan budget per source, quarantines only the noisy source's animation channel, and reserves capacity for stronger part/effect/projectile evidence. It does not add a fixed validation sleep and does not present a heuristic distinction as proof that an attack is genuine.
+Animation volume is never equivalent to danger. Threat Guard maintains a bounded plan budget per source, collapses sustained multi-ID animation noise into an attack episode, isolates the signatures that repeat inside that episode, and reserves capacity for stronger part/effect/projectile evidence. Isolation does not cancel unrelated pending plans, release native defense input, or close the same attacker's entire animation channel; novel signatures keep an escape path. It does not add a fixed validation sleep and does not present a heuristic distinction as proof that an attack is genuine.
 
 ## Capability states
 
