@@ -7,12 +7,13 @@ const root = process.cwd();
 const manifest = JSON.parse(await readFile(path.join(root, "claw.manifest.json"), "utf8"));
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const failures = [];
+const recorderPaths = ["tools/ClawRecorder.lua", "recorder_loader.lua"];
 
 function check(condition, message) {
   if (!condition) failures.push(message);
 }
 
-const paths = [manifest.entry, manifest.output, ...manifest.modules];
+const paths = [manifest.entry, manifest.output, ...manifest.modules, ...recorderPaths];
 check(new Set(manifest.modules).size === manifest.modules.length, "manifest contains duplicate modules");
 for (const relativePath of paths) {
   try {
@@ -47,6 +48,8 @@ const diagnosticsSource = sources.get("src/Combat/Diagnostics.lua");
 const presetSource = sources.get("src/Combat/PresetManager.lua");
 const detectorHubSource = sources.get("src/Combat/Detection/DetectorHub.lua");
 const clientEffectSource = sources.get("src/Combat/Detection/ClientEffectDetector.lua");
+const recorderSource = await readFile(path.join(root, "tools", "ClawRecorder.lua"), "utf8");
+const recorderLoaderSource = await readFile(path.join(root, "recorder_loader.lua"), "utf8");
 const bundle = await readFile(path.join(root, manifest.output), "utf8");
 const timingDatabase = JSON.parse(await readFile(path.join(root, "data", "lycoris-timings.json"), "utf8"));
 const timingProfiles = Object.values(timingDatabase.timings ?? {}).flat();
@@ -54,6 +57,18 @@ const timingActions = timingProfiles.flatMap((profile) => profile.actions ?? [])
 const validActionKinds = new Set(["Parry", "Block", "Dodge", "FullDodge", "Jump", "Slide", "Crouch", "Teleport", "Feint", "M1", "Custom"]);
 
 check(!/Animation Lab/i.test(combined), "visible legacy Animation Lab branding remains");
+check(!manifest.modules.includes("tools/ClawRecorder.lua"), "standalone recorder was integrated into the CLAW MARK bundle");
+check(!bundle.includes("CLAW RECORDER"), "standalone recorder leaked into the CLAW MARK bundle");
+check(recorderLoaderSource.includes("tools/ClawRecorder.lua"), "standalone recorder loader does not fetch the recorder");
+check(recorderSource.includes('pushEvent("animation_start"'), "recorder does not capture animation starts");
+check(recorderSource.includes('pushEvent("animation_end"'), "recorder does not capture animation ends");
+check(recorderSource.includes('recordOutcome("health_hit"'), "recorder does not capture definite health hits");
+check(recorderSource.includes('ParryCool = "parry_attempt"'), "recorder does not capture observed parry attempts");
+check(recorderSource.includes("candidates = candidates"), "recorder discards alternate animation correlations");
+check(recorderSource.includes('SESSION_PATH .. "/catalog.json"'), "recorder catalog export is missing");
+check(!/keypress|keyrelease|mouse1press|mouse1release|VirtualInputManager|getgc|getconnections|hookfunction/.test(recorderSource), "observer recorder contains an input, hook, or scan primitive");
+check(!/MouseBehavior\s*=|MouseIconEnabled\s*=/.test(recorderSource), "observer recorder mutates global mouse state");
+check(!/jobId|UserId|\.Name\s*or\s*"player"/.test(recorderSource), "shareable recorder data contains a direct account/server identifier");
 check(!/project_rain_with_loot|references[\\/]lycoris-rewrite/i.test(bundle), "private local source leaked into bundle");
 check(!/(?:ghp_|github_pat_)[A-Za-z0-9_]+/.test(combined), "GitHub credential-like token found");
 check(!/https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\//i.test(combined), "Discord webhook URL found");
@@ -156,13 +171,15 @@ for (const candidate of compilerCandidates) {
   }
 }
 if (compilerPath) {
-  const compile = spawnSync(compilerPath, ["--null", path.join(root, manifest.output)], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  const detail = `${compile.stdout ?? ""}${compile.stderr ?? ""}`.trim();
-  check(compile.status === 0, `Luau compilation failed${detail ? `: ${detail}` : ""}`);
-  if (compile.status === 0) console.log("Official Luau compile check passed.");
+  for (const relativePath of [manifest.output, ...recorderPaths]) {
+    const compile = spawnSync(compilerPath, ["--null", path.join(root, relativePath)], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    const detail = `${compile.stdout ?? ""}${compile.stderr ?? ""}`.trim();
+    check(compile.status === 0, `Luau compilation failed for ${relativePath}${detail ? `: ${detail}` : ""}`);
+    if (compile.status === 0) console.log(`Official Luau compile check passed: ${relativePath}`);
+  }
 }
 
 const runtimeCandidates = process.platform === "win32"
