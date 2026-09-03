@@ -2,6 +2,12 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Native input release hotfix — v0.4.2
+
+- Removed the incorrect fixed cap on Unblock attempts. While Deepwoken still reports the replicated `Blocking` effect, CLAW now retries Unblock at a throttled 30Hz, matching Lycoris's state-driven release contract.
+- The input-state `f` flag is forced false whenever the defense queue drains, so slot selection, clicking, and attacks are not retained behind stale synthetic block input.
+- Release attempts remain observable through `release_retries`, `safety_releases`, and `NATIVE LAST` diagnostics.
+
 ## Threat Guard paced-churn containment — v0.4.1
 
 - Added short per-attacker and same-animation rearm leases so cancelled or completed plans cannot reopen a defense slot on the next frame.

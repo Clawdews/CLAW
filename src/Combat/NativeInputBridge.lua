@@ -417,9 +417,6 @@ end
 
 function NativeInputBridge:_attemptUnblock(detail, now)
 	now = now or os.clock()
-	if self.UnblockAttemptCount >= 3 then
-		return false, "unblock retry budget exhausted"
-	end
 	if now < self.NextUnblockRetry then
 		return false, "unblock retry pending"
 	end
@@ -427,7 +424,11 @@ function NativeInputBridge:_attemptUnblock(detail, now)
 	local retry = self.UnblockAttemptCount > 0
 	local fired, reason = self:_sendUnblock(detail)
 	self.UnblockAttemptCount = self.UnblockAttemptCount + 1
-	self.NextUnblockRetry = now + 0.12
+	-- Lycoris intentionally repeats Unblock while the replicated Blocking
+	-- effect remains. A fixed retry cap can leave the server-side state alive,
+	-- which prevents weapon-slot input and attacks even after our queue is empty.
+	-- Thirty hertz preserves that state-driven contract without per-frame spam.
+	self.NextUnblockRetry = now + 0.033
 	self.ReleaseSent = fired
 	if retry then
 		self.Stats.ReleaseRetries = self.Stats.ReleaseRetries + 1

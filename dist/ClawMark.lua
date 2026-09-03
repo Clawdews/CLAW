@@ -12,7 +12,7 @@ do
 
 	environment.CLAW = environment.CLAW or {}
 	environment.CLAW.Name = "CLAW MARK"
-	environment.CLAW.Version = "0.4.1"
+	environment.CLAW.Version = "0.4.2"
 	environment.CLAW.Modules = environment.__CLAW_MODULES or {}
 	environment.CLAW.StartedAt = environment.CLAW.StartedAt or os.clock()
 
@@ -3676,9 +3676,6 @@ do
 
 	function NativeInputBridge:_attemptUnblock(detail, now)
 		now = now or os.clock()
-		if self.UnblockAttemptCount >= 3 then
-			return false, "unblock retry budget exhausted"
-		end
 		if now < self.NextUnblockRetry then
 			return false, "unblock retry pending"
 		end
@@ -3686,7 +3683,11 @@ do
 		local retry = self.UnblockAttemptCount > 0
 		local fired, reason = self:_sendUnblock(detail)
 		self.UnblockAttemptCount = self.UnblockAttemptCount + 1
-		self.NextUnblockRetry = now + 0.12
+		-- Lycoris intentionally repeats Unblock while the replicated Blocking
+		-- effect remains. A fixed retry cap can leave the server-side state alive,
+		-- which prevents weapon-slot input and attacks even after our queue is empty.
+		-- Thirty hertz preserves that state-driven contract without per-frame spam.
+		self.NextUnblockRetry = now + 0.033
 		self.ReleaseSent = fired
 		if retry then
 			self.Stats.ReleaseRetries = self.Stats.ReleaseRetries + 1
@@ -7768,7 +7769,7 @@ end
 
 -- BEGIN ENTRY: claw_mark.lua
 --==============================================================
---  CLAW MARK v0.4.1
+--  CLAW MARK v0.4.2
 --
 --  TABS
 --    BURSTER
@@ -11261,7 +11262,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.1",
+	"CLAW MARK v0.4.2",
 	8,
 	0,
 	170,
@@ -15154,6 +15155,8 @@ local function refreshTimingList()
 	end)
 end
 
+UI.RefreshTimingList = refreshTimingList
+
 bind(TimingBrowser.search:GetPropertyChangedSignal("Text"), function()
 	TimingBrowser.page = 1
 	refreshTimingList()
@@ -16048,7 +16051,9 @@ bind(
 bind(
 	TimingsTab.MouseButton1Click,
 	function()
-		refreshTimingList()
+		if UI.RefreshTimingList then
+			UI.RefreshTimingList()
+		end
 		openPage(TimingsPage)
 	end
 )
@@ -16277,7 +16282,7 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.1 online"
+	"[CLAW] CLAW MARK v0.4.2 online"
 )
 
 -- END ENTRY: claw_mark.lua

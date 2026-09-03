@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.4.1
+--  CLAW MARK v0.4.2
 --
 --  TABS
 --    BURSTER
@@ -3492,7 +3492,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.1",
+	"CLAW MARK v0.4.2",
 	8,
 	0,
 	170,
@@ -7385,6 +7385,8 @@ local function refreshTimingList()
 	end)
 end
 
+UI.RefreshTimingList = refreshTimingList
+
 bind(TimingBrowser.search:GetPropertyChangedSignal("Text"), function()
 	TimingBrowser.page = 1
 	refreshTimingList()
@@ -8279,7 +8281,9 @@ bind(
 bind(
 	TimingsTab.MouseButton1Click,
 	function()
-		refreshTimingList()
+		if UI.RefreshTimingList then
+			UI.RefreshTimingList()
+		end
 		openPage(TimingsPage)
 	end
 )
@@ -8508,5 +8512,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.1 online"
+	"[CLAW] CLAW MARK v0.4.2 online"
 )
