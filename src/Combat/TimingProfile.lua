@@ -41,6 +41,7 @@ function TimingProfile.new(values)
 	self.maxAnimationTime = math.max(0, tonumber(values.maxAnimationTime) or 0)
 	self.pastHitbox = values.pastHitbox == true
 	self.predictFacing = values.predictFacing == true
+	self.forceFacingTarget = values.forceFacingTarget == true
 	self.historySeconds = math.max(0, tonumber(values.historySeconds) or 0)
 	self.predictionSeconds = math.max(0, tonumber(values.predictionSeconds) or 0)
 	self.disablePrediction = values.disablePrediction == true
@@ -104,6 +105,7 @@ function TimingProfile:serialize()
 		maxAnimationTime = self.maxAnimationTime,
 		pastHitbox = self.pastHitbox,
 		predictFacing = self.predictFacing,
+		forceFacingTarget = self.forceFacingTarget,
 		historySeconds = self.historySeconds,
 		predictionSeconds = self.predictionSeconds,
 		disablePrediction = self.disablePrediction,

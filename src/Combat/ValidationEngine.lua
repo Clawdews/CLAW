@@ -190,6 +190,12 @@ function ValidationEngine:_insideHitbox(event, profile, action)
 	end
 
 	local inside = contains(source, localFrame)
+	if not inside and profile.forceFacingTarget and self.State.Root then
+		local direction = self.State.Root.Position - source.Position
+		if direction.Magnitude > 0.001 then
+			inside = contains(CFrame.lookAt(source.Position, self.State.Root.Position), localFrame)
+		end
+	end
 	if not inside and profile.pastHitbox then
 		local seconds = profile.historySeconds > 0 and profile.historySeconds
 			or self.Settings:get("Validation.PastHitboxSeconds")

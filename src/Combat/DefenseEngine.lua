@@ -390,6 +390,7 @@ function DefenseEngine:handle(event)
 		end
 		self.GenericRecent[event.entity] = now
 	end
+	profile = DynamicWeaponResolver.resolveProfile(profile, event)
 	local localEvent = event.entity == self.State.Character
 	if localEvent and profile.ignoreLocalPlayer then
 		return self:_reject("ignored local character event")

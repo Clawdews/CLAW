@@ -54,8 +54,10 @@ local function weaponData(entity)
 
 	return {
 		swingSpeed = swingSpeed,
+		oldSwingSpeed = tonumber(swingValue:GetAttribute("OldValue")) or swingSpeed,
 		length = length,
 		weaponType = weaponType,
+		handWeapon = handWeapon,
 	}
 end
 
@@ -274,6 +276,110 @@ local function resolvedAction(template, label, delay, hitbox, weaponType)
 	action.metadata.dynamicWeapon = label
 	action.metadata.weaponType = weaponType
 	return action
+end
+
+local LIGHT_WEAPONS = {
+	Fist = true,
+	Dagger = true,
+}
+
+local MEDIUM_WEAPONS = {
+	Sword = true,
+	Staff = true,
+	Twinblade = true,
+	Spear = true,
+	Club = true,
+	Rifle = true,
+	Pistol = true,
+}
+
+local HEAVY_WEAPONS = {
+	Greathammer = true,
+	Greatcannon = true,
+	Greatsword = true,
+	Greataxe = true,
+}
+
+local function clonedProfile(profile)
+	local resolved = profile:clone()
+	resolved.genericUnknown = profile.genericUnknown == true
+	return resolved
+end
+
+local function configureSwingProfile(profile, label, weaponType)
+	local resolved = clonedProfile(profile)
+	resolved.noVentFallback = true
+
+	if label == "Running" then
+		resolved.forceFacingTarget = true
+		resolved.delayUntilHitbox = false
+		resolved.facingHitbox = true
+		resolved.disablePrediction = false
+		resolved.predictionSeconds = 0.15
+		return resolved
+	elseif label == "Aerial" then
+		resolved.ignoreAnimationEnd = false
+		resolved.forceFacingTarget = true
+		resolved.disablePrediction = false
+		resolved.predictionSeconds = 0.15
+		resolved.pastHitbox = true
+		resolved.predictFacing = true
+		return resolved
+	elseif label == "Uppercut" then
+		resolved.forceFacingTarget = true
+		resolved.pastHitbox = true
+		resolved.predictionSeconds = 0.25
+		resolved.historySeconds = 1.0
+		return resolved
+	end
+
+	-- WeaponTest and WeaponFlourishTest both build a spherical, forward-shifted
+	-- hitbox and then alter prediction/fallback policy for the live weapon type.
+	resolved.facingHitbox = false
+	resolved.hitboxOffset = -5
+	resolved.preferBlockFallback = false
+	resolved.noDodgeFallback = false
+	resolved.blockFallbackHold = 0.3
+	resolved.disablePrediction = false
+	resolved.predictFacing = true
+	resolved.pastHitbox = true
+	resolved.predictionSeconds = 0.25
+	resolved.historySeconds = 0.6
+
+	if LIGHT_WEAPONS[weaponType] then
+		resolved.preferBlockFallback = true
+		resolved.blockFallbackHold = 0.6
+		resolved.historySeconds = weaponType == "Dagger" and 0.6 or 0.25
+		resolved.predictFacing = false
+		resolved.disablePrediction = true
+	elseif MEDIUM_WEAPONS[weaponType] then
+		resolved.preferBlockFallback = true
+		resolved.blockFallbackHold = label == "Flourish" and 0.6 or 0.3
+		resolved.pastHitbox = false
+		resolved.delayUntilHitbox = false
+		resolved.forceFacingTarget = true
+		if label == "M1" then
+			resolved.predictionSeconds = 0.5
+		end
+	elseif HEAVY_WEAPONS[weaponType] then
+		resolved.pastHitbox = false
+		resolved.delayUntilHitbox = false
+		resolved.forceFacingTarget = true
+		resolved.predictionSeconds = 0.5
+		resolved.disablePrediction = false
+	end
+
+	return resolved
+end
+
+function DynamicWeaponResolver.resolveProfile(profile, event)
+	local label = profile and SUPPORTED_MODULES[profile.sourceModule]
+	if not label then
+		return profile
+	end
+	local data = weaponData(event and event.entity)
+	local weaponType = data and data.weaponType or inferredWeaponType(profile)
+	return configureSwingProfile(profile, label, weaponType)
 end
 
 function DynamicWeaponResolver.resolve(profile, event, sourceActions)

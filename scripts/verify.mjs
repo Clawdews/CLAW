@@ -75,6 +75,9 @@ check(
 check(dynamicWeaponSource.includes("WeaponTest = \"M1\""), "dynamic M1 weapon resolver is missing");
 check(dynamicWeaponSource.includes("WeaponFlourishTest = \"Flourish\""), "dynamic flourish resolver is missing");
 check(dynamicWeaponSource.includes("function DynamicWeaponResolver.weaponInfo"), "unknown weapon inspection is missing");
+check(dynamicWeaponSource.includes("function DynamicWeaponResolver.resolveProfile"), "live weapon builder profile resolution is missing");
+check(dynamicWeaponSource.includes("resolved.forceFacingTarget = true"), "weapon builders omit forced-facing hitbox semantics");
+check(dynamicWeaponSource.includes("resolved.preferBlockFallback = true"), "weapon builders omit weapon-specific fallback policy");
 check(dynamicWeaponSource.includes("action.metadata.preserveDelay"), "unknown weapon delay preservation is missing");
 check(!/delay\s*=\s*delay\s*\/\s*math\.abs\(speed\)/.test(timingResolverSource), "static timing delays are being divided by animation speed");
 check(/local scheduled\s+scheduled\s*=\s*self\.Scheduler:schedule/.test(defenseSource), "scheduled defense callback does not capture a predeclared task handle");
@@ -119,6 +122,7 @@ check(clientEffectSource.includes("inspected >= 32") && clientEffectSource.inclu
 check(clientEffectSource.includes('previous.channel ~= channel'), "cross-channel client-effect deduplication is missing");
 check(detectorHubSource.includes("ClientEffectDetector.new"), "client-effect detector is not connected to the detector hub");
 check(validationSource.includes("profile and profile.useHitboxCFrame"), "hitbox-CFrame profiles still prefer the owner root");
+check(validationSource.includes("profile.forceFacingTarget"), "forced-facing builder hitboxes are not validated");
 check(stateMonitorSource.includes('instance:IsA("ValueBase")'), "replicated state values are not watched for changes");
 check(stateMonitorSource.includes("CharacterRemoving"), "character removal does not quiesce replicated state");
 check(timingDatabase.version === 1, "timing database version is invalid");

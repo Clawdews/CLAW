@@ -2,6 +2,13 @@
 
 This roadmap treats Lycoris as a behavioral reference and timing source while keeping CLAW's runtime modular, bounded, and safe by default. Every phase must preserve the proven native Block → bounded retry → Unblock path unless a regression harness proves a replacement.
 
+## Live weapon builders — v0.4.5
+
+- Restored the runtime profile mutations used by Lycoris's `WeaponTest`, `WeaponFlourishTest`, `WeaponRunningAttackTest`, `WeaponAerialAttackTest`, and `WeaponUppercutTest` modules instead of converting only their generated action delays.
+- M1 and flourish profiles now select light/medium/heavy weapon prediction, past-hitbox, forced-facing, hitbox-offset, and preferred-block-fallback behavior at detection time.
+- Running, aerial, and uppercut builders now restore their individual forced-facing and prediction/history contracts.
+- Forced-facing is an additional hitbox candidate, preserving the ordinary orientation check while covering moving or rapidly turning attackers.
+
 ## Backpack and mouse isolation — v0.4.4
 
 - Removed all writes to `UserInputService.MouseBehavior` and `MouseIconEnabled`; CLAW no longer fights the game's camera/input controller every rendered frame.

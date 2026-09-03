@@ -1,5 +1,5 @@
 --==============================================================
---  CLAW MARK v0.4.4
+--  CLAW MARK v0.4.5
 --
 --  TABS
 --    BURSTER
@@ -3431,7 +3431,7 @@ Top.Parent =
 
 mkLabel(
 	Top,
-	"CLAW MARK v0.4.4",
+	"CLAW MARK v0.4.5",
 	8,
 	0,
 	170,
@@ -8451,5 +8451,5 @@ assert(
 )
 
 print(
-	"[CLAW] CLAW MARK v0.4.4 online"
+	"[CLAW] CLAW MARK v0.4.5 online"
 )
