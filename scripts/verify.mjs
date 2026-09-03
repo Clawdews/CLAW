@@ -64,7 +64,13 @@ check(recorderSource.includes('pushEvent("animation_start"'), "recorder does not
 check(recorderSource.includes('pushEvent("animation_end"'), "recorder does not capture animation ends");
 check(recorderSource.includes('recordOutcome("health_hit"'), "recorder does not capture definite health hits");
 check(recorderSource.includes('ParryCool = "parry_attempt"'), "recorder does not capture observed parry attempts");
+check(recorderSource.includes('ParrySuccess = "parry_success"'), "recorder does not capture confirmed parry success");
 check(recorderSource.includes("candidates = candidates"), "recorder discards alternate animation correlations");
+check(recorderSource.includes("sourceId = sourceId"), "recorder does not preserve anonymous animation sources");
+check(recorderSource.includes("attack.suspicious = classifyAnimation"), "recorder does not classify sustained animation floods");
+check(recorderSource.includes("score = score + 4"), "suspicious animation candidates are not demoted");
+check(recorderSource.includes("local CHUNK_SIZE = 2000"), "recorder raw chunk size regressed");
+check(recorderSource.includes('"/events_live.json"'), "recorder rolling checkpoint is missing");
 check(recorderSource.includes('SESSION_PATH .. "/catalog.json"'), "recorder catalog export is missing");
 check(!/keypress|keyrelease|mouse1press|mouse1release|VirtualInputManager|getgc|getconnections|hookfunction/.test(recorderSource), "observer recorder contains an input, hook, or scan primitive");
 check(!/MouseBehavior\s*=|MouseIconEnabled\s*=/.test(recorderSource), "observer recorder mutates global mouse state");

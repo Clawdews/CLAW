@@ -1,4 +1,4 @@
--- CLAW RECORDER v0.1.0
+-- CLAW RECORDER v0.2.0
 -- Passive combat telemetry for building timing catalogs alongside another hub.
 
 local ENV = getgenv and getgenv() or _G
@@ -20,10 +20,13 @@ local SESSION_STARTED_UNIX = os.time()
 local SESSION_ID = string.format("%d_%s", SESSION_STARTED_UNIX, string.sub(HttpService:GenerateGUID(false), 1, 8))
 local ROOT_PATH = "CLAW_RECORDER"
 local SESSION_PATH = ROOT_PATH .. "/" .. SESSION_ID
-local CHUNK_SIZE = 250
+local CHUNK_SIZE = 2000
 local MAX_MEMORY_EVENTS = 4000
 local MAX_SAMPLES_PER_OUTCOME = 96
 local MAX_ACTIVE_AGE = 10
+local RAW_ANIMATION_INITIAL_SAMPLES = 12
+local RAW_ANIMATION_SAMPLE_INTERVAL = 5
+local AUTOSAVE_INTERVAL = 15
 
 local function executorFunction(name)
 	local callback = rawget(ENV, name)
@@ -87,7 +90,7 @@ local function pingMilliseconds()
 end
 
 local State = {
-	Version = "0.1.0",
+	Version = "0.2.0",
 	Destroyed = false,
 	Recording = true,
 	Connections = {},
@@ -95,6 +98,14 @@ local State = {
 	AnimatorConnections = setmetatable({}, { __mode = "k" }),
 	TrackConnections = {},
 	EffectLifetimes = setmetatable({}, { __mode = "k" }),
+	EntityIds = setmetatable({}, { __mode = "k" }),
+	EntitySequence = 0,
+	AnimationSequence = 0,
+	RawAnimationSchedule = {},
+	SourceActivity = {},
+	SuspiciousAnimations = {},
+	EffectCounts = {},
+	EffectClassesSeen = {},
 	Active = setmetatable({}, { __mode = "k" }),
 	Recent = {},
 	Catalog = {},
@@ -110,6 +121,7 @@ local State = {
 	LastSave = 0,
 	LastError = nil,
 	Flushing = false,
+	Checkpointing = false,
 	EffectStatus = "not found",
 	FileStatus = writefile and "ready" or "clipboard only",
 }
@@ -180,7 +192,18 @@ local function catalogCount()
 	return count
 end
 
+local function suspiciousCount()
+	local count = 0
+	for _, animations in pairs(State.SuspiciousAnimations) do
+		for _ in pairs(animations) do
+			count = count + 1
+		end
+	end
+	return count
+end
+
 local flush
+local checkpoint
 
 local function pushEvent(kind, data)
 	if State.Destroyed or not State.Recording then
@@ -289,7 +312,14 @@ end
 
 local function entitySnapshot(entity)
 	local player = entity and Players:GetPlayerFromCharacter(entity)
+	local sourceId = State.EntityIds[entity]
+	if not sourceId then
+		State.EntitySequence = State.EntitySequence + 1
+		sourceId = string.format("%s%d", player and "p" or "m", State.EntitySequence)
+		State.EntityIds[entity] = sourceId
+	end
 	return {
+		sourceId = sourceId,
 		kind = player and "player" or "mob",
 		label = player and "player" or tostring(entity and (entity:GetAttribute("MOB_rich_name") or entity.Name) or "unknown"),
 	}
@@ -308,9 +338,60 @@ local function catalogFor(id)
 		outcomes = {},
 		samples = {},
 		playback = {},
+		durations = {},
+		keyframes = {},
+		sources = {},
 	}
 	State.Catalog[id] = catalog
 	return catalog
+end
+
+local function shouldLogAnimation(id, now)
+	local schedule = State.RawAnimationSchedule[id]
+	if not schedule then
+		schedule = { count = 0, last = 0 }
+		State.RawAnimationSchedule[id] = schedule
+	end
+	schedule.count = schedule.count + 1
+	if schedule.count <= RAW_ANIMATION_INITIAL_SAMPLES or now - schedule.last >= RAW_ANIMATION_SAMPLE_INTERVAL then
+		schedule.last = now
+		return true
+	end
+	return false
+end
+
+local function classifyAnimation(sourceId, id, priority, now)
+	local activity = State.SourceActivity[sourceId]
+	if not activity then
+		activity = { recent = {} }
+		State.SourceActivity[sourceId] = activity
+	end
+	local recent = activity.recent
+	for index = #recent, 1, -1 do
+		if now - recent[index].t > 2.5 then
+			table.remove(recent, index)
+		end
+	end
+	if string.find(priority or "", "Action", 1, true) then
+		recent[#recent + 1] = { t = now, id = id }
+	end
+	local counts = {}
+	for _, item in ipairs(recent) do
+		counts[item.id] = (counts[item.id] or 0) + 1
+	end
+	local unique = 0
+	for _ in pairs(counts) do
+		unique = unique + 1
+	end
+	if #recent >= 20 and unique >= 5 then
+		State.SuspiciousAnimations[sourceId] = State.SuspiciousAnimations[sourceId] or {}
+		for animationId, count in pairs(counts) do
+			if count >= 3 then
+				State.SuspiciousAnimations[sourceId][animationId] = true
+			end
+		end
+	end
+	return State.SuspiciousAnimations[sourceId] and State.SuspiciousAnimations[sourceId][id] == true
 end
 
 local function appendBounded(list, value, maximum)
@@ -335,12 +416,15 @@ local function beginAnimation(animator, track)
 
 	local now = os.clock()
 	local geometry = geometrySnapshot(entity)
+	local entityInfo = entitySnapshot(entity)
+	State.AnimationSequence = State.AnimationSequence + 1
 	local attack = {
-		seq = State.Sequence + 1,
+		seq = State.AnimationSequence,
 		startedAt = now,
 		endedAt = nil,
 		id = properties.id,
 		entity = entity,
+		entityInfo = entityInfo,
 		track = track,
 		start = properties,
 		geometry = geometry,
@@ -348,8 +432,11 @@ local function beginAnimation(animator, track)
 		speedSamples = { { t = 0, speed = properties.speed } },
 		lastSpeed = properties.speed,
 		lastSpeedSample = now,
+		lastTimePosition = properties.timePosition,
 		outcomes = 0,
 	}
+	attack.suspicious = classifyAnimation(entityInfo.sourceId, properties.id, properties.priority, now)
+	attack.rawLogged = shouldLogAnimation(properties.id, now)
 	State.Active[track] = attack
 	State.Recent[#State.Recent + 1] = attack
 	if #State.Recent > 160 then
@@ -359,6 +446,15 @@ local function beginAnimation(animator, track)
 
 	local catalog = catalogFor(properties.id)
 	catalog.observations = catalog.observations + 1
+	local source = catalog.sources[entityInfo.sourceId]
+	if not source then
+		source = { kind = entityInfo.kind, label = entityInfo.label, observations = 0, suspicious = 0 }
+		catalog.sources[entityInfo.sourceId] = source
+	end
+	source.observations = source.observations + 1
+	if attack.suspicious then
+		source.suspicious = source.suspicious + 1
+	end
 	appendBounded(catalog.playback, {
 		speed = properties.speed,
 		length = properties.length,
@@ -366,16 +462,21 @@ local function beginAnimation(animator, track)
 		distance = geometry and geometry.distance or nil,
 		weapon = attack.weapon,
 		ping = pingMilliseconds(),
+		source = entityInfo,
+		suspicious = attack.suspicious,
 	}, MAX_SAMPLES_PER_OUTCOME)
 
-	pushEvent("animation_start", {
-		animationEventSeq = attack.seq,
-		animation = properties,
-		entity = entitySnapshot(entity),
-		geometry = geometry,
-		weapon = attack.weapon,
-		ping = pingMilliseconds(),
-	})
+	if attack.rawLogged then
+		pushEvent("animation_start", {
+			animationEventSeq = attack.seq,
+			animation = properties,
+			entity = entityInfo,
+			geometry = geometry,
+			weapon = attack.weapon,
+			ping = pingMilliseconds(),
+			suspicious = attack.suspicious,
+		})
+	end
 
 	local trackConnections = {}
 	local okStopped, stoppedConnection = pcall(function()
@@ -392,20 +493,35 @@ local function beginAnimation(animator, track)
 			active.endedAt = stoppedAt
 			local final = animationProperties(track)
 			local elapsed = stoppedAt - active.startedAt
-			local early = final.length > 0 and final.timePosition + 0.035 < final.length
+			local observedPosition = math.max(active.lastTimePosition or 0, final.timePosition or 0)
+			local speed = math.max(math.abs(active.start.speed or 1), 0.01)
+			local expectedDuration = active.start.length > 0 and active.start.length / speed or 0
+			local early = not active.start.looped
+				and expectedDuration > 0
+				and elapsed + 0.06 < expectedDuration
+				and observedPosition + 0.06 * speed < active.start.length
 			local entry = catalogFor(active.id)
 			entry.completed = entry.completed + 1
 			if early then
 				entry.cancelled = entry.cancelled + 1
 			end
-			pushEvent("animation_end", {
-				animationEventSeq = active.seq,
-				animationId = active.id,
+			appendBounded(entry.durations, {
 				elapsed = round(elapsed, 6),
 				early = early,
-				final = final,
+				observedTimePosition = round(observedPosition, 5),
 				speedSamples = active.speedSamples,
-			})
+			}, MAX_SAMPLES_PER_OUTCOME)
+			if active.rawLogged then
+				pushEvent("animation_end", {
+					animationEventSeq = active.seq,
+					animationId = active.id,
+					elapsed = round(elapsed, 6),
+					early = early,
+					observedTimePosition = round(observedPosition, 5),
+					final = final,
+					speedSamples = active.speedSamples,
+				})
+			end
 			State.Active[track] = nil
 		end)
 	end)
@@ -416,13 +532,21 @@ local function beginAnimation(animator, track)
 		return track.KeyframeReached:Connect(function(name)
 			local active = State.Active[track]
 			if active and not State.Destroyed then
-			pushEvent("animation_keyframe", {
-					animationEventSeq = active.seq,
-					animationId = active.id,
-					name = tostring(name),
-					elapsed = round(os.clock() - active.startedAt, 6),
-					timePosition = animationProperties(track).timePosition,
-				})
+				local elapsed = round(os.clock() - active.startedAt, 6)
+				local keyframeName = tostring(name)
+				local entry = catalogFor(active.id)
+				entry.keyframes[keyframeName] = entry.keyframes[keyframeName] or { count = 0, samples = {} }
+				entry.keyframes[keyframeName].count = entry.keyframes[keyframeName].count + 1
+				appendBounded(entry.keyframes[keyframeName].samples, elapsed, 48)
+				if active.rawLogged then
+					pushEvent("animation_keyframe", {
+						animationEventSeq = active.seq,
+						animationId = active.id,
+						name = keyframeName,
+						elapsed = elapsed,
+						timePosition = animationProperties(track).timePosition,
+					})
+				end
 			end
 		end)
 	end)
@@ -495,6 +619,9 @@ local function bestAttack(now)
 			if attack.endedAt and now - attack.endedAt > 0.35 then
 				score = score + 1
 			end
+			if attack.suspicious then
+				score = score + 4
+			end
 			candidates[#candidates + 1] = {
 				attack = attack,
 				score = score,
@@ -517,6 +644,8 @@ local function bestAttack(now)
 			priority = attack.start.priority,
 			distance = attack.geometry and attack.geometry.distance or nil,
 			active = attack.endedAt == nil,
+			source = attack.entityInfo,
+			suspicious = attack.suspicious,
 		}
 	end
 	return best and best.attack or nil, best and best.score or math.huge, snapshots
@@ -552,6 +681,8 @@ local function recordOutcome(kind, source, detail)
 			weapon = attack.weapon,
 			ping = pingMilliseconds(),
 			outcomeGeometry = geometrySnapshot(attack.entity),
+			source = attack.entityInfo,
+			suspicious = attack.suspicious,
 		}
 		local catalog = catalogFor(attack.id)
 		catalog.outcomes[kind] = (catalog.outcomes[kind] or 0) + 1
@@ -576,6 +707,7 @@ local EFFECT_OUTCOMES = {
 	ParryCool = "parry_attempt",
 	ParryFrame = "parry_frame",
 	Parry = "parry_signal",
+	ParrySuccess = "parry_success",
 	Parried = "parried_signal",
 	Blocking = "block_state",
 	Stun = "stun",
@@ -584,6 +716,39 @@ local EFFECT_OUTCOMES = {
 	Dodged = "dodge_signal",
 	DodgeFrame = "dodge_frame",
 	Immortal = "iframe",
+}
+
+local TRACKED_EFFECTS = {
+	ParryCool = true,
+	ParryFrame = true,
+	Parry = true,
+	ParrySuccess = true,
+	Parried = true,
+	AutoParry = true,
+	Blocking = true,
+	ExtraBlocking = true,
+	GenerousParry = true,
+	Stun = true,
+	Knocked = true,
+	Ragdoll = true,
+	Dodge = true,
+	Dodged = true,
+	DodgeFrame = true,
+	Immortal = true,
+	NoRoll = true,
+	PreventRoll = true,
+	RollCancelled = true,
+	LightAttack = true,
+	LandedLightAttack = true,
+	MantraCasted = true,
+	MidAttack = true,
+	UsingSpell = true,
+	UsingAbility = true,
+	FeintIntent = true,
+	FeintCool = true,
+	CancelAnim = true,
+	WeaponEndlag = true,
+	M1Buffer = true,
 }
 
 local function effectClass(effect)
@@ -607,10 +772,16 @@ local function attachEffects()
 	State.EffectStatus = "connected"
 	connect(effects.EffectAdded, function(effect)
 		local class = effectClass(effect)
+		State.EffectCounts[class] = (State.EffectCounts[class] or 0) + 1
 		if effect ~= nil then
 			State.EffectLifetimes[effect] = { class = class, startedAt = os.clock() }
 		end
-		pushEvent("effect_added", { class = class, data = scalarSnapshot(effect) })
+		if TRACKED_EFFECTS[class] then
+			pushEvent("effect_added", { class = class, data = scalarSnapshot(effect) })
+		elseif not State.EffectClassesSeen[class] then
+			State.EffectClassesSeen[class] = true
+			pushEvent("effect_class_seen", { class = class })
+		end
 		local outcome = EFFECT_OUTCOMES[class]
 		if outcome then
 			recordOutcome(outcome, "effect:" .. class, { class = class })
@@ -621,14 +792,19 @@ local function attachEffects()
 		if effect ~= nil then
 			State.EffectLifetimes[effect] = nil
 		end
-		pushEvent("effect_removed", {
-			class = effectClass(effect),
-			duration = lifetime and round(os.clock() - lifetime.startedAt, 6) or nil,
-			data = scalarSnapshot(effect),
-		})
+		local class = effectClass(effect)
+		if TRACKED_EFFECTS[class] then
+			pushEvent("effect_removed", {
+				class = class,
+				duration = lifetime and round(os.clock() - lifetime.startedAt, 6) or nil,
+				data = scalarSnapshot(effect),
+			})
+		end
 	end)
 	for _, effect in pairs(effects.Effects or {}) do
-		pushEvent("effect_present", { class = effectClass(effect), data = scalarSnapshot(effect) })
+		local class = effectClass(effect)
+		State.EffectClassesSeen[class] = true
+		pushEvent("effect_present", { class = class, data = scalarSnapshot(effect) })
 	end
 end
 
@@ -666,13 +842,20 @@ local function attachCharacter(character)
 			local previousHealth = lastHealth
 			lastHealth = health
 			local delta = health - previousHealth
-			pushEvent("health_change", {
-				from = round(previousHealth, 4),
-				to = round(health, 4),
-				delta = round(delta, 4),
-			})
+			if delta < 0 or delta >= 1 then
+				pushEvent("health_change", {
+					from = round(previousHealth, 4),
+					to = round(health, 4),
+					delta = round(delta, 4),
+				})
+			end
 			if delta < 0 then
-				recordOutcome("health_hit", "humanoid", { damage = round(-delta, 4), health = round(health, 4) })
+				local damage = round(-delta, 4)
+				recordOutcome("health_hit", "humanoid", {
+					damage = damage,
+					health = round(health, 4),
+					classification = damage < 2 and "chip_or_dot" or "impact_candidate",
+				})
 			end
 		end, State.CharacterConnections)
 	end
@@ -708,7 +891,7 @@ end
 
 local function exportCatalog()
 	return {
-		version = 1,
+		version = 2,
 		recorderVersion = State.Version,
 		session = {
 			id = SESSION_ID,
@@ -720,6 +903,8 @@ local function exportCatalog()
 			linked = State.LinkedCount,
 			dropped = State.DroppedCount,
 		},
+		effectCounts = State.EffectCounts,
+		suspiciousAnimations = State.SuspiciousAnimations,
 		catalog = State.Catalog,
 	}
 end
@@ -734,6 +919,48 @@ local function writeJSON(path, value)
 	end
 	local okWrite, reason = pcall(writefile, path, encoded)
 	return okWrite, okWrite and #encoded or tostring(reason)
+end
+
+local function saveSummary()
+	local catalogOK, catalogDetail = writeJSON(SESSION_PATH .. "/catalog.json", exportCatalog())
+	local manifestOK, manifestDetail = writeJSON(SESSION_PATH .. "/manifest.json", {
+		version = 2,
+		sessionId = SESSION_ID,
+		path = SESSION_PATH,
+		chunks = State.Chunks,
+		liveFile = "events_live.json",
+		liveEventCount = #State.Buffer,
+		eventCount = State.Sequence,
+		animationCount = State.AnimationCount,
+		outcomeCount = State.OutcomeCount,
+		linkedCount = State.LinkedCount,
+		updatedUnix = os.time(),
+	})
+	State.LastSave = os.clock()
+	State.FileStatus = catalogOK and manifestOK and "saved" or "partial save"
+	State.LastError = (not catalogOK and catalogDetail) or (not manifestOK and manifestDetail) or nil
+	return catalogOK and manifestOK
+end
+
+checkpoint = function(reason)
+	if State.Checkpointing or State.Flushing or not writefile then
+		return false
+	end
+	State.Checkpointing = true
+	ensureFolders()
+	local liveOK, liveDetail = writeJSON(SESSION_PATH .. "/events_live.json", {
+		version = 2,
+		sessionId = SESSION_ID,
+		reason = reason,
+		events = State.Buffer,
+	})
+	local summaryOK = saveSummary()
+	State.Checkpointing = false
+	if not liveOK then
+		State.LastError = liveDetail
+		State.FileStatus = "checkpoint failed"
+	end
+	return liveOK and summaryOK
 end
 
 flush = function(reason)
@@ -771,23 +998,15 @@ flush = function(reason)
 		return false, detail
 	end
 	State.Chunks[#State.Chunks + 1] = chunkName
-	local catalogOK, catalogDetail = writeJSON(SESSION_PATH .. "/catalog.json", exportCatalog())
-	local manifestOK, manifestDetail = writeJSON(SESSION_PATH .. "/manifest.json", {
-		version = 1,
+	writeJSON(SESSION_PATH .. "/events_live.json", {
+		version = 2,
 		sessionId = SESSION_ID,
-		path = SESSION_PATH,
-		chunks = State.Chunks,
-		eventCount = State.Sequence,
-		animationCount = State.AnimationCount,
-		outcomeCount = State.OutcomeCount,
-		linkedCount = State.LinkedCount,
-		updatedUnix = os.time(),
+		reason = "rotated",
+		events = {},
 	})
-	State.LastSave = os.clock()
-	State.FileStatus = catalogOK and manifestOK and "saved" or "partial save"
-	State.LastError = (not catalogOK and catalogDetail) or (not manifestOK and manifestDetail) or nil
+	local summaryOK = saveSummary()
 	State.Flushing = false
-	return true, detail
+	return summaryOK, detail
 end
 
 -- Small, non-modal, input-transparent HUD.
@@ -857,7 +1076,7 @@ local function button(parent, text, x, y, width, callback)
 	return item
 end
 
-label(Header, "CLAW RECORDER v0.1", 9, 0, 230, 28, 13, Color3.fromRGB(189, 151, 255))
+label(Header, "CLAW RECORDER v0.2", 9, 0, 230, 28, 13, Color3.fromRGB(189, 151, 255))
 local Close = button(Header, "X", 327, 2, 27, function()
 	State:Destroy()
 end)
@@ -937,6 +1156,7 @@ connect(RunService.Heartbeat, function()
 			State.Active[track] = nil
 		else
 			local properties = animationProperties(track)
+			attack.lastTimePosition = math.max(attack.lastTimePosition or 0, properties.timePosition or 0)
 			if math.abs(properties.speed - attack.lastSpeed) > 0.001 and now - attack.lastSpeedSample >= 0.05 then
 				attack.lastSpeed = properties.speed
 				attack.lastSpeedSample = now
@@ -944,11 +1164,14 @@ connect(RunService.Heartbeat, function()
 					t = round(now - attack.startedAt, 5),
 					speed = properties.speed,
 				}, 24)
-				pushEvent("animation_speed", {
-					animationId = attack.id,
-					elapsed = round(now - attack.startedAt, 6),
-					speed = properties.speed,
-				})
+				if attack.rawLogged then
+					pushEvent("animation_speed", {
+						animationEventSeq = attack.seq,
+						animationId = attack.id,
+						elapsed = round(now - attack.startedAt, 6),
+						speed = properties.speed,
+					})
+				end
 			end
 		end
 	end
@@ -971,8 +1194,8 @@ connect(RunService.Heartbeat, function()
 			State.AnimatorConnections[animator] = nil
 		end
 	end
-	if writefile and #State.Buffer > 0 and now - State.LastSave >= 15 then
-		flush("autosave")
+	if writefile and now - State.LastSave >= AUTOSAVE_INTERVAL then
+		checkpoint("autosave")
 	end
 
 	Status.Text = string.format(
@@ -983,11 +1206,11 @@ connect(RunService.Heartbeat, function()
 	)
 	Status.TextColor3 = State.Recording and Color3.fromRGB(112, 210, 133) or Color3.fromRGB(220, 178, 92)
 	Counters.Text = string.format(
-		"animations:%d  unique:%d  outcomes:%d  linked:%d",
+		"animations:%d  unique:%d  outcomes:%d  noise:%d",
 		State.AnimationCount,
 		catalogCount(),
 		State.OutcomeCount,
-		State.LinkedCount
+		suspiciousCount()
 	)
 	local last = State.LastOutcome
 	Detail.Text = last and string.format(

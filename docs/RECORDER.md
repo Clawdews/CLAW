@@ -21,9 +21,10 @@ Its only interactive surfaces are its own four HUD buttons and draggable title b
 - Enemy animation ID, start time, start speed, length, priority, weight, distance, facing, relative position, both players' linear velocity, and a non-identifying player/mob label.
 - Animation end time, possible early stop, speed changes, and named keyframe times.
 - Observed weapon type, swing speed, original swing speed, weapon length, and network ping when available.
-- Local health loss, posture/break-meter changes, all replicated local effect additions/removals, and selected effect outcomes including parry attempts/frames/signals, blocking, dodging, iframes, stun, and knockdown.
+- Local health loss, posture/break-meter changes, combat-relevant replicated effect additions/removals, and selected effect outcomes including parry attempts, confirmed `ParrySuccess`, frames/signals, blocking, dodging, iframes, stun, and knockdown. Counts for other observed effect classes remain in the catalog without flooding the raw timeline.
 - Client effect name/channel plus a bounded scalar snapshot of its data.
 - For every outcome, up to eight ranked recent animation candidates. The selected best candidate and current geometry are stored, but the alternatives remain in the raw event so later analysis can correct an uncertain automatic match.
+- Anonymous source IDs, per-animation source counts, and a source-scoped cadence classifier. Sustained floods of at least five repeatedly playing Action IDs are labeled suspicious and demoted during correlation; they are never silently discarded.
 
 ## Files
 
@@ -34,13 +35,13 @@ CLAW_RECORDER/<timestamp_random-id>/
   catalog.json
   manifest.json
   events_0001.json
-  events_0002.json
+  events_live.json
   ...
 ```
 
-`catalog.json` is the first file to send. It is bounded and aggregated by animation ID. The event chunks contain the lossless timeline and are useful when a catalog sample appears misidentified. `manifest.json` lists all chunks and basic counts.
+`catalog.json` is the first file to send. It is bounded and aggregated by animation ID. The numbered chunks contain sampled detail and every outcome; `events_live.json` is an overwrite-safe checkpoint for the current unrotated events. Repetitive starts, keyframes, effect churn, and healing ticks are summarized rather than copied indefinitely. `manifest.json` lists all chunks and basic counts.
 
-The recorder saves every 15 seconds, when 250 buffered events accumulate, when **SAVE NOW** is pressed, and when the HUD is closed. Re-executing its loader cleanly saves and closes the old recorder before starting a new session.
+The recorder checkpoints every 15 seconds, rotates a numbered chunk when 2,000 retained events accumulate, and flushes when **SAVE NOW** is pressed or the HUD is closed. Re-executing its loader cleanly saves and closes the old recorder before starting a new session.
 
 ## HUD controls
 
@@ -58,4 +59,6 @@ The recorder saves every 15 seconds, when 250 buffered events accumulate, when *
 4. Play normally. Several clean observations of the same move are more valuable than one observation.
 5. Press **SAVE NOW** after the final match, then send `catalog.json`. Keep the numbered chunks until the catalog has been reviewed.
 
-The automatic links are candidates, not ground truth. Health loss is a definite hit, but a parry cooldown is evidence of a parry attempt rather than proof that the parry succeeded. Repeated samples and the raw candidate list are what let the later builder distinguish those cases.
+The automatic links are candidates, not ground truth. A health decrease is definite damage but may be a later burn/chip tick rather than a distinct weapon impact; a parry cooldown is evidence of a parry attempt rather than proof that the parry succeeded. Repeated samples, exact `ParrySuccess` effects, damage amounts, and the raw candidate list are what let the later builder distinguish those cases.
+
+Health loss below two points is labeled `chip_or_dot`; larger loss is labeled `impact_candidate`. Both remain evidence rather than assumptions because elemental damage-over-time can arrive after the animation that originally caused it. The repository's `npm run analyze:recorder -- <session-folder>` command processes all chunks together, removes detected breaker clusters from candidate ranking, pairs the exact `ParrySuccess` effect with attempts, and reports damage amounts separately from damage-tick counts.

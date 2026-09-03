@@ -63,14 +63,20 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/lo
 
 ## Standalone combat recorder
 
-CLAW Recorder is a small passive HUD meant to run beside APC. It does not start CLAW MARK, simulate input, fire remotes, alter animation tracks, hook functions, or inspect APC. It observes replicated enemy animation starts, stops, speed changes, and named keyframes; local health and posture changes; local combat effects such as `ParryCool`, dodge, block, stun, and iframe states; and the game's three client-effect channels. Each local outcome retains up to eight ranked nearby animation candidates so ambiguous fights can be analyzed later instead of silently forcing one animation match.
+CLAW Recorder is a small passive HUD meant to run beside APC. It does not start CLAW MARK, simulate input, fire remotes, alter animation tracks, hook functions, or inspect APC. It observes replicated enemy animation starts, stops, speed changes, and named keyframes; local health and posture changes; local combat effects such as `ParryCool`, `ParrySuccess`, dodge, block, stun, and iframe states; and the game's three client-effect channels. Each local outcome retains up to eight ranked nearby animation candidates so ambiguous fights can be analyzed later instead of silently forcing one animation match. Anonymous per-session source IDs distinguish the opponent from spawned models without storing account identity. A source-scoped cadence classifier labels sustained multi-ID Action floods as suspicious and demotes those candidates without deleting the underlying evidence.
 
-The recorder autosaves every 15 seconds and every 250 events. Its compact `catalog.json` contains per-animation observations and outcome-delay samples; numbered `events_*.json` chunks preserve the raw timeline; `manifest.json` lists the chunks. Files contain no player names, user ID, or server job ID. They are written under the executor's device workspace at `CLAW_RECORDER/<session>/`. After a session, send `catalog.json` first and the numbered event chunks only when a questionable correlation needs deeper inspection. If the executor has no file API, **COPY CATALOG** provides a clipboard fallback.
+The recorder checkpoints a bounded live event file and catalog every 15 seconds, samples repetitive animation details after the initial observations, and rotates raw chunks only every 2,000 retained events. Its compact `catalog.json` preserves aggregate observations, sources, durations, keyframes, effect counts, suspicious IDs, and outcome-delay samples; numbered `events_*.json` chunks plus `events_live.json` preserve the selected timeline; `manifest.json` lists the files. Files contain no player names, user ID, or server job ID. They are written under the executor's device workspace at `CLAW_RECORDER/<session>/`. After a session, send `catalog.json` first and the event files only when a questionable correlation needs deeper inspection. If the executor has no file API, **COPY CATALOG** provides a clipboard fallback.
 
 Run only the recorder with:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/recorder_loader.lua?t=" .. tostring(os.time())))()
+```
+
+For local development, the dependency-free analyzer reads an entire recorder session, deduplicates its rolling checkpoint, detects sustained source-scoped breaker clusters, removes those IDs from outcome candidates, pairs `ParrySuccess` with the preceding parry attempt, and maps recovered IDs to the attributed timing database:
+
+```powershell
+npm run analyze:recorder -- "C:\path\to\CLAW_RECORDER\session-id"
 ```
 
 ## Combat implementation map

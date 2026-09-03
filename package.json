@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check && node scripts/verify.mjs",
+    "analyze:recorder": "node scripts/analyze-recorder.mjs",
     "convert:lycoris": "node scripts/convert-lycoris-timings.mjs"
   }
 }
