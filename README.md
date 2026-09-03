@@ -33,13 +33,14 @@ Type these in chat from the configured controller account while the alts share i
 ;alts phase on
 ;alts phase off
 ;alts menu
-;alts join <jobId>
 ;alts safety on
 ;alts safety off
 ;alts status
 ;alts help
 ```
 
-`bring` assigns each alt a stable formation position instead of stacking every character on one point. Movement noclip is temporary and restores the character's collision state afterward. `join` queues CLAW RELAY across the teleport when the executor supports `queue_on_teleport`; otherwise, run the loader again after joining.
+`bring` assigns each alt a stable formation position instead of stacking every character on one point. Movement noclip is temporary and restores the character's collision state afterward.
 
 Proximity safety is disabled by default. Before enabling it, list the UserIds of the main account and every alt in `TrustedUserIds`. An unlisted player who stays within `ProximityDistance` for `ProximityGraceSeconds` causes that alt to request the main menu.
+
+CLAW RELAY does not currently force a respawn or select a Deepwoken server. Deepwoken's instant-respawn behavior and its lobby `StartMenu.PickServer` flow are game-specific; they must not be replaced with generic Roblox respawn or JobId assumptions.

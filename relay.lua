@@ -3,9 +3,7 @@ local environment = getgenv and getgenv() or _G
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TeleportService = game:GetService("TeleportService")
 local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
@@ -16,8 +14,6 @@ if not LocalPlayer then
 	LocalPlayer = Players.LocalPlayer
 end
 assert(LocalPlayer, "CLAW RELAY: LocalPlayer is unavailable")
-local LOADER_URL = "https://raw.githubusercontent.com/Clawdews/CLAW/main/loader.lua"
-
 local DEFAULTS = {
 	ControllerUserId = 0,
 	ControllerName = "",
@@ -99,7 +95,7 @@ end
 
 local Relay = {
 	Name = "CLAW RELAY",
-	Version = "0.1.0",
+	Version = "0.1.1",
 	Config = Config,
 	Running = true,
 	Connections = {},
@@ -275,68 +271,6 @@ function Relay:returnToMenu(reason)
 	return false, result
 end
 
-function Relay:_serializableConfig()
-	return {
-		ControllerUserId = Config.ControllerUserId,
-		ControllerName = Config.ControllerName,
-		CommandPrefix = Config.CommandPrefix,
-		BringSeconds = Config.BringSeconds,
-		FormationRadius = Config.FormationRadius,
-		FormationSlot = Config.FormationSlot,
-		AutoStart = Config.AutoStart,
-		AutoStartAttempts = Config.AutoStartAttempts,
-		TrustedUserIds = copyArray(Config.TrustedUserIds),
-		TrustedNames = copyArray(Config.TrustedNames),
-		ProximitySafety = self.SafetyEnabled,
-		ProximityDistance = Config.ProximityDistance,
-		ProximityGraceSeconds = Config.ProximityGraceSeconds,
-		ProximityPollSeconds = Config.ProximityPollSeconds,
-	}
-end
-
-function Relay:_queueAfterTeleport()
-	local queue = rawget(environment, "queue_on_teleport") or rawget(environment, "queueonteleport")
-	if not queue and type(rawget(environment, "syn")) == "table" then
-		queue = environment.syn.queue_on_teleport
-	end
-	if type(queue) ~= "function" then
-		return false, "executor has no teleport queue"
-	end
-	local encoded = HttpService:JSONEncode(self:_serializableConfig())
-	local bootstrap = string.format(
-		"getgenv().CLAW_RELAY_CONFIG=game:GetService('HttpService'):JSONDecode(%q);loadstring(game:HttpGet(%q..'?t='..tostring(os.time())))()",
-		encoded,
-		LOADER_URL
-	)
-	local ok, result = pcall(queue, bootstrap)
-	return ok, ok and "queued" or result
-end
-
-function Relay:join(jobId)
-	jobId = tostring(jobId or ""):match("^%s*(.-)%s*$")
-	if jobId == "" then
-		return false, "missing JobId"
-	end
-	if not string.match(jobId, "^[%w%-]+$") then
-		return false, "JobId contains invalid characters"
-	end
-	if jobId == game.JobId then
-		return true, "already in that server"
-	end
-	local queued, queueReason = self:_queueAfterTeleport()
-	if not queued then
-		warnRelay(queueReason .. "; run the loader again after teleport")
-	end
-	local ok, result = pcall(function()
-		TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LocalPlayer)
-	end)
-	if ok then
-		log("joining server " .. jobId)
-		return true
-	end
-	return false, result
-end
-
 function Relay:_trustedSets()
 	local ids = {}
 	local names = {}
@@ -405,13 +339,12 @@ end
 function Relay:_status()
 	local controller = self.Controller and self.Controller.Name or "waiting"
 	return string.format(
-		"v%s controller=%s movement=%s phase=%s safety=%s job=%s",
+		"v%s controller=%s movement=%s phase=%s safety=%s",
 		self.Version,
 		controller,
 		self.MovementActive and "moving" or "idle",
 		self.PhaseEnabled and "on" or "off",
-		self.SafetyEnabled and "on" or "off",
-		game.JobId
+		self.SafetyEnabled and "on" or "off"
 	)
 end
 
@@ -419,7 +352,7 @@ function Relay:_executeCommand(commandLine)
 	local command, remainder = string.match(commandLine, "^(%S+)%s*(.-)%s*$")
 	command = string.lower(command or "")
 	if command == "" or command == "help" then
-		log("commands: bring [seconds], stop, phase [on/off], menu, join <jobId>, safety [on/off], status")
+		log("commands: bring [seconds], stop, phase [on/off], menu, safety [on/off], status")
 	elseif command == "bring" or command == "tween" then
 		local ok, reason = self:bring(tonumber(remainder))
 		if not ok then warnRelay(reason) end
@@ -436,9 +369,6 @@ function Relay:_executeCommand(commandLine)
 		end
 	elseif command == "menu" or command == "log" then
 		local ok, reason = self:returnToMenu("controller command")
-		if not ok then warnRelay(reason) end
-	elseif command == "join" then
-		local ok, reason = self:join(remainder)
 		if not ok then warnRelay(reason) end
 	elseif command == "safety" then
 		local mode = string.lower(remainder)
