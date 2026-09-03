@@ -2,7 +2,7 @@
 local environment = getgenv and getgenv() or _G
 local HttpService = game:GetService("HttpService")
 local repository = "Clawdews/CLAW"
-local fallbackRef = "480dd47917af7b39c92b11b419084c800049fbce"
+local fallbackRef = "3bd91e4f595693c31c5fd7ba9035d2c3fbec7cb6"
 
 local function traceback(message)
 	local handler = debug and debug.traceback
