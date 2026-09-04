@@ -1,6 +1,6 @@
 {
-  "version": "0.2.0-beta.4",
-  "build": "8adb83203af4",
+  "version": "0.2.0-beta.5",
+  "build": "9dbf4adc3509",
   "modules": [
     "join/core.lua",
     "control/auto.lua",
@@ -12,12 +12,12 @@
     {
       "file": "control-beta.lua",
       "bytes": 51499,
-      "sha256": "72db88127092d2b846afcb4c2f466bc12c467fbc38e811f06a8f6ef27853a6cb"
+      "sha256": "c3fac98d0865702dbd8cdc0c395f1d1bfd1fcc76744d9b7dc36c6fe1e1b020dd"
     },
     {
       "file": "launcher-beta.lua",
       "bytes": 65377,
-      "sha256": "cd1d2a791224a806b7d5531363a0e2302ab3e8e3b1f6c1cf48c27d9fc3a665c5"
+      "sha256": "b42cdbf50abc0bf69ee9f870049eb9affffe27c357b9beb2f1d9d5c3c61d6f65"
     }
   ]
 }

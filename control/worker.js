@@ -6,7 +6,7 @@ import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeS
 import { pairingReply, setupReply } from './onboarding.js';
 import { cleanCatalog, selectable, catalogPage, MAX_SLOTS } from './catalog.js';
 import { cleanNickname, statusPage } from './status.js';
-import { resolveCommandAccount, resolveAccount } from './accounts.js';
+import { resolveCommandAccount, resolveAccount, canDeferAccount, finishAccountReply } from './accounts.js';
 import { panelCommand } from './panel-controller.js';
 import { batchInput, batchRequest } from './batch.js';
 
@@ -26,9 +26,9 @@ async function bodyText(request, limit = 8192) {
   return text + decoder.decode();
 }
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.4', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.5', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -44,15 +44,21 @@ export default {
       }
       if (!(interaction.type === 2 && interaction.data?.name === 'claw') && !(shared(env) && interaction.type === 3)) return json(reply('Unsupported command.'));
       if (!await entryAllowed(env, 'command:' + user)) return json(reply('Control is temporarily rate-limited or unavailable. Try again later.'));
-      try {
-        // Resolve outside the account room so a slow lookup cannot block its sockets.
-        const resolved = shared(env) && interaction.type === 2 ? await resolveCommandAccount(interaction) : { interaction };
-        if (resolved.error) return json(reply(resolved.error));
-        const result = await env.ROOM.getByName(roomName(env, user)).command(resolved.interaction, Number(request.headers.get('X-Signature-Timestamp')), user);
-        if (resolved.username && result.type === 4 && !result.data.embeds) result.data.content = `Account: @${resolved.username} (${resolved.accountId})\n` + result.data.content;
-        return json(result);
+      const run = async () => {
+        try {
+          // Resolve outside the account room so a slow lookup cannot block its sockets.
+          const resolved = shared(env) && interaction.type === 2 ? await resolveCommandAccount(interaction) : { interaction };
+          if (resolved.error) return reply(resolved.error);
+          const result = await env.ROOM.getByName(roomName(env, user)).command(resolved.interaction, Number(request.headers.get('X-Signature-Timestamp')), user);
+          if (resolved.username && result.type === 4 && !result.data.embeds) result.data.content = `Account: @${resolved.username} (${resolved.accountId})\n` + result.data.content;
+          return result;
+        } catch { return reply('Control service unavailable. No success was confirmed; try status before retrying.'); }
+      };
+      if (shared(env) && canDeferAccount(interaction) && ctx?.waitUntil) {
+        ctx.waitUntil(finishAccountReply(interaction, run));
+        return json({ type: 5, data: { flags: 64 } });
       }
-      catch { return json(reply('Control service unavailable. No success was confirmed; try status before retrying.')); }
+      return json(await run());
     }
     if (shared(env) && path === '/batch' && request.method === 'POST') {
       const owner = new URL(request.url).searchParams.get('owner');

@@ -1,10 +1,10 @@
-import { id } from './protocol.js';
+import { id, snowflake, reply } from './protocol.js';
 
 const accountCommands = new Set(['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'auto-return', 'nickname', 'retry', 'revoke']);
 const usernamePattern = /^[A-Za-z0-9_]{1,20}$/;
-const unavailable = 'Roblox username lookup is unavailable. No changes made. Try again, or use the numeric UserId.';
+const unavailable = 'Roblox username lookup is unavailable. No changes made. Please try again in a moment.';
 const invalid = 'Enter the Roblox username, not its display name. Numeric UserIds also work.';
-export const LOOKUP_TIMEOUT_MS = 1200;
+export const LOOKUP_TIMEOUT_MS = 8000;
 
 export async function resolveAccount(value, fetcher = fetch) {
   if (typeof value !== 'string' || value.length > 64) return { error: invalid };
@@ -17,10 +17,20 @@ export async function resolveAccount(value, fetcher = fetch) {
   let reader;
   try {
     // Only the name goes to Roblox; no Discord identifiers, cookies or pairing keys.
-    const response = await fetcher('https://users.roblox.com/v1/usernames/users', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, redirect: 'manual',
-      body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }), signal: controller.signal,
-    });
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      response = await fetcher('https://users.roblox.com/v1/usernames/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, redirect: 'manual',
+        body: JSON.stringify({ usernames: [username], excludeBannedUsers: false }), signal: controller.signal,
+      });
+      if (attempt || (response.status !== 429 && response.status < 500)) break;
+      const retryAfter = response.headers.get('Retry-After');
+      const pause = retryAfter === null ? 250 : Number(retryAfter) * 1000;
+      if (!Number.isFinite(pause) || pause < 0 || pause > 1000) break;
+      await response.body?.cancel();
+      await new Promise(resolve => setTimeout(resolve, Math.max(250, pause)));
+      if (controller.signal.aborted) return { error: unavailable };
+    }
     if (!response.ok || Number(response.headers.get('Content-Length')) > 8192) return { error: unavailable };
     reader = response.body?.getReader();
     if (!reader) return { error: unavailable };
@@ -49,6 +59,44 @@ export async function resolveAccount(value, fetcher = fetch) {
     clearTimeout(timer); controller.abort();
     if (reader) { try { await reader.cancel(); } catch { /* The fetch may already be aborted. */ } }
   }
+}
+
+export function canDeferAccount(interaction) {
+  const options = interaction.data?.options;
+  if (!Array.isArray(options) || options.length !== 1) return false;
+  const option = options[0];
+  const accounts = Array.isArray(option?.options) ? option.options.filter(value => value?.name === 'account') : [];
+  if (accounts.length !== 1) return false;
+  const account = accounts[0].value;
+  return interaction.type === 2 && accountCommands.has(option?.name)
+    && typeof account === 'string' && !id(account.trim())
+    && snowflake(interaction.application_id) && typeof interaction.token === 'string'
+    && /^[A-Za-z0-9._-]{20,2048}$/.test(interaction.token);
+}
+
+export async function finishAccountReply(interaction, work, fetcher = fetch) {
+  if (!canDeferAccount(interaction)) return false;
+  let result;
+  try { result = await work(); }
+  catch { result = reply('Control service unavailable. Check /claw status before trying again.'); }
+  if (result?.type !== 4 || !result.data) return false;
+  const { flags, ...data } = result.data;
+  // Edit only the private response already acknowledged for this signed interaction.
+  const url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${encodeURIComponent(interaction.token)}/messages/@original`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetcher(url, { method: 'PATCH', redirect: 'manual',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal: AbortSignal.timeout(4000) });
+      const status = response.status;
+      const retryAfter = response.headers.get('Retry-After');
+      await response.body?.cancel();
+      if (response.ok) return true;
+      if (status !== 404 && status !== 429 && status < 500) return false;
+      if (retryAfter !== null && (!Number.isFinite(Number(retryAfter)) || Number(retryAfter) > 1)) return false;
+    } catch { /* No tokens, pairing replies or upstream error bodies go to logs. */ }
+    if (!attempt) await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  return false;
 }
 
 export async function resolveCommandAccount(interaction, fetcher = fetch) {

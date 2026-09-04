@@ -1,5 +1,13 @@
 # Control changelog
 
+## 0.2.0-beta.5
+
+- Open access: each Discord user gets their own group without host approval.
+- Commands available for personal and server installations.
+- Username commands show a private loading reply while Roblox responds.
+- Longer lookup timeout and one retry for short rate limits or server errors.
+- Existing pairings, following settings and character approvals stay unchanged.
+
 ## 0.2.0-beta.4
 
 - Unused slots no longer block a finished, approved character from joining.
@@ -38,9 +46,9 @@
 
 ## Release status
 
-Closed beta. The older controller is still separate.
+Public beta. The older controller is still separate.
 
-Before public onboarding:
+Still to test in-game:
 
 - Test setup with two independent users.
 - Test group setup on a fresh alt and confirm the panel buttons in-game.

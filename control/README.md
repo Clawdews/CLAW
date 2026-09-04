@@ -2,7 +2,9 @@
 
 Manage your alts from Discord and have them join your main's server.
 
-Still in closed beta. Joining and the Discord cards have been tested with one main and alt. Group setup still needs a fresh-alt test.
+Open to everyone. Each Discord user gets a separate account group automatically. Main-to-alt joining and server hopping have been tested in-game; batch pairing still needs a fresh-alt test.
+
+[Add CLAW to your Discord account](https://discord.com/oauth2/authorize?client_id=1545435882784559124&scope=applications.commands&integration_type=1).
 
 ## Using it
 

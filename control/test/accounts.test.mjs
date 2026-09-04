@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAccount, resolveCommandAccount, LOOKUP_TIMEOUT_MS } from '../accounts.js';
+import { resolveAccount, resolveCommandAccount, canDeferAccount, finishAccountReply, LOOKUP_TIMEOUT_MS } from '../accounts.js';
+import { reply } from '../protocol.js';
 import { command, sharedCommand } from '../commands.js';
 
 const user = { id: 11, name: 'Nova_One', requestedUsername: 'nova_one', displayName: 'NotTheUsername' };
@@ -89,4 +90,59 @@ test('account-less commands skip Roblox and duplicate/missing account values fai
   for (const options of [[], null, [{ name: 'account', value: '11' }, { name: 'account', value: '22' }]]) {
     assert.ok((await resolveCommandAccount({ data: { options: [{ name: 'enroll', options }] } }, forbiddenFetch)).error);
   }
+});
+
+test('a valid username response slower than the old deadline still succeeds', async () => {
+  const result = await resolveAccount('nova_one', async () => {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return Response.json({ data: [user] });
+  });
+  assert.equal(result.accountId, '11');
+});
+
+test('transient Roblox errors retry once, but long rate limits and invalid names do not', async () => {
+  for (const status of [429, 503]) {
+    let calls = 0;
+    const result = await resolveAccount('nova_one', async () => ++calls === 1
+      ? new Response('', { status }) : Response.json({ data: [user] }));
+    assert.equal(calls, 2); assert.equal(result.accountId, '11');
+  }
+  let calls = 0;
+  assert.ok((await resolveAccount('nova_one', async () => { calls++; return new Response('', { status: 429, headers: { 'Retry-After': '60' } }); })).error);
+  assert.equal(calls, 1);
+});
+
+const deferred = { type: 2, application_id: '456789012345678901', token: ['test', 'interaction', 'token', 'only'].join('-'),
+  data: { options: [{ name: 'enroll', options: [{ name: 'account', value: 'nova_one' }] }] } };
+test('only username commands with valid reply metadata can defer', () => {
+  assert.equal(canDeferAccount(deferred), true);
+  for (const change of [{ token: '../elsewhere' }, { application_id: 'invalid' }, { type: 3 },
+    { data: { options: [{ name: 'enroll', options: {} }] } },
+    { data: { options: [{ name: 'enroll', options: [{ name: 'account', value: '11' }] }] } }]) {
+    assert.equal(canDeferAccount({ ...deferred, ...change }), false);
+  }
+});
+
+test('reply retries edit the same private message without rerunning enrollment', async () => {
+  let operations = 0, deliveries = 0;
+  const ok = await finishAccountReply(deferred, async () => { operations++; return reply('Private result'); }, async (url, options) => {
+    deliveries++;
+    const target = new URL(url);
+    assert.equal(target.origin, 'https://discord.com');
+    assert.deepEqual(target.pathname.split('/'), ['', 'api', 'v10', 'webhooks', deferred.application_id, deferred.token, 'messages', '@original']);
+    assert.equal(options.method, 'PATCH'); assert.equal(options.redirect, 'manual');
+    assert.deepEqual(JSON.parse(options.body), { content: 'Private result', allowed_mentions: { parse: [] } });
+    return new Response(null, { status: deliveries === 1 ? 404 : 204 });
+  });
+  assert.equal(ok, true); assert.equal(operations, 1); assert.equal(deliveries, 2);
+});
+
+test('invalid reply metadata cannot execute work and redirects are never followed', async () => {
+  assert.equal(await finishAccountReply({ ...deferred, token: '/' }, () => assert.fail('Unexpected work'), forbiddenFetch), false);
+  let deliveries = 0;
+  assert.equal(await finishAccountReply(deferred, async () => reply('Private result'), async (_url, options) => {
+    deliveries++; assert.equal(options.redirect, 'manual');
+    return new Response(null, { status: 302, headers: { Location: 'https://example.com' } });
+  }), false);
+  assert.equal(deliveries, 1);
 });

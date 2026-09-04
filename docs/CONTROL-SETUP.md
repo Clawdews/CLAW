@@ -1,6 +1,8 @@
 # Set up your accounts
 
-CLAW is in closed beta. Ask the host for access first. You don't need your own bot or website.
+CLAW is open to everyone. Use **CLAW Control Beta** in Discord. Your account group is created for you; nobody needs to approve your Discord ID.
+
+[Add CLAW to your Discord account](https://discord.com/oauth2/authorize?client_id=1545435882784559124&scope=applications.commands&integration_type=1). You don't need your own bot or website.
 
 Already paired? Open `/claw panel` in Discord. Your saved accounts are still there.
 

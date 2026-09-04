@@ -67,7 +67,7 @@ This does not launch PR. If your current PR setup already includes the notifier,
 
 ## Discord controller
 
-[CLAW Control](https://github.com/Clawdews/CLAW/tree/control-beta/control) pairs your accounts with Discord and follows your main's exact server. Character selection, private groups and recovery controls are in closed beta. Public onboarding is not open yet.
+[CLAW Control](https://github.com/Clawdews/CLAW/tree/control-beta/control) pairs your accounts with Discord and follows your main's exact server. Open to everyone, with a separate group for each Discord user. [Setup guide](https://github.com/Clawdews/CLAW/blob/control-beta/docs/CONTROL-SETUP.md).
 
 ## Repository updates
 

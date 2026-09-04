@@ -1,5 +1,5 @@
 -- Account-follow lifecycle. No network or game services in this module.
-local Auto = { VERSION = "0.2.0-beta.4", LOBBY = 4111023553 }
+local Auto = { VERSION = "0.2.0-beta.5", LOBBY = 4111023553 }
 Auto.__index = Auto
 local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
 local phases = { RETURN_MENU = true, WAIT_SLOT = true, JOINING = true, DONE = true, HOLD = true }
