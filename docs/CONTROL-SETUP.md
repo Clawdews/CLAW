@@ -111,6 +111,8 @@ Copy only the `CLAW SUPPORT 1` block from the console. It includes the build ID,
 
 The older `report()` method and saved attempt files are detailed private diagnostics; do not paste those publicly. The short report is for troubleshooting, not proof that Roblox accepted a request.
 
+If Roblox or the loader restarts during a join, the client resumes checking that existing request when a valid saved record is available. It does not select another character just because the separate follow state is incomplete. A timed-out request waits for `/claw retry`; repeated reloads are not a retry button.
+
 ## Optional menu report
 
 Only use this for troubleshooting; normal cloud sync does not need it.

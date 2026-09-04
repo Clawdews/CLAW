@@ -722,7 +722,7 @@ return Catalog
 }
 -- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
-local BUILD_ID = "7bc5f201848a"
+local BUILD_ID = "4be0a99f397b"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
@@ -878,7 +878,16 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	beginJoin = function(ticket) return core:begin(ticket) end,
 	changed = function(status) print("[CLAW CONTROL] " .. status); if auto then save() end end,
 }, saved and saved.auto)
-if saved and saved.core then core:resume(saved.core) end
+if saved and saved.core and core:resume(saved.core) then
+	local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
+	if pending[saved.core.state] then
+		-- Recover the validated in-flight join, not menu/slot work from an incomplete snapshot.
+		local operation, ticket = core.operation, core.operation.ticket
+		auto.attempt = { phase = "JOINING", slot = operation.slot, startedAt = operation.startedAt, deadline = operation.deadline,
+			key = tostring(ticket.gameId) .. "." .. tostring(ticket.placeId) .. "." .. ticket.jobId }
+		auto:save()
+	end
+end
 
 local function connect(signal, callback)
 	local connection = signal:Connect(callback); connections[#connections + 1] = connection; return connection

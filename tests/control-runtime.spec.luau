@@ -103,6 +103,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 				if value.type == "hello" then self.OnMessage:Fire(http:JSONEncode({ type = "profile", accountId = tostring(player.UserId),
 					mainId = "11", ownerId = options.wrongOwner and "999999999999999999" or options.owner,
 					role = options.main and "main" or "alt", slot = "L", follow = true,
+					retry = options.retry,
 					allowMenuReturn = f.cloudMenu,
 					approvedSlots = { ["L"] = true }, catalog = { { slot = "L", region = "EtreanLuminant", observedAt = f.now, confirmed = true,
 						characterName = options.oldCharacter and "Previous Character" or "Test Character", level = 1 } } })) end
@@ -144,6 +145,44 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 	end
 	local passed = 0
 	local function test(name, fn) fn(); passed += 1; print("PASS runtime " .. name) end
+	local function damageAutoSnapshot(f, phase)
+		f.api:destroy() -- Simulate a new process; no old client may rewrite the fixture before startup.
+		for _, value in pairs(f.values) do
+			if type(value) == "table" and value.version == 1 and value.core and value.core.operation then
+				if phase then value.auto.attempt.phase = phase else value.auto = nil end
+			end
+		end
+	end
+	test("reload observes an existing join even when auto state is absent or stale", function()
+		for _, phase in ipairs({ "missing", "HOLD", "WAIT_SLOT" }) do
+			local f = boot(); f:advance(3); assert(f.picks == 1 and f.joins == 1)
+			damageAutoSnapshot(f, phase ~= "missing" and phase or nil)
+			f:reload(); f:advance(2)
+			assert(f.picks == 1 and f.joins == 1, "Reload repeated character selection for a pending join")
+			assert(f.api:report().attempt.phase == "JOINING" and f.api:report().status == "REQUESTED")
+		end
+	end)
+	test("restored pending join verifies arrival without its old auto snapshot", function()
+		local f = boot(); f:advance(3); damageAutoSnapshot(f)
+		f.game.PlaceId = 6032399813; f.game.JobId = "main-job"; f.player.DataSlot = "L"; f.hasMain = true
+		f:reload(); f:advance(2)
+		assert(f.picks == 1 and f.joins == 1 and f.api:report().status == "VERIFIED")
+	end)
+	test("recovered join timeout holds until a new explicit retry", function()
+		local options = { retry = "original-retry" }
+		local f = boot(options); f:advance(3); damageAutoSnapshot(f); f:reload(); f:advance(140)
+		assert(f.picks == 1 and f.joins == 1 and f.api:report().status:find("ATTENTION", 1, true))
+		assert(f.api:report().join.state == "TIMED_OUT")
+		options.retry = "next-retry"; f.sockets[#f.sockets]:Send(f.http:JSONEncode({ type = "hello" })); f:advance(3)
+		assert(f.picks == 2 and f.joins == 2, "Explicit retry should still work after recovery")
+	end)
+	test("failed recovery persistence cannot start new menu or slot actions", function()
+		local options = {}
+		local f = boot(options); f:advance(3); damageAutoSnapshot(f); options.storageFail = true
+		f:reload(); f:advance(20)
+		assert(f.picks == 1 and f.joins == 1 and f.menus == 0)
+		assert(f.api:report().status:find("storage unavailable", 1, true))
+	end)
 	test("support report omits identities and has no file, network or game side effects", function()
 		local f = boot({ owner = "123456789012345678" }); f:advance(3)
 		assert(type(f.api.supportReport) == "function", "Missing private-by-default support report")
