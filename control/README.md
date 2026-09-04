@@ -2,7 +2,7 @@
 
 Discord selects the main; the main publishes its current server; paired alts join and verify automatically. No clipboard, chat commands, in-game panel or local HTTP service.
 
-**Status:** implementation and local tests are present. It has not been deployed or tested end-to-end with Discord/Volt. The underlying manual exact-server join has passed the user's live test. That does not yet validate automatic slot selection, remote delivery or returning to menu.
+**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. Discord application setup and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
 
 The working alt manager, loot notifier, and `main/loader.lua` are unchanged. This lives on `codex/discord-control`.
 
