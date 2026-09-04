@@ -28,7 +28,7 @@ async function bodyText(request, limit = 8192) {
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.5', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.6', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }

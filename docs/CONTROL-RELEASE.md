@@ -1,5 +1,10 @@
 # Control changelog
 
+## 0.2.0-beta.6
+
+- Easier multi-account setup: one private snippet per shared executor workspace.
+- Setup messages now lead with the several-account path and explain each approval step.
+
 ## 0.2.0-beta.5
 
 - Open access: each Discord user gets their own group without host approval.

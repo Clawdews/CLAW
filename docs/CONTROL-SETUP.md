@@ -8,19 +8,11 @@ Already paired? Open `/claw panel` in Discord. Your saved accounts are still the
 
 ## 1. Pair once
 
-### One account
-
-1. In Discord, use `/claw enroll account:<username>`. Enter the Roblox username, not the display name or the brackets.
-2. Run the private snippet from the reply on that Roblox account.
-3. Do the same for your main and each alt.
-
-That snippet contains a private key. **Don't share it.** The public loader below has no keys.
-
 ### Several alts on one device
 
 1. Open `/claw panel` → **Setup → Start alt setup**.
-2. Run its private snippet once on one account.
-3. Run the public loader on your other accounts.
+2. Run its private snippet once in the shared executor workspace. Do not paste it into every account.
+3. Open each unpaired account and let the public autoexec loader run.
 4. In Discord, click **Refresh**, then choose a pairing request.
 5. Match its check code with the code in that account's Roblox console, then confirm.
 
@@ -29,6 +21,13 @@ Pairing finishes within about 30 seconds. Only approve matching requests from yo
 The window lasts 10 minutes. This works across accounts sharing the same executor workspace; another device or workspace needs the snippet there too. Existing pairings are left alone. New accounts still need character approval.
 
 If time runs out, start a new setup window and rerun the public loader on the unfinished accounts.
+
+### One account
+
+1. In Discord, use `/claw enroll account:<username>`. Enter the Roblox username, not the display name or the brackets.
+2. Run the private snippet from the reply on that Roblox account.
+
+That snippet contains a private key. **Don't share it.** The public loader below has no keys.
 
 ## 2. Use one startup script
 

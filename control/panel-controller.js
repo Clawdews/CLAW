@@ -87,7 +87,7 @@ export async function panelCommand(room, interaction, ownerId, initial) {
         const code = nonce().replaceAll('-', '') + nonce().replaceAll('-', '');
         batch = { id: nonce(), codeHash: await hash(code), expires: at + 600, pending: {} }; batchChanged = true;
         config.ownerId = ownerId;
-        privateSnippet = `Private alt setup — expires in 10 minutes. Run this ONCE in your shared executor workspace, then run the public loader on your other accounts. Never share this message.\n\n\`\`\`lua\ngetgenv().CLAW_BATCH = {Version=1, Endpoint="${room.env.PUBLIC_ENDPOINT}", OwnerId="${ownerId}", Code="${code}", Expires=${batch.expires}}\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/launcher-beta.lua"))()\n\`\`\`\nClick Refresh below to see requests. Compare each check code with its Roblox console before approving. Existing pairings are left alone.`;
+        privateSnippet = `Private alt setup — expires in 10 minutes. Run this ONCE in the shared executor workspace. Do not paste it into every account. Never share this message.\n\n\`\`\`lua\ngetgenv().CLAW_BATCH = {Version=1, Endpoint="${room.env.PUBLIC_ENDPOINT}", OwnerId="${ownerId}", Code="${code}", Expires=${batch.expires}}\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/launcher-beta.lua"))()\n\`\`\`\nNow open each unpaired account and let the public autoexec loader run. Click Refresh below, match each 8-character code with that account’s Roblox console, then approve it. Existing pairings are left alone.`;
         view.screen = 'requests'; view.page = 0;
       }
     } else if (offer.kind === 'request') {

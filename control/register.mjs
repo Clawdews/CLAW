@@ -13,7 +13,7 @@ const selectedCommand = structuredClone(process.env.SHARED_MODE === 'true' ? sha
 if (!globalScope) { delete selectedCommand.integration_types; delete selectedCommand.contexts; }
 const response = await fetch(`https://discord.com/api/v10/applications/${app}${globalScope ? '' : '/guilds/' + guild}/commands`, {
   method: 'POST', headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json',
-    'User-Agent': 'DiscordBot (https://github.com/Clawdews/CLAW, 0.2.0-beta.5)' },
+    'User-Agent': 'DiscordBot (https://github.com/Clawdews/CLAW, 0.2.0-beta.6)' },
   signal: AbortSignal.timeout(15000),
   body: JSON.stringify(selectedCommand),
 });

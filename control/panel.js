@@ -51,7 +51,7 @@ export function renderPanel(config, connections, view, at, batch = null) {
     title('Pair your accounts', 'One public loader for every account. Existing pairings are saved; you do not need to pair them again.');
     embeds[0].fields = [
       { name: 'One account', value: 'Use `/claw enroll account:username`, then run its private reply once on that Roblox account.' },
-      { name: 'Several alts on one device', value: 'Start a 10-minute setup window. Run its private setup snippet once in your shared executor workspace. New accounts using the public loader will appear here for approval.' },
+      { name: 'Several alts on one device', value: 'Start a 10-minute setup window. Run its private snippet once in the shared executor workspace—not once per account. Each new account appears here when the public loader starts.' },
       { name: 'Keep it private', value: 'Only approve requests whose check code matches your own Roblox console. Pairing does not approve characters or turn following on.' },
     ];
     row(button('batch-start', 'Start alt setup', { kind: 'batch-start' }, false, 1), button('requests', 'Pairing requests', { kind: 'screen', screen: 'requests' }), button('home', 'Accounts', { kind: 'home' }));
