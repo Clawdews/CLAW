@@ -2,7 +2,7 @@
 
 Discord selects the main; the main publishes its current server; paired alts join and verify automatically. No clipboard, chat commands, in-game panel or local HTTP service.
 
-**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Discord has accepted the interactions endpoint; the owner and server restrictions are configured. The app is installed in the selected server, and all seven `/claw` subcommands are registered and read back from Discord. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. A real slash-command round trip and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
+**Status (2026-09-04):** deployed on the owner's Workers Free account. The installed Discord app has all seven `/claw` subcommands, and the owner has confirmed a live `/claw status` response. The main and first alt are paired, follow is enabled, and authenticated HTTPS/WebSocket profile delivery passed for both accounts. A separate private Volt autoexec file is installed; the existing PR/loot file was not changed. Character-slot learning and the first automatic in-game join are still pending. The underlying manual exact-server join passed the user's earlier live test; that does not yet validate automatic slot selection or returning to menu.
 
 The working alt manager, loot notifier, and `main/loader.lua` are unchanged. This lives on `codex/discord-control`.
 
@@ -66,6 +66,12 @@ The alt should select its saved character, join the main and report `VERIFIED`. 
 After that passes, set `AllowMenuReturn = true` in the alt's private config if you want it to leave another server and follow the main automatically. It sends one menu request and confirms only a prompt titled **Return to Main Menu**. It does not force respawn, bypass combat restrictions or click unrelated prompts. Keep this off during the first test.
 
 Disable competing auto-start/server-hop scripts during testing. The existing relay's `AutoStart` can race character/server selection; this client warns but does not change any other script.
+
+### Deployment-managed initial pairing
+
+For a fresh room, the deployment owner can use an optional `INITIAL_PAIRING` secret instead of entering enroll commands. It is JSON with `version: 1`, the configured `ownerId` and `guildId`, `mainId`, a boolean `follow`, and `members: [{accountId, keyHash}]`. Each `keyHash` is the SHA-256 hex digest of a separately generated, private 64-hex-character client key. Never put the plaintext keys in this binding or public files.
+
+Initialization validates the roster and saves it before handling requests. Any existing persisted config takes precedence, including an empty roster after revocation. This is not an HTTP administration endpoint and cannot be used to reset existing accounts. Remove the temporary secret after authenticating the paired clients, then verify them again. Character slots remain unset until learned from the game.
 
 ## Controls
 

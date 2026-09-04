@@ -1,6 +1,7 @@
 import { LOBBY, FRESH_SECONDS, MAX_MEMBERS, id, snowflake, slotId, now, nonce, hash, sameHash,
   cleanPresence, ticketFor, targetKey, discordSignature, reply } from './protocol.js';
 import { DurableObject } from 'cloudflare:workers';
+import { loadConfig } from './bootstrap.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request) {
@@ -50,8 +51,8 @@ export default {
 export class ControlRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
-      this.config = await ctx.storage.get('config') || { mainId: null, follow: false, revision: nonce(), members: {} };
+    this.ctx.blockConcurrencyWhile(async () => {
+      this.config = await loadConfig(this.ctx.storage, this.env);
     });
   }
   sockets() { return this.ctx.getWebSockets(); }

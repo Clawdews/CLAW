@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { fileURLToPath } from 'node:url';
+import { hash } from '../protocol.js';
 
 test('Cloudflare runtime: private enrollment, exact target delivery, pause, replay and revocation', async t => {
   const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
@@ -9,7 +10,8 @@ test('Cloudflare runtime: private enrollment, exact target delivery, pause, repl
   const owner = '123456789012345678', guild = '234567890123456789';
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'claw-test', modules: [
     { type: 'ESModule', path: fileURLToPath(new URL('../worker.js', import.meta.url)) },
-    { type: 'ESModule', path: fileURLToPath(new URL('../protocol.js', import.meta.url)) } ],
+    { type: 'ESModule', path: fileURLToPath(new URL('../protocol.js', import.meta.url)) },
+    { type: 'ESModule', path: fileURLToPath(new URL('../bootstrap.js', import.meta.url)) } ],
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { DISCORD_PUBLIC_KEY: publicKey, DISCORD_OWNER_ID: owner, DISCORD_GUILD_ID: guild } }] }));
   t.after(() => mf.dispose());
@@ -110,4 +112,38 @@ test('Cloudflare runtime: private enrollment, exact target delivery, pause, repl
     await interaction('revoke', { account: '22' });
     assert.equal((await session('22', altKey)).status, 401);
   });
+});
+
+test('deployment pairing works through real session/socket auth, not an admin HTTP route', async t => {
+  const mainKey = '1'.repeat(64), altKey = '2'.repeat(64);
+  const seed = { version: 1, ownerId: '123456789012345678', guildId: '234567890123456789',
+    mainId: '11', follow: true, members: [
+      { accountId: '11', keyHash: await hash(mainKey) }, { accountId: '22', keyHash: await hash(altKey) }] };
+  const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'seed-test',
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js'].map(name => ({ type: 'ESModule',
+      path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
+    compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
+    bindings: { DISCORD_OWNER_ID: seed.ownerId, DISCORD_GUILD_ID: seed.guildId, INITIAL_PAIRING: JSON.stringify(seed) } }] }));
+  t.after(() => mf.dispose());
+  assert.equal((await mf.dispatchFetch('https://claw.test/bootstrap', { method: 'POST', body: JSON.stringify(seed) })).status, 404);
+  assert.equal((await mf.dispatchFetch('https://claw.test/session', { method: 'POST',
+    body: JSON.stringify({ accountId: '22', key: mainKey }) })).status, 401);
+  for (const [accountId, key, role] of [['11', mainKey, 'main'], ['22', altKey, 'alt']]) {
+    const auth = await mf.dispatchFetch('https://claw.test/session', { method: 'POST', body: JSON.stringify({ accountId, key }) });
+    assert.equal(auth.status, 200);
+    const { ticket } = await auth.json();
+    const upgrade = await mf.dispatchFetch('https://claw.test/socket?ticket=' + ticket, { headers: { Upgrade: 'websocket' } });
+    assert.equal(upgrade.status, 101);
+    const ws = upgrade.webSocket; ws.accept();
+    const messages = [];
+    ws.addEventListener('message', event => messages.push(JSON.parse(event.data)));
+    ws.send(JSON.stringify({ type: 'hello' }));
+    try {
+      for (let i = 0; i < 60 && messages.length < 2; i++) await new Promise(r => setTimeout(r, 25));
+      const profile = messages.find(m => m.type === 'profile');
+      assert.ok(profile); assert.equal(profile.accountId, accountId); assert.equal(profile.role, role);
+      assert.equal(profile.mainId, '11'); assert.equal(profile.follow, true); assert.equal(profile.slot, null);
+      assert.ok(messages.some(m => m.type === 'target' && m.reason === 'WAITING_MAIN'));
+    } finally { ws.close(); }
+  }
 });
