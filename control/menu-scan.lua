@@ -1,5 +1,5 @@
 -- Passive, bounded menu inspection. Never clicks, selects slots, invokes remotes or reads chat.
-local Scan = { VERSION = "0.1.0", MAX_NODES = 1200, MAX_ROWS = 250, MAX_DEPTH = 14 }
+local Scan = { VERSION = "0.1.1", MAX_NODES = 1200, MAX_ROWS = 250, MAX_DEPTH = 14 }
 local fields = { "DataSlot", "SlotId", "Slot", "Luminant", "Region", "Location" }
 local function short(value, limit)
     if type(value) ~= "string" and type(value) ~= "number" then return nil end
@@ -10,10 +10,14 @@ local function excluded(name)
     name = lower(name)
     return name:find("chat", 1, true) or name:find("claw", 1, true)
         or name:find("backpack", 1, true) or name:find("choiceprompt", 1, true)
+        or name:find("friend", 1, true) or name:find("patchnote", 1, true)
 end
 local function relevant(name)
     name = lower(name)
-    return name:find("menu", 1, true) or name:find("slot", 1, true) or name:find("characterselect", 1, true)
+    -- The observed Deepwoken character menu lives under LoadingGui even after loading.
+    -- Keep this exact: unrelated loading screens are not a reason to inspect every GUI.
+    return name == "loadinggui" or name:find("menu", 1, true)
+        or name:find("slot", 1, true) or name:find("characterselect", 1, true)
 end
 function Scan.collect(playerGui, yieldStep)
     local result = { version = Scan.VERSION, roots = {}, rows = {}, visited = 0, truncated = false,

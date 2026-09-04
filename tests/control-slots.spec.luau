@@ -53,6 +53,28 @@ test("unknown menu structure is reported without guessing slot letters", functio
     local result = Scan.collect(object("PlayerGui", nil, nil, nil, { object("MysteryRoot", "TextLabel", nil, "Slot L Eastern Luminant") }))
     assert(result.status == "NO_MENU_ROOT" and #result.candidates == 0)
 end)
+
+test("observed LoadingGui menu is scanned without assuming it is only a splash", function()
+    local result = Scan.collect(object("PlayerGui", nil, nil, nil, {
+        object("LoadingGui", "ScreenGui", nil, nil, {
+            object("Character", "TextLabel", nil, "Rook Janus"),
+            object("Location", "TextLabel", nil, "Eastern Luminant"),
+            object("Friends", nil, nil, nil, { object("Name", "TextLabel", nil, "PRIVATE") }),
+            object("PatchNotes", "TextLabel", nil, "UNRELATED"),
+        }),
+        object("TooltipGui", "TextLabel", nil, "UNRELATED"),
+    }))
+    assert(result.status == "CAPTURED_UNCONFIRMED" and #result.rows == 2)
+    assert(result.rows[1].path == "LoadingGui/Character")
+    assert(result.rows[2].text == "Eastern Luminant" and #result.candidates == 0)
+end)
+
+test("loading root alone never invents character candidates", function()
+    local result = Scan.collect(object("PlayerGui", nil, nil, nil, { object("LoadingGui", "ScreenGui") }))
+    assert(result.status == "CAPTURED_UNCONFIRMED" and #result.rows == 0 and #result.candidates == 0)
+    local unrelated = Scan.collect(object("PlayerGui", nil, nil, nil, { object("LoadingSplash", "TextLabel", nil, "PRIVATE") }))
+    assert(unrelated.status == "NO_MENU_ROOT")
+end)
 test("scanner bounds work and yields between batches", function()
     local children = {}; for i = 1, 2000 do children[i] = object("Label" .. i, "TextLabel", nil, "text") end
     local pauses = 0
