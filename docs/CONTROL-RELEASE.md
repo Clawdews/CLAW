@@ -1,5 +1,9 @@
 # CLAW Control changelog
 
+## 0.3.0-beta.2
+
+- Disconnect alerts no longer wait behind a later disconnect.
+
 ## 0.3.0-beta.1
 
 - Teams, deployment, ready checks and formations.

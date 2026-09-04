@@ -31,7 +31,7 @@ end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
 local Movement = module("control/movement.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.1", "Module version mismatch")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.2", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"

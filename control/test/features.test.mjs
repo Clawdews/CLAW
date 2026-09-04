@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedCommand } from '../commands.js';
 import { commandInput, featureCommand } from '../feature-commands.js';
-import { ensureFeatures, formationOffset, readyReport, keyFor, named } from '../features.js';
+import { ensureFeatures, formationOffset, readyReport, keyFor, named, earliestOfflineDue } from '../features.js';
 import { cleanActionResult, cleanInventory, cleanLoot, cleanPosition, actionPacket, cleanQueuedAction } from '../actions.js';
 import { shouldAlert, postAlert } from '../alerts.js';
 
@@ -31,6 +31,12 @@ test('public command stays inside Discord limits and exposes the complete contro
 test('saved names cannot collide with object internals', () => {
   for (const value of ['__proto__', 'constructor']) assert.equal(keyFor(value), null);
   assert.deepEqual(named({ normal: { name: 'Normal' } }, 'normal'), ['normal', { name: 'Normal' }]);
+});
+
+test('disconnect alerts keep the earliest pending deadline', () => {
+  assert.equal(earliestOfflineDue({ alt2: { due: 130 }, alt1: { due: 120 } }), 120);
+  assert.equal(earliestOfflineDue({ broken: {}, alt1: { due: 120 } }), 120);
+  assert.equal(earliestOfflineDue({}), null);
 });
 
 test('nested Discord commands are parsed without trusting display text', () => {

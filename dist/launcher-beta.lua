@@ -433,7 +433,7 @@ end
 return Core
 ]=],
  ["control/auto.lua"] = [=[-- Account-follow lifecycle. No network or game services in this module.
-local Auto = { VERSION = "0.3.0-beta.1", LOBBY = 4111023553 }
+local Auto = { VERSION = "0.3.0-beta.2", LOBBY = 4111023553 }
 Auto.__index = Auto
 local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
 local phases = { RETURN_MENU = true, WAIT_SLOT = true, JOINING = true, DONE = true, HOLD = true }
@@ -1041,7 +1041,7 @@ return Movement
 }
 -- One client for joining, account status, item scans and owner-approved movement.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
-local BUILD_ID = "e1b2bcbafe95"
+local BUILD_ID = "bfbc96a2a308"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
@@ -1072,7 +1072,7 @@ end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
 local Movement = module("control/movement.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.1", "Module version mismatch")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.2", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"

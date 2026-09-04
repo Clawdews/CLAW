@@ -27,6 +27,14 @@ export function ensureFeatures(config) {
   config.session ||= null;
   return config;
 }
+export function earliestOfflineDue(pending) {
+  let earliest = null;
+  for (const item of Object.values(pending || {})) {
+    if (!Number.isSafeInteger(item?.due)) continue;
+    earliest = earliest === null ? item.due : Math.min(earliest, item.due);
+  }
+  return earliest;
+}
 export function named(collection, name) {
   const key = keyFor(name);
   return key && collection && Object.prototype.hasOwnProperty.call(collection, key) ? [key, collection[key]] : [key, null];

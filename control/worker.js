@@ -10,7 +10,7 @@ import { resolveCommandAccount, resolveAccount, canDeferAccount, finishAccountRe
 import { panelCommand } from './panel-controller.js';
 import { batchInput, batchRequest } from './batch.js';
 import { commandInput, featureCommand } from './feature-commands.js';
-import { ensureFeatures, activeFor, addHistory, addLoot } from './features.js';
+import { ensureFeatures, activeFor, addHistory, addLoot, earliestOfflineDue } from './features.js';
 import { cleanActionResult, cleanInventory, cleanLoot, cleanQueuedAction } from './actions.js';
 import { shouldAlert, postAlert } from './alerts.js';
 
@@ -32,7 +32,7 @@ async function bodyText(request, limit = 8192) {
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.3.0-beta.1', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.3.0-beta.2', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -121,7 +121,8 @@ export class ControlRoom extends DurableObject {
     const pending = await this.ctx.storage.get('offline') || {};
     pending[userId] = { due: now() + 15, credential: this.config.members[userId].credential };
     await this.ctx.storage.put('offline', pending);
-    await this.ctx.storage.setAlarm(Date.now() + 16000);
+    const due = earliestOfflineDue(pending);
+    if (due !== null) await this.ctx.storage.setAlarm(due * 1000 + 1000);
   }
   async clearOffline(userId) {
     const pending = await this.ctx.storage.get('offline') || {};
