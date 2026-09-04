@@ -1,5 +1,5 @@
 -- Experimental, manual one-alt join test. Does not load or modify CLAW RELAY.
-local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/codex/server-join/"
+local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/server-join/"
 local Http = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local Teleport = game:GetService("TeleportService")

@@ -10,7 +10,7 @@ These instructions apply to the shared-service beta after its host enables your 
 4. Put the following **public** loader in autoexec. It reads only the current account's pairing file. Unlike the enrollment snippet, this line is safe to share:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/dist/launcher-beta.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/launcher-beta.lua"))()
 ```
 
 The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
@@ -79,20 +79,14 @@ Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.js
 
 There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
 
-## Read-only menu capture
+## Optional menu report
 
-At the character menu, run:
+Only use this for troubleshooting; normal cloud sync does not need it.
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/dist/slot-scan.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/slot-scan.lua"))()
 ```
 
-Use the single-file build above, not the old scanner pasted into Volt. It prints its version (`0.2.1`) and one summary per card, then saves `CLAW_CONTROL/menu-<UserId>.json`.
+Run at character selection. It prints each card and overwrites one local report at `CLAW_CONTROL/menu-<UserId>.json`. It reads the slot list only: no clicks, selections, teleports or uploads.
 
-Displayed race/origin values use visible labels within each card, including visible `IronRace` / `Memento` alternatives. Hidden base labels are retained separately as `baseRace` and `baseOrigin`. Each captured label records `visibleWithinCard`; a hidden ancestor or fully transparent text prevents it from becoming a display field. Card visibility is recorded separately so scrolling/filtering does not discard loaded slots.
-
-The reader targets only `LoadingGui/Overlay/Columns/MainFrame/Slots/SlotScroll`. It records each slot letter, character name, level, race, oath/origin, location, playtime and last played when those labelled fields are available. Unrecognized labels are retained in that card's `labels`; missing or conflicting fields remain unset and are flagged. A combined race/oath line is retained as `summary` without guessing which trailing words are an oath or an origin. It skips the friends list, shops, credits, editable text and avatar-preview models. Loaded offscreen cards are included; the script does not scroll to force additional cards to load.
-
-There are no clicks, slot selections, teleports, input hooks, webhooks or report uploads. Review the local report before sharing: it contains your character names and locations. `CARDS_CAPTURED_UNCONFIRMED` means the four core display fields were read, not that slot selection or joining was verified. `PARTIAL_CARD_DETAILS` lists missing/conflicting fields; `PARTIAL_CARDS` also means a safety limit was reached. A missing/unloaded list is reported without falling back to scanning unrelated UI.
-
-Build/check the standalone scanner with `node tools/build-slot-scan.mjs` / `node tools/build-slot-scan.mjs --check`. For a specific test, use its Git commit in the URL instead of the branch to avoid GitHub serving a cached older release.
+Reports include character names and locations, so review them before sharing. Missing or conflicting fields are flagged, not guessed. Loaded offscreen cards are included; the scanner does not scroll to load more. `CARDS_CAPTURED_UNCONFIRMED` describes the scan, not a verified join.

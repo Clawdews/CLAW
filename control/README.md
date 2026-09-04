@@ -1,46 +1,33 @@
 # CLAW Control
 
-Your main announces its server. Your alts join it. Discord handles setup and shows the result; no chat commands, in-game panel, clipboard relay or local web server.
+Your main reports its server. Your alts join it. Setup and status live in Discord.
 
-This branch is the **shared-service beta**, not the installed live service. The existing single-owner version passed two automatic in-game joins and stays on [`codex/discord-control`](https://github.com/Clawdews/CLAW/tree/codex/discord-control/control). Nothing here replaces its endpoint or autoexec automatically.
+**Closed beta.** The shared backend is deployed; the separate Discord app and full in-game rollout are still pending. The [existing controller](https://github.com/Clawdews/CLAW/tree/discord-control/control) stays separate.
 
-## How it ships
+- One public loader after one-time pairing on each account.
+- A private account group for each Discord user.
+- Automatic character cards: slot, name, level, race, oath/origin, location and playtime.
+- Approved slots and a preferred character per region.
+- Exact-server joining with arrival checks.
+- Pause, retry, revoke, nicknames and normal menu-return controls.
+- No local web server or extra in-game panel.
 
-One Discord app plus one public autoexec loader. Each Discord user gets a separate private account group, with their own main, alts, approved characters and pairing keys. They do not need their own Cloudflare account or Discord bot token when using a hosted instance.
+Eastern and Etrean Luminant are supported. Unknown regions, incomplete cards, stale destinations and mismatched selections stop the join. Automatic menu return starts off. No forced respawn, process launching or combat automation.
 
-- [User setup](../docs/CONTROL-SETUP.md)
-- [Hosting, privacy and rollback](../docs/CONTROL-HOSTING.md)
-- [Release checklist and roadmap](../docs/CONTROL-RELEASE.md)
+## Guides
 
-## What's in this beta
-
-- Signed Discord commands, private replies and per-user storage/socket isolation.
-- One-time pairing on each Roblox account; a key cannot authenticate another account or another Discord user's group.
-- Separate enrollment and key replacement, plus account revocation.
-- Account nicknames, paginated status with practical next steps, and an explicit per-account Discord switch for normal menu return. No private-file editing needed for that switch.
-- Approved character selection for Eastern and Etrean Luminant, with a preferred character per region.
-- Unknown regions, conflicting choices, observations older than 24 hours and selection-response mismatches stop before joining.
-- Explicit waiting for a manual menu return when automatic exits are off. No sticky failure just because the alt is still in the world.
-- Persistent, bounded join attempts; pause, retry, reconnect and exact-destination verification.
-- Automatic menu-card sync: slot letter, character name, level, visible race, oath/origin, location and playtime. Raw UI reports stay on the device; only compact current cards go to the owner's group.
-- Fresh local cards and cloud permissions must agree before selection. Reused slot letters, renamed characters and observed level resets cannot silently keep an old approval.
-- Reproducible, self-contained client builds. One launcher download includes its matching client modules.
-
-There is no combat automation, forced respawn, proximity logout, process relaunch or Discord movement control here. The working alt-movement relay and loot notifier remain separate.
+- [Setup](../docs/CONTROL-SETUP.md)
+- [Hosting and data](../docs/CONTROL-HOSTING.md)
+- [Changelog](../docs/CONTROL-RELEASE.md)
 
 ## Development
-
-Requires Node and Luau. From the repository root:
 
 ```sh
 npm --prefix control ci
 node tools/build-control.mjs
-node tools/build-control.mjs --check
-npm --prefix control test
-node tests/run-control-tests.mjs /path/to/luau
-node tests/run-join-tests.mjs /path/to/luau
+node tools/check-control.mjs
 ```
 
-From `control`, `npm run check:shared` compiles the separate beta Worker without deploying it. `npm run check` checks the legacy configuration. Local Worker tests run in Miniflare; client tests use mocked Roblox services. The standalone v0.2.1 reader has captured all 13 real cards; integrated cloud selection still needs an in-game beta test.
+Pass `--luau /path/to/luau` if needed. Add `--worker-build` to compile the shared Worker without deploying it. Tests cover local Worker execution and mocked game services; they do not replace an in-game test.
 
-Edit `control/client.lua`, `control/auto.lua`, `control/regions.lua` and `control-launcher.lua`, then rebuild. Do not edit `dist` by hand. Its manifest records artifact sizes and SHA-256 hashes for release checks, not a claim that the executor authenticates a download at runtime.
+Edit the source modules, then rebuild `dist`. Pairing keys, bot tokens and local account files must stay out of Git.

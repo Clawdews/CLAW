@@ -1,7 +1,7 @@
 -- Public autoexec entry point. Each local account reads only its own private pairing.
 -- PAIR_MODULE_BEGIN
 if getgenv().CLAW_PAIR ~= nil then
-    local pairing = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/control/pair.lua")
+    local pairing = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control/pair.lua")
     assert(loadstring(pairing, "@CLAW/pair.lua"))()
 end
 -- PAIR_MODULE_END
@@ -22,5 +22,5 @@ assert(type(config.Endpoint) == "string" and config.Endpoint:match("^https://[%w
 assert(type(config.Key) == "string" and #config.Key == 64 and config.Key:match("^[a-f0-9]+$"), "Invalid pairing key")
 getgenv().CLAW_CONTROL_CONFIG = { Endpoint = config.Endpoint, OwnerId = config.OwnerId, Key = config.Key,
     AllowMenuReturn = config.AllowMenuReturn == true }
-local url = "https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/control-client.lua"
+local url = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control-client.lua"
 return assert(loadstring(game:HttpGet(url .. "?cache=" .. Http:GenerateGUID(false)), "@CLAW/control-client.lua"))()

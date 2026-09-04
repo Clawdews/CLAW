@@ -5,7 +5,7 @@ local player = Players.LocalPlayer
 assert(player, "Run this in a Roblox client")
 assert(game.PlaceId == 4111023553, "Run the slot scanner at the character-selection menu")
 -- SCANNER_MODULE_BEGIN
-local source = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/control/menu-scan.lua?cache=" .. Http:GenerateGUID(false))
+local source = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control/menu-scan.lua?cache=" .. Http:GenerateGUID(false))
 local Scan = assert(loadstring(source, "@CLAW/menu-scan.lua"))()
 -- SCANNER_MODULE_END
 local result = Scan.collect(player:FindFirstChild("PlayerGui"), function() task.wait() end)

@@ -10,13 +10,13 @@
   "artifacts": [
     {
       "file": "control-beta.lua",
-      "bytes": 47147,
-      "sha256": "5fd2d46c25d44cf336c66b38dd49519b8028660dfbe4a7d93dfed54b03505146"
+      "bytes": 47141,
+      "sha256": "c762b5cd92a3a611e9480a1327b989e068f0019432b1e5c4ac2459330f618a82"
     },
     {
       "file": "launcher-beta.lua",
-      "bytes": 51263,
-      "sha256": "84c6b3f5950536b58bac8e634d370058594b1238406ce73b3297a4e51beeb3cf"
+      "bytes": 51257,
+      "sha256": "b6ed58d55668c7c6a1b7dd126466fafa852bdd00e8b491fd61701fe9f7bd063d"
     }
   ]
 }
