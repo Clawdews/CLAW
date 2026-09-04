@@ -19,3 +19,8 @@ Thumbs.db
 .idea/
 .vscode/
 tmp/
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+coverage/

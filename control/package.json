@@ -1,0 +1,13 @@
+{
+  "name": "claw-control",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "register": "node register.mjs"
+  },
+  "devDependencies": { "wrangler": "4.129.0", "miniflare": "5.20260903.0-alpha" }
+}

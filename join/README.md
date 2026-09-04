@@ -4,6 +4,8 @@ Experimental branch: `codex/server-join`. The regular `main/loader.lua`, alt mov
 
 This tests one thing: can an alt join the main's exact server through Deepwoken's own server-selection request, including when that server isn't listed to the alt?
 
+The user has now confirmed a successful live join with `VERIFIED`. Automated delivery is being developed separately in [CLAW Control](../control/README.md); this manual test remains unchanged.
+
 It is not a Discord bot, automatic rejoin system or proximity logger. No join happens on load. The small in-game panel is temporary test equipment, not the planned control panel.
 
 ## Try it with one alt
