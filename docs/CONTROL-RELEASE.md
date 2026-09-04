@@ -15,7 +15,8 @@ Read menu metadata without clicking; keep menu candidates unconfirmed. A running
 ## Release gates
 
 - [x] Existing exact-server arrival verified in-game; repeat test passed.
-- [ ] Menu diagnostic captured from real character selection and parser validated.
+- [x] Real menu structure captured; slot entries A–M located in the character list.
+- [ ] Focused card reader validated in-game against names, races and location labels. Source/bundle tests pass; a real v0.2.0 report is still required.
 - [ ] Approved multi-slot region picker tested against a real mismatch.
 - [x] Separate-user authentication, commands, sockets, revocation and restart isolation tested in the local Cloudflare runtime.
 - [x] Private pairing and public launcher covered by mocked-client tests, including wrong account/owner, bad keys and corrupt files.
@@ -29,7 +30,7 @@ Public release is not the same as committing code. Do not change the existing li
 
 ## Next milestones
 
-1. Capture the real character menu, map its slot cards and location labels, and compare those observations with the game's selected-region response. Never promote labels to confirmed slot IDs without that check.
+1. Test the focused v0.2.0 card reader, map any remaining label formats and compare the location observations with the game's selected-region response. Never promote labels to confirmed slot IDs without that check.
 2. Run closed beta with two independent Discord users: pairing, approval, correct-region join, mismatch refusal, pause, disconnect, revoke and reconnect. Record actual results, not just screenshots of the UI loading.
 3. Pin a reviewed client release, deploy the shared service separately and publish the install link after the gates pass.
 4. Bring the existing movement/parking controls to Discord only after joining is reliable. Proximity safety/rejoin and closed-process relaunch are separate projects, not promises in this release.

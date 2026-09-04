@@ -77,7 +77,13 @@ Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.js
 At the character menu, run:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/slot-scan.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/dist/slot-scan.lua"))()
 ```
 
-This reads bounded menu labels/attributes and saves `CLAW_CONTROL/menu-<UserId>.json`. It does not click, select a slot, teleport, send a webhook, or upload the report. Review it before sharing: it may contain character names and locations. `CAPTURED_UNCONFIRMED` is a diagnostic result, not a successful character selection.
+Use the single-file build above, not the old scanner pasted into Volt. It prints its version (`0.2.0`) and one summary per card, then saves `CLAW_CONTROL/menu-<UserId>.json`.
+
+The reader targets only `LoadingGui/Overlay/Columns/MainFrame/Slots/SlotScroll`. It records each slot letter, character name, level, race, oath/origin, location, playtime and last played when those labelled fields are available. Unrecognized labels are retained in that card's `labels`; missing or conflicting fields remain unset and are flagged. A combined race/oath line is retained as `summary` without guessing which trailing words are an oath or an origin. It skips the friends list, shops, credits, editable text and avatar-preview models. Loaded offscreen cards are included; the script does not scroll to force additional cards to load.
+
+There are no clicks, slot selections, teleports, input hooks, webhooks or report uploads. Review the local report before sharing: it contains your character names and locations. `CARDS_CAPTURED_UNCONFIRMED` means the four core display fields were read, not that slot selection or joining was verified. `PARTIAL_CARD_DETAILS` lists missing/conflicting fields; `PARTIAL_CARDS` also means a safety limit was reached. A missing/unloaded list is reported without falling back to scanning unrelated UI.
+
+Build/check the standalone scanner with `node tools/build-slot-scan.mjs` / `node tools/build-slot-scan.mjs --check`. For a specific test, use its Git commit in the URL instead of the branch to avoid GitHub serving a cached older release.
