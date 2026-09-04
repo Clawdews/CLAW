@@ -1,20 +1,22 @@
 # CLAW Control
 
-Your main reports its server. Your alts join it. Setup and status live in Discord.
+Manage your alts from Discord and have them join your main's server.
 
-**Closed beta.** The Discord app and shared backend are connected. Exact-server joining has been tested with a main and an alt; the new panel and batch setup still need a live user check. The [existing controller](https://github.com/Clawdews/CLAW/tree/discord-control/control) stays separate.
+Still in closed beta. Joining works with the main and alt we've tested. The new panel and alt setup need more in-game testing.
 
-- One public loader after one-time pairing on each account.
-- `/claw panel`: private account selector, readable character cards and click-to-confirm permissions.
-- A 10-minute setup window for several alts sharing one executor workspace.
-- A private account group for each Discord user.
-- Automatic character cards: slot, name, level, race, oath/origin, location and playtime.
-- Approved slots and a preferred character per region.
-- Exact-server joining with arrival checks.
-- Pause, retry, revoke, nicknames and normal menu-return controls.
-- No local web server or extra in-game panel.
+## Using it
 
-Eastern and Etrean Luminant are supported. Unknown regions, incomplete cards, stale destinations and mismatched selections stop the join. Automatic menu return starts off. No forced respawn, process launching or combat automation.
+Open `/claw panel` in Discord. Pick an account, then click **Characters** to see its slots and choose which ones it can use.
+
+- Pair each account once. After that, they all use the same loader.
+- Adding several alts? **Setup → Start alt setup** gives you one setup snippet for accounts sharing the same executor workspace.
+- See character names, power, race and region without looking through each Roblox window.
+- Choose your main, turn following on, or pause it from the panel.
+- Your account list is private to your Discord user.
+
+Supports Eastern and Etrean. Returning an alt to the menu automatically is off unless you enable it. Roblox and your executor still need to be running.
+
+Using the [older controller](https://github.com/Clawdews/CLAW/tree/discord-control/control)? Keep that setup separate; don't run both loaders together.
 
 ## Guides
 
@@ -30,9 +32,3 @@ npm --prefix control ci
 node tools/build-control.mjs
 node tools/check-control.mjs
 ```
-
-Pass `--luau /path/to/luau` if needed. Add `--worker-build` to compile the shared Worker without deploying it. Tests cover local Worker execution and mocked game services; they do not replace an in-game test.
-
-GitHub runs the same checks on beta pushes and pull requests, including Luau compilation and bundle consistency. The test workflow has no deployment credentials and does not publish to Cloudflare.
-
-Edit the source modules, then rebuild `dist`. Pairing keys, bot tokens and local account files must stay out of Git.
