@@ -1,11 +1,15 @@
 # Set up your accounts
 
-These instructions apply to the shared-service beta after its host enables your Discord user. The existing private live service has different commands; do not replace a working setup with this beta by accident.
+**Closed beta:** use this guide only after the host gives you access. Do not replace a working older controller with this one yet.
 
-## Once per account
+You pair each account once, choose which characters it may use, then tell your alts to follow your main. You do not need your own website, Cloudflare account or bot token.
+
+The **public loader** is safe to share. The **pairing snippet** contains your account's private key: treat it like a password. [What to keep private](PRIVACY.md).
+
+## 1. Pair your accounts
 
 1. Install the host's CLAW Discord app, then run `/claw setup`. In closed beta, the host must enable your Discord User ID first.
-2. Run `/claw enroll account:<Roblox UserId>` for your main and each alt. Use the numeric profile ID, not a username or display name.
+2. Run `/claw enroll account:<Roblox UserId>` for your main and each alt. `UserId` means the number in that account's Roblox profile URL, not its username. Replace the `<...>` text with that number; do not type the brackets.
 3. On each matching Roblox account, execute its private pairing snippet from Discord once. It checks the local account, verifies the key and saves it to that executor's workspace. Never share this snippet.
 4. Put the following **public** loader in autoexec. It reads only the current account's pairing file. Unlike the enrollment snippet, this line is safe to share:
 
@@ -15,9 +19,11 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control
 
 The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
 
-## Choose the characters
+## 2. Choose which characters the alts may use
 
-Leave the paired alt at character selection for about 15 seconds, then use `/claw slots account:...`. Its cards sync automatically: slot letter, character name, level, visible race, oath/origin, location, playtime and last played. Use `page:2` for further cards. You no longer need to load each character just to discover it.
+Leave the paired alt at character selection for about 15 seconds, then use `/claw slots account:...`. Its character cards appear in Discord automatically. They show the slot letter, name, level, race, oath/origin, location, playtime and last played. Use `page:2` to see more.
+
+Nothing is selected just because it appeared in the list. **Allow** means “this alt may use this character.” **Prefer** means “use this one when more than one allowed character fits.” Choose the region shown by the command's menu.
 
 ```text
 /claw allow-slot account:<alt UserId> slot:<observed slot> enabled:true
@@ -28,7 +34,7 @@ The preference is only necessary when several approved characters share a region
 
 Only Eastern and Etrean are mapped. Depths, layers and other places remain visible in the catalog but are not join destinations. A menu observation is labelled as such, not as an in-world verification. Syncing a card never approves it automatically.
 
-## Follow your main
+## 3. Start following
 
 Keep the main in the world and return one alt to character selection:
 
@@ -39,6 +45,8 @@ Keep the main in the world and return one alt to character selection:
 ```
 
 Changing the main pauses following until you enable it again. A fresh main destination, an approved compatible character and a working save mechanism are required before an alt acts.
+
+For a normal later session, let autoexec start the paired clients and check `/claw status`. You do not need to enroll them again. To stop new follow requests, use `/claw follow enabled:false`.
 
 `VERIFIED` means the paired client checked the expected account, character, experience, place, exact server and main's presence after joining. `WITH_MAIN` means it was already there. Discord relays those client reports; it does not independently observe Roblox.
 

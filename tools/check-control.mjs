@@ -1,40 +1,12 @@
 // Read-only release checks plus local test/build outputs; never deploys or registers Discord commands.
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, resolve, relative } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkPublicFiles } from './check-public.mjs';
+export { credentialIssue, checkPublicFiles } from './check-public.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export function credentialIssue(path, text) {
-  const normalized = path.replaceAll('\\', '/');
-  if (/(^|\/)(\.tools|CLAW_PAIRINGS|CLAW_CONTROL_BETA)(\/|$)/.test(normalized)
-      || /(^|\/)(?:\.env(?:\.|$)|\.dev\.vars)/.test(normalized) && !/\.example$/.test(normalized)
-      || /\.local\.(?:lua|jsonc?)$/.test(normalized)) return 'private file must not be published';
-  if (/https:\/\/(?:canary\.)?discord(?:app)?\.com\/api(?:\/v\d+)?\/webhooks\/\d+\/[A-Za-z0-9_-]+/.test(text)) return 'Discord webhook credential';
-  if (/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/.test(text)) return 'GitHub credential';
-  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(text)) return 'private key';
-  return null;
-}
-function gitFiles(args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  if (result.error || result.status !== 0) throw new Error('Unable to inspect Git paths; release check did not pass.');
-  return result.stdout.split('\0').filter(Boolean);
-}
-export function checkPublicFiles() {
-  const files = [...new Set([
-    ...gitFiles(['diff', '--name-only', '-z']),
-    ...gitFiles(['diff', '--cached', '--name-only', '-z']),
-    ...gitFiles(['ls-files', '--others', '--exclude-standard', '-z']),
-  ])];
-  for (const path of files) {
-    const absolute = resolve(root, path);
-    if (relative(root, absolute).startsWith('..')) throw new Error('A changed path escaped the repository.');
-    if (!existsSync(absolute)) continue;
-    const issue = credentialIssue(path, readFileSync(absolute, 'utf8'));
-    if (issue) throw new Error(`${path}: ${issue}; value not printed.`);
-  }
-  return files.length;
-}
 export function checkVersions(read = path => readFileSync(resolve(root, path), 'utf8')) {
   const version = JSON.parse(read('control/package.json')).version;
   const locked = JSON.parse(read('control/package-lock.json'));
@@ -63,12 +35,13 @@ export function main(args) {
     if (!valid.has(args[i])) throw new Error('Use --security-only, --worker-build, or --luau <path>.');
     if (args[i] === '--luau') { if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error('--luau needs a path.'); luau = resolve(args[++i]); }
   }
-  const count = checkPublicFiles(); console.log(`Checked ${count} changed/staged public files for private paths and credential patterns.`);
+  const count = checkPublicFiles(); console.log(`Checked ${count} public files and their staged contents for private paths and credential patterns.`);
   if (args.includes('--security-only')) return;
   console.log(`Release ${checkVersions()}`);
   if (!existsSync(luau)) throw new Error('Luau is missing. Pass --luau <path>; no compiler is downloaded automatically.');
   run(process.execPath, ['tools/build-control.mjs', '--check'], 'control bundle consistency');
   run(process.execPath, ['tools/build-slot-scan.mjs', '--check'], 'standalone scanner consistency');
+  run(process.execPath, ['--test', 'tests/public-files.test.mjs'], 'privacy check regressions');
   run(process.execPath, ['--test', 'tests/discord-push.test.mjs'], 'push notification tests');
   const tests = readdirSync(resolve(root, 'control/test')).filter(name => name.endsWith('.test.mjs')).map(name => 'control/test/' + name);
   run(process.execPath, ['--test', ...tests], 'Worker and release tooling tests');

@@ -18,6 +18,7 @@ Eastern and Etrean Luminant are supported. Unknown regions, incomplete cards, st
 
 - [Setup](../docs/CONTROL-SETUP.md)
 - [Hosting and data](../docs/CONTROL-HOSTING.md)
+- [What to keep private](../docs/PRIVACY.md)
 - [Changelog](../docs/CONTROL-RELEASE.md)
 
 ## Development
