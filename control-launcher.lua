@@ -1,19 +1,24 @@
 -- Public autoexec entry point. Each local account reads only its own private pairing.
+local Players = game:GetService("Players")
+for _ = 1, 240 do
+    if Players.LocalPlayer then break end
+    task.wait(0.25)
+end
+assert(Players.LocalPlayer, "CLAW is waiting for Roblox to finish loading. Run the same public loader again when the menu appears.")
 -- PAIR_MODULE_BEGIN
 if getgenv().CLAW_PAIR ~= nil then
     local pairing = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control/pair.lua")
     assert(loadstring(pairing, "@CLAW/pair.lua"))()
 end
 -- PAIR_MODULE_END
-local player = game:GetService("Players").LocalPlayer
-if not player then return end
+local player = Players.LocalPlayer
 local Http = game:GetService("HttpService")
 local path = "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json"
 assert(type(isfile) == "function" and type(readfile) == "function", "Executor file support required; saved pairing was not changed")
 local checked, exists = pcall(isfile, path)
 assert(checked and type(exists) == "boolean", "Cannot check pairing file; check executor file access before trying again")
 if not exists then
-    print("[CLAW] First setup: in Discord use /claw enroll account:" .. tostring(player.UserId))
+    print("[CLAW] First setup: in Discord use /claw enroll account:" .. (player.Name and ("@" .. player.Name) or tostring(player.UserId)))
     print("[CLAW] Run its private pairing reply once on this account. Afterward this same public loader reconnects automatically.")
     return
 end

@@ -21,6 +21,24 @@ Username lookup uses Roblox’s public API. Capitalization and a leading `@` are
 
 The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
 
+### One startup file in Volt
+
+Save [control-autoexec.lua](../control-autoexec.lua) in Volt's `autoexec` folder as `CLAW Control.luau`. Use either this file or the public line above, not both. This file contains no private keys. It waits for the local player, retries a failed download up to three times, and starts only in the character menu, Eastern or Etrean. It does not restart an already-running controller.
+
+Every instance using that same Volt installation and workspace uses this one file. You do **not** need one copy per alt. If you use another computer or a separate executor workspace, set it up there too; keys do not download from Discord automatically. Keep existing pairings private rather than posting them with the loader.
+
+For each **new** alt, run `/claw enroll account:<username>` and execute its private reply once on that account. It then uses the existing shared startup file on later joins. Choose the characters it may use in Discord; the loader never approves every character for you.
+
+### What happens next time?
+
+1. Open your main and alts with Volt attached. Autoexec starts CLAW; you paste nothing.
+2. Enter the world on your selected main. Leave the alts at character selection.
+3. If Follow is still on, the alts use their approved compatible characters to join the main.
+
+The same process applies after a server change. Pairing files stay on your device; your selected main, Follow setting, approvals and preferences stay with your private Discord group. These are saved settings, not instructions you must repeat every session. The loader downloads the current beta at startup; it does not hot-reload an already-running client.
+
+An alt already in another world waits for the menu unless you opted that account into `/claw auto-return`. This remains off by default. Closing Roblox still closes the client; this script does not start Roblox or attach Volt for you.
+
 ## 2. Choose which characters the alts may use
 
 Leave the paired alt at character selection for about 15 seconds, then use `/claw slots account:...`. Its character cards appear in Discord automatically. They show the slot letter, name, level, race, oath/origin, location, playtime and last played. Use `page:2` to see more.

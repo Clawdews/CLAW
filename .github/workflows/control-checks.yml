@@ -40,6 +40,6 @@ jobs:
           unzip -q "$RUNNER_TEMP/claw-luau.zip" -d "$RUNNER_TEMP/claw-luau"
           chmod +x "$RUNNER_TEMP/claw-luau/luau" "$RUNNER_TEMP/claw-luau/luau-compile"
       - name: Compile client scripts and published bundles
-        run: '"$RUNNER_TEMP/claw-luau/luau-compile" --null dist/control-beta.lua dist/launcher-beta.lua dist/slot-scan.lua control/*.lua join/*.lua control-client.lua control-launcher.lua join-test.lua slot-scan.lua'
+        run: '"$RUNNER_TEMP/claw-luau/luau-compile" --null dist/control-beta.lua dist/launcher-beta.lua dist/slot-scan.lua control/*.lua join/*.lua control-client.lua control-launcher.lua control-autoexec.lua join-test.lua slot-scan.lua'
       - name: Test release, clients and cloud service
         run: node tools/check-control.mjs --luau "$RUNNER_TEMP/claw-luau/luau" --worker-build

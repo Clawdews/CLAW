@@ -4,7 +4,8 @@ return function(pairSource, launcherSource, bundledSource)
         local c = {}; for k, v in pairs(t) do c[k] = copy(v) end; return c
     end
     local function fixture()
-        local f = { files = {}, json = {}, count = 0, requests = 0, downloads = 0, status = 200, logs = {}, writes = 0 }
+        local f = { files = {}, json = {}, count = 0, requests = 0, downloads = 0, status = 200, logs = {}, writes = 0, waits = 0 }
+        f.players = { LocalPlayer = { UserId = 22, Name = "TestAlt" } }
         local http = {}
         function http:JSONEncode(value)
             f.count += 1; local raw = "json-" .. f.count; f.json[raw] = copy(value); return raw
@@ -17,7 +18,9 @@ return function(pairSource, launcherSource, bundledSource)
         local game = {}
         function game:GetService(name)
             if name == "HttpService" then return http end
-            assert(name == "Players"); return { LocalPlayer = { UserId = f.userId or 22 } }
+            assert(name == "Players")
+            if f.players.LocalPlayer then f.players.LocalPlayer.UserId = f.userId or 22 end
+            return f.players
         end
         function game:HttpGet(url)
             if url:find("/control/pair.lua", 1, true) then f.downloads += 1; return pairSource end
@@ -25,6 +28,10 @@ return function(pairSource, launcherSource, bundledSource)
         end
         f.runtime = setmetatable({
             game = game, getgenv = function() return f.env end,
+            task = { wait = function(seconds)
+                assert(seconds == 0.25); f.waits += 1
+                if f.onWait then f.onWait() end
+            end },
             readfile = function(path) return assert(f.files[path], "missing file") end,
             isfile = function(path) return f.files[path] ~= nil end,
             writefile = function(path, raw) f.files[path] = raw; f.writes += 1 end,
@@ -187,6 +194,31 @@ return function(pairSource, launcherSource, bundledSource)
     test("unpaired autoexec does not download or execute a client", function()
         local f = fixture(); f.env.CLAW_PAIR = nil
         assert(f:run(launcherSource)); assert(f.downloads == 0 and not f.env.CLAW_CONTROL_CONFIG)
+        assert(f.logs[1]:find("account:@TestAlt", 1, true))
+    end)
+    test("both launchers wait for the player before identifying an unpaired account", function()
+        for _, source in ipairs({ launcherSource, bundledSource }) do
+            local f = fixture(); f.env.CLAW_PAIR = nil; f.players.LocalPlayer = nil
+            f.onWait = function()
+                if f.waits == 3 then f.players.LocalPlayer = { UserId = 22, Name = "12345" } end
+            end
+            assert(f:run(source)); assert(f.waits == 3 and f.downloads == 0 and f.writes == 0)
+            assert(f.logs[1]:find("account:@12345", 1, true))
+        end
+    end)
+    test("player startup timeout leaves the private pairing untouched", function()
+        for _, source in ipairs({ launcherSource, bundledSource }) do
+            local f = fixture(); f.players.LocalPlayer = nil
+            privateFailure(f, source, "waiting for Roblox")
+            assert(f.waits == 240 and f.requests == 0 and f.downloads == 0 and f.writes == 0)
+            assert(f.env.CLAW_PAIR == f.input or f.env.CLAW_PAIR.Key == f.input.Key)
+        end
+    end)
+    test("delayed first setup pairs once before starting the client", function()
+        local f = fixture(); f.players.LocalPlayer = nil
+        f.onWait = function() f.players.LocalPlayer = { UserId = 22, Name = "TestAlt" } end
+        assert(f:run(launcherSource)); assert(f.waits == 1 and f.requests == 1 and f.writes == 1)
+        assert(f.downloads == 2 and f.env.CLAW_PAIR == nil)
     end)
     test("public launcher uses the local pairing without writing keys", function()
         local f = fixture(); f.env.CLAW_PAIR = nil; f:existing(); assert(f:run(launcherSource))

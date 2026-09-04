@@ -639,7 +639,7 @@ return Catalog
 }
 -- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
-local BUILD_ID = "9e8249f71a98"
+local BUILD_ID = "253d0f681b42"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
