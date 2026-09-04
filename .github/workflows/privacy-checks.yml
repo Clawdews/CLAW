@@ -1,0 +1,20 @@
+name: Privacy checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test the scanner
+        run: node --test tests/public-files.test.mjs
+      - name: Scan public files and fetched history
+        run: node tools/check-public.mjs --history

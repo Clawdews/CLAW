@@ -13,6 +13,10 @@ control/wrangler.shared.local.jsonc
 *.local.lua
 config.local.*
 secrets.*
+CLAW_PAIRINGS/
+CLAW_CONTROL/
+CLAW_CONTROL_BETA/
+CLAW_RECORDER/
 
 # Generated/editor noise.
 *.log

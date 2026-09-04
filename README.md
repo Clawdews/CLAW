@@ -2,6 +2,8 @@
 
 Alt control and loot notifications for Deepwoken.
 
+[What to keep private](docs/PRIVACY.md) — what is safe to share, where account data goes, and what to do if a key leaks.
+
 ## Alt manager
 
 Run on each alt. Set your main's exact username, not its display name. All accounts must already be in the same server.
