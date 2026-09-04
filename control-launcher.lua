@@ -1,9 +1,19 @@
 -- Public autoexec entry point. Each local account reads only its own private pairing.
+-- PAIR_MODULE_BEGIN
+if getgenv().CLAW_PAIR ~= nil then
+    local pairing = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/control/pair.lua")
+    assert(loadstring(pairing, "@CLAW/pair.lua"))()
+end
+-- PAIR_MODULE_END
 local player = game:GetService("Players").LocalPlayer
 if not player then return end
 local Http = game:GetService("HttpService")
 local ok, raw = pcall(readfile, "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json")
-if not ok then print("[CLAW] Not paired. Use /claw setup in Discord."); return end
+if not ok then
+    print("[CLAW] First setup: in Discord use /claw enroll account:" .. tostring(player.UserId))
+    print("[CLAW] Run its private pairing reply once on this account. Afterward this same public loader reconnects automatically.")
+    return
+end
 assert(type(raw) == "string" and #raw <= 4096, "Invalid local pairing file")
 local config = Http:JSONDecode(raw)
 assert(type(config) == "table" and config.Version == 1 and config.AccountId == tostring(player.UserId), "Pairing belongs to another account")

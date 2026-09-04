@@ -21,7 +21,8 @@ export const sharedCommand = {
     ...command.options.filter(option => option.name !== 'slot').map(option => option.name === 'enroll'
       ? { ...option, description: 'Pair a new account and receive private setup instructions' } : option),
     { type: 1, name: 'rotate', description: 'Replace a lost pairing key; disconnects the previous client', options: [account] },
-    { type: 1, name: 'slots', description: 'List your observed characters and their regions', options: [account] },
+    { type: 1, name: 'slots', description: 'List your character cards, regions and approvals', options: [account,
+      { type: 4, name: 'page', description: 'Character-list page', min_value: 1, max_value: 60 }] },
     { type: 1, name: 'allow-slot', description: 'Approve or disable one character for automatic selection', options: [account,
       { type: 3, name: 'slot', description: 'Actual observed DataSlot', required: true },
       { type: 5, name: 'enabled', description: 'Allow this character', required: true }] },

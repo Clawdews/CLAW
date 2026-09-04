@@ -19,7 +19,7 @@ for (const [target, entry, bundledScan] of [[scanner, 'slot-scan.lua', false], [
   writeFileSync(resolve(root, target), `local run = require("../../tests/slot-scan-runtime.spec")\nrun(${quote(readFileSync(resolve(root, entry), 'utf8'))},${quote(readFileSync(resolve(root, 'control/menu-scan.lua'), 'utf8'))},${bundledScan})\n`);
 }
 writeFileSync(resolve(root, pairing), `local run = require("../../tests/control-pairing.spec")\nrun(${['control/pair.lua', 'control-launcher.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8'))).join(',')})\n`);
-const sources = ['control/client.lua', 'control/auto.lua', 'join/core.lua', 'control/regions.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8')));
+const sources = ['control/client.lua', 'control/auto.lua', 'join/core.lua', 'control/regions.lua', 'control/menu-scan.lua', 'control/catalog.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8')));
 writeFileSync(resolve(root, generated), `local run = require("../../tests/control-runtime.spec")\nrun(${sources.join(',')})\n`);
 writeFileSync(resolve(root, bundled), `local run = require("../../tests/control-runtime.spec")\nrun(${[quote(readFileSync(resolve(root, 'dist/control-beta.lua'), 'utf8')), ...sources.slice(1)].join(',')})\n`);
 writeFileSync(resolve(root, launcher), `local run = require("../../tests/control-runtime.spec")\nrun(${[quote(readFileSync(resolve(root, 'dist/launcher-beta.lua'), 'utf8')), ...sources.slice(1), 'true'].join(',')})\n`);

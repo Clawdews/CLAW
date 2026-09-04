@@ -4,6 +4,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { loadConfig } from './bootstrap.js';
 import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeSlot, entryAllowed } from './tenancy.js';
 import { pairingReply, setupReply } from './onboarding.js';
+import { cleanCatalog, selectable, catalogPage, MAX_SLOTS } from './catalog.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request) {
@@ -23,7 +24,7 @@ async function bodyText(request) {
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.1', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.2', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -137,10 +138,52 @@ export class ControlRoom extends DurableObject {
     if (ws.readyState !== 1) return;
     const a = this.attachment(ws), member = a && this.config.members[a.userId];
     if (!member || member.credential !== a.credential) return ws.close(4003, 'Enrollment revoked');
-    if (typeof raw !== 'string' || raw.length > 4096) return ws.close(1009, 'Message too large');
+    if (typeof raw !== 'string' || raw.length > 65536) return ws.close(1009, 'Message too large');
     let data;
     try { data = JSON.parse(raw); } catch { return ws.close(1008, 'Invalid JSON'); }
     if (!data || typeof data !== 'object') return ws.close(1008, 'Invalid message');
+    if (data.type === 'catalog') {
+      if (now() - (a.lastCatalog || 0) < 8) return;
+      const catalog = cleanCatalog(data, a.userId, now());
+      if (!catalog) return ws.close(1008, 'Invalid character catalog');
+      if (a.presence && a.presence.placeId !== LOBBY) return ws.close(1008, 'Catalog requires character menu');
+      a.lastCatalog = now(); a.seen = now(); ws.serializeAttachment(a);
+      let next;
+      await this.ctx.storage.transaction(async storage => {
+        const current = await storage.get('config');
+        if (!current?.members[a.userId] || current.members[a.userId].credential !== a.credential) return;
+        next = structuredClone(current);
+        const updated = next.members[a.userId];
+        updated.catalogState = { complete: catalog.complete, observedAt: catalog.observedAt };
+        for (const [slot, card] of Object.entries(catalog.entries)) {
+          const previous = updated.slots?.[slot];
+          if (previous?.characterName && (previous.characterName !== card.characterName
+              || (Number.isInteger(previous.level) && Number.isInteger(card.level) && card.level < previous.level))) {
+            if (updated.approvedSlots) delete updated.approvedSlots[slot];
+            for (const [region, preferred] of Object.entries(updated.preferredSlots || {})) {
+              if (preferred === slot) delete updated.preferredSlots[region];
+            }
+          }
+        }
+        // A complete menu snapshot replaces the roster. A partial one may update
+        // displayed entries but cannot invent missing characters or approvals.
+        updated.slots = catalog.complete ? catalog.entries : { ...updated.slots, ...catalog.entries };
+        if (catalog.complete) {
+          for (const slot of Object.keys(updated.approvedSlots || {})) {
+            if (!updated.slots[slot]) delete updated.approvedSlots[slot];
+          }
+          for (const [region, slot] of Object.entries(updated.preferredSlots || {})) {
+            if (!updated.slots[slot]) delete updated.preferredSlots[region];
+          }
+        }
+        const entries = Object.entries(updated.slots).slice(0, MAX_SLOTS);
+        updated.slots = Object.fromEntries(entries);
+        await storage.put('config', next);
+      });
+      if (next) { this.config = next; this.send(ws, this.profile(a.userId)); }
+      this.send(ws, this.target()); return;
+    }
+    if (raw.length > 4096) return ws.close(1009, 'Message too large');
     if (data.type === 'hello') {
       if (now() - a.lastMessage < 1) return;
       a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
@@ -162,8 +205,8 @@ export class ControlRoom extends DurableObject {
           const next = structuredClone(this.config), updated = next.members[a.userId];
           if (!updated.slot) updated.slot = presence.slot;
           updated.slots ||= {};
-          if (Object.hasOwn(updated.slots, presence.slot) || Object.keys(updated.slots).length < 30) {
-            updated.slots[presence.slot] = { slot: presence.slot, region: observedRegion,
+          if (Object.hasOwn(updated.slots, presence.slot) || Object.keys(updated.slots).length < MAX_SLOTS) {
+            updated.slots[presence.slot] = { ...updated.slots[presence.slot], slot: presence.slot, region: observedRegion,
               observedAt: now(), confirmed: true, source: 'character-place' };
           }
           await this.ctx.storage.put('config', next); this.config = next;
@@ -194,8 +237,7 @@ export class ControlRoom extends DurableObject {
       if (option?.name === 'slots') {
         const member = config.members[account];
         if (!member) return reply('Enroll that account first.');
-        const rows = Object.values(member.slots || {}).map(s => `${s.slot}: ${s.region || 'unsupported region'} | ${member.approvedSlots?.[s.slot] ? 'approved' : 'not approved'} | ${now() - s.observedAt > 86400 ? 'stale' : 'observed'}`);
-        return reply((`Characters for ${account}\n` + (rows.join('\n') || 'None observed. Load the intended character once.')).slice(0, 1900));
+        return reply((`Characters for ${account}\n` + catalogPage(member, now(), values.page ?? 1)).slice(0, 1950));
       }
       if (option?.name === 'status') {
         const lines = [`Follow: ${this.config.follow ? 'ON' : 'OFF'} | Main: ${this.config.mainId || 'not selected'}`];
@@ -236,7 +278,7 @@ export class ControlRoom extends DurableObject {
       } else if (option?.name === 'allow-slot') {
         const member = config.members[account], slot = values.slot;
         if (!member || !safeSlot(slot) || typeof values.enabled !== 'boolean') return reply('Provide an enrolled account, actual slot and enabled true/false.');
-        if (values.enabled && !member.slots?.[slot]?.confirmed) return reply('Load that character once before approving it; menu candidates are not confirmed slots.');
+        if (values.enabled && !selectable(member.slots?.[slot], now())) return reply('Refresh that character in the menu with the paired loader, or load it once, before approving it.');
         member.approvedSlots ||= {};
         if (values.enabled) member.approvedSlots[slot] = true;
         else {
@@ -247,7 +289,8 @@ export class ControlRoom extends DurableObject {
       } else if (option?.name === 'prefer-slot') {
         const member = config.members[account], slot = values.slot, region = values.region;
         if (!member || !safeSlot(slot) || !['EastLuminant', 'EtreanLuminant'].includes(region)
-            || member.approvedSlots?.[slot] !== true || member.slots?.[slot]?.region !== region) return reply('Choose an approved, observed slot in that region.');
+            || member.approvedSlots?.[slot] !== true || member.slots?.[slot]?.region !== region
+            || !selectable(member.slots?.[slot], now())) return reply('Choose an approved, observed slot in that region.');
         member.preferredSlots ||= {}; member.preferredSlots[region] = slot;
         content = `Preferred ${region} character for ${account}: ${slot}.`;
       } else if (option?.name === 'revoke') {

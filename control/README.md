@@ -21,7 +21,8 @@ One Discord app plus one public autoexec loader. Each Discord user gets a separa
 - Unknown regions, conflicting choices, observations older than 24 hours and selection-response mismatches stop before joining.
 - Explicit waiting for a manual menu return when automatic exits are off. No sticky failure just because the alt is still in the world.
 - Persistent, bounded join attempts; pause, retry, reconnect and exact-destination verification.
-- Read-only menu scanner for validating the actual game UI. Its output is not yet an automatic character catalog.
+- Automatic menu-card sync: slot letter, character name, level, visible race, oath/origin, location and playtime. Raw UI reports stay on the device; only compact current cards go to the owner's group.
+- Fresh local cards and cloud permissions must agree before selection. Reused slot letters, renamed characters and observed level resets cannot silently keep an old approval.
 - Reproducible, self-contained client builds. One launcher download includes its matching client modules.
 
 There is no combat automation, forced respawn, proximity logout, process relaunch or Discord movement control here. The working alt-movement relay and loot notifier remain separate.
@@ -39,6 +40,6 @@ node tests/run-control-tests.mjs /path/to/luau
 node tests/run-join-tests.mjs /path/to/luau
 ```
 
-From `control`, `npm run check:shared` compiles the separate beta Worker without deploying it. `npm run check` checks the legacy configuration. Local Worker tests run in Miniflare; client tests use mocked Roblox services. Passing either does not prove the in-game menu reader works.
+From `control`, `npm run check:shared` compiles the separate beta Worker without deploying it. `npm run check` checks the legacy configuration. Local Worker tests run in Miniflare; client tests use mocked Roblox services. The standalone v0.2.1 reader has captured all 13 real cards; integrated cloud selection still needs an in-game beta test.
 
 Edit `control/client.lua`, `control/auto.lua`, `control/regions.lua` and `control-launcher.lua`, then rebuild. Do not edit `dist` by hand. Its manifest records artifact sizes and SHA-256 hashes for release checks, not a claim that the executor authenticates a download at runtime.

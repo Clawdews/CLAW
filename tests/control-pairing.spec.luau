@@ -20,6 +20,7 @@ return function(pairSource, launcherSource)
             assert(name == "Players"); return { LocalPlayer = { UserId = f.userId or 22 } }
         end
         function game:HttpGet(url)
+            if url:find("/control/pair.lua", 1, true) then f.downloads += 1; return pairSource end
             assert(url:find("/control-client.lua", 1, true)); f.downloads += 1; return "return true"
         end
         f.runtime = setmetatable({
@@ -34,6 +35,9 @@ return function(pairSource, launcherSource)
             end,
             print = function(message) f.logs[#f.logs + 1] = message end,
         }, { __index = getfenv() })
+        f.runtime.loadstring = function(source)
+            local c, err = loadstring(source); if c then setfenv(c, f.runtime) end; return c, err
+        end
         function f:run(source) local c = assert(loadstring(source)); setfenv(c, self.runtime); return pcall(c) end
         function f:existing(overrides)
             local value = copy(self.input); value.Version = 1; value.AllowMenuReturn = false
@@ -71,16 +75,26 @@ return function(pairSource, launcherSource)
         assert(saved.AllowMenuReturn and saved.Key == f.input.Key)
     end)
     test("unpaired autoexec does not download or execute a client", function()
-        local f = fixture(); assert(f:run(launcherSource)); assert(f.downloads == 0 and not f.env.CLAW_CONTROL_CONFIG)
+        local f = fixture(); f.env.CLAW_PAIR = nil
+        assert(f:run(launcherSource)); assert(f.downloads == 0 and not f.env.CLAW_CONTROL_CONFIG)
     end)
     test("public launcher uses the local pairing without writing keys", function()
-        local f = fixture(); f:existing(); assert(f:run(launcherSource))
+        local f = fixture(); f.env.CLAW_PAIR = nil; f:existing(); assert(f:run(launcherSource))
         assert(f.downloads == 1 and f.writes == 0 and f.env.CLAW_CONTROL_CONFIG.OwnerId == f.input.OwnerId)
     end)
     test("wrong account or malformed owner is rejected before download", function()
         for _, overrides in ipairs({ { AccountId = "33" }, { OwnerId = "bad" }, { Endpoint = "http://bad" }, { Key = "bad" } }) do
-            local f = fixture(); f:existing(overrides); assert(not f:run(launcherSource)); assert(f.downloads == 0)
+            local f = fixture(); f.env.CLAW_PAIR = nil; f:existing(overrides); assert(not f:run(launcherSource)); assert(f.downloads == 0)
         end
+    end)
+    test("first run pairs and launches through the same public entry", function()
+        local f = fixture(); assert(f:run(launcherSource))
+        assert(f.requests == 1 and f.writes == 1 and f.downloads == 2 and f.env.CLAW_PAIR == nil)
+        assert(f.env.CLAW_CONTROL_CONFIG.OwnerId == f.input.OwnerId)
+    end)
+    test("failed first pairing cannot launch the client", function()
+        local f = fixture(); f.status = 401; assert(not f:run(launcherSource))
+        assert(f.requests == 1 and f.writes == 0 and f.downloads == 1 and not f.env.CLAW_CONTROL_CONFIG)
     end)
     print(tostring(passed) .. " pairing tests passed")
 end

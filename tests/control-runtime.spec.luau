@@ -1,4 +1,4 @@
-return function(clientSource, autoSource, coreSource, regionSource, pairedLauncher)
+return function(clientSource, autoSource, coreSource, regionSource, menuSource, catalogSource, pairedLauncher)
 	local function clone(value)
 		if type(value) ~= "table" then return value end
 		local copy = {}; for k, v in pairs(value) do copy[k] = clone(v) end; return copy
@@ -17,7 +17,10 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 	end
 	local function object(class)
 		local o = { ClassName = class, children = {}, OnClientEvent = signal() }
-		function o:IsA(name) return self.ClassName == name end
+		function o:IsA(name) return self.ClassName == name or (name == "GuiObject" and (class == "Frame" or class == "TextLabel" or class == "TextButton" or class == "ScrollingFrame")) end
+		function o:GetChildren()
+			local result = {}; for key, child in pairs(self.children) do child.Name = key; table.insert(result, child) end; return result
+		end
 		function o:FindFirstChild(name) return self.children[name] end
 		function o:GetAttribute(name) return self[name] end
 		return o
@@ -26,7 +29,7 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		options = options or {}
 		if pairedLauncher then options.owner = options.owner or "123456789012345678" end
 		local f = { now = 2000000000, clock = 0, files = {}, memory = {}, values = {}, encoded = 0,
-			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, hasMain = false, authRequests = 0 }
+			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, hasMain = false, authRequests = 0 }
 		f.env = { CLAW_CONTROL_CONFIG = { Endpoint = "https://claw-test.example", Key = string.rep("a", 64),
 			AllowMenuReturn = options.menu == true, OwnerId = options.owner } }
 		local http = {}
@@ -39,9 +42,19 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		f.player = player
 		if pairedLauncher then
 			local pairing = clone(f.env.CLAW_CONTROL_CONFIG); pairing.Version = 1; pairing.AccountId = tostring(player.UserId)
-			f.files["CLAW_PAIRINGS/" .. pairing.AccountId .. ".json"] = http:JSONEncode(pairing)
+			if options.firstPair then f.env.CLAW_PAIR = pairing
+			else f.files["CLAW_PAIRINGS/" .. pairing.AccountId .. ".json"] = http:JSONEncode(pairing) end
 		end
 		local gui = object("PlayerGui"); player.children.PlayerGui = gui
+		if not options.noMenu then
+			local parent = gui
+			for _, name in ipairs({ "LoadingGui", "Overlay", "Columns", "MainFrame", "Slots", "SlotScroll", "L" }) do
+				local next = object("Frame"); parent.children[name] = next; parent = next
+			end
+			for name, value in pairs({ CharacterName = "Test Character", Race = "Khan", Level = "Lv. 1", Realm = "Etrean Luminant", Slot = "L" }) do
+				local label = object("TextLabel"); label.Text = value; parent.children[name] = label
+			end
+		end
 		f.prompt = object("Frame"); f.prompt.Title = "Some unrelated choice"; gui.children.ChoicePrompt = f.prompt
 		local choice = object("RemoteEvent"); f.prompt.children.Choice = choice
 		function choice:FireServer(value) assert(value == true); f.confirms += 1 end
@@ -52,7 +65,7 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		local show, pick, join, ret = object("RemoteEvent"), object("RemoteEvent"), object("RemoteEvent"), object("RemoteEvent")
 		requests.children.ShowServers = show; requests.children.ReturnToMenu = ret
 		menu.children.PickSlot = pick; menu.children.PickServer = join
-		function pick:FireServer(slot) assert(slot == "chosen-slot"); f.picks += 1; show.OnClientEvent:Fire(options.wrongRegion and "EastLuminant" or "EtreanLuminant") end
+		function pick:FireServer(slot) assert(slot == "L"); f.picks += 1; show.OnClientEvent:Fire(options.wrongRegion and "EastLuminant" or "EtreanLuminant") end
 		function join:FireServer(id) assert(id == "main-job"); f.joins += 1 end
 		function ret:FireServer() f.menus += 1 end
 		local teleport = { TeleportInitFailed = signal() }
@@ -65,6 +78,8 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		function f.game:HttpGet(url)
 			if url:find("join/core.lua", 1, true) then return coreSource end
 			if url:find("control/regions.lua", 1, true) then return regionSource end
+			if url:find("control/menu-scan.lua", 1, true) then return menuSource end
+			if url:find("control/catalog.lua", 1, true) then return catalogSource end
 			return autoSource
 		end
 		local function target()
@@ -80,10 +95,12 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 			function ws:Send(raw)
 				assert(not self.closed)
 				local value = http:JSONDecode(raw)
+				f.packets[#f.packets + 1] = value
 				if value.type == "hello" then self.OnMessage:Fire(http:JSONEncode({ type = "profile", accountId = tostring(player.UserId),
 					mainId = "11", ownerId = options.wrongOwner and "999999999999999999" or options.owner,
-					role = options.main and "main" or "alt", slot = "chosen-slot", follow = true,
-					approvedSlots = { ["chosen-slot"] = true }, catalog = { { slot = "chosen-slot", region = "EtreanLuminant", observedAt = f.now, confirmed = true } } })) end
+					role = options.main and "main" or "alt", slot = "L", follow = true,
+					approvedSlots = { ["L"] = true }, catalog = { { slot = "L", region = "EtreanLuminant", observedAt = f.now, confirmed = true,
+						characterName = options.oldCharacter and "Previous Character" or "Test Character", level = 1 } } })) end
 				self.OnMessage:Fire(http:JSONEncode(target()))
 			end
 			f.sockets[#f.sockets + 1] = ws
@@ -91,7 +108,7 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		end
 		local runtime = setmetatable({ game = f.game, getgenv = function() return f.env end,
 			os = { time = function() return f.now end, clock = function() return f.clock end },
-			task = { spawn = function(fn) fn() end }, WebSocket = wsLibrary,
+			task = { spawn = function(fn) fn() end, wait = function() end }, WebSocket = wsLibrary,
 			Enum = { TeleportState = { Started = 1, InProgress = 2 } },
 			request = function(request)
 				assert(request.Url == "https://claw-test.example/session" .. (options.owner and ("?owner=" .. options.owner) or ""))
@@ -125,7 +142,7 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		f:advance(10); assert(f.joins == 1)
 	end)
 	test("post-teleport reload verifies and never resends", function()
-		local f = boot(); f:advance(2); f.game.PlaceId = 6032399813; f.game.JobId = "main-job"; f.player.DataSlot = "chosen-slot"; f.hasMain = true
+		local f = boot(); f:advance(2); f.game.PlaceId = 6032399813; f.game.JobId = "main-job"; f.player.DataSlot = "L"; f.hasMain = true
 		f:reload(); f:advance(2); assert(f.joins == 1 and f.api:report().status == "VERIFIED")
 	end)
 	test("reload while join is pending retains core persistence", function()
@@ -168,5 +185,27 @@ return function(clientSource, autoSource, coreSource, regionSource, pairedLaunch
 		local f = boot({ owner = "123456789012345678", wrongOwner = true }); f:advance(3)
 		assert(f.picks == 0 and f.joins == 0 and f.sockets[1].closed)
 	end)
+	test("menu sync sends compact cards without creating scan report files", function()
+		local f = boot({ main = true }); f:advance(21)
+		local packets = {}; for _, p in ipairs(f.packets) do if p.type == "catalog" then packets[#packets + 1] = p end end
+		assert(#packets == 1) -- Unchanged scans are not repeatedly uploaded.
+		assert(packets[1].cards[1].characterName == "Test Character" and packets[1].cards[1].labels == nil)
+		for path in pairs(f.files) do assert(not path:find("menu-", 1, true)) end
+	end)
+	test("missing current menu cannot select from a stale cloud roster", function()
+		local f = boot({ noMenu = true }); f:advance(20)
+		assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SCAN", 1, true))
+	end)
+	test("a different character reusing an approved letter waits for permission sync", function()
+		local f = boot({ oldCharacter = true }); f:advance(20)
+		assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SYNC", 1, true))
+	end)
+	if pairedLauncher then
+		test("bundled first-run entry pairs then connects without module downloads", function()
+			local f = boot({ firstPair = true }); f:advance(2)
+			assert(f.authRequests == 2 and f.env.CLAW_PAIR == nil and f.picks == 1 and f.joins == 1)
+			assert(f.files["CLAW_PAIRINGS/22.json"])
+		end)
+	end
 	print(tostring(passed) .. " control-client smoke tests passed")
 end

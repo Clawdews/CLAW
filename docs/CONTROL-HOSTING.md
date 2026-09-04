@@ -34,16 +34,18 @@ The runtime needs only the Discord public key. The bot token is used privately f
 ## Data and trust
 
 - Each signed invoking Discord user owns a separate Durable Object named `user:<DiscordUserId>`. A guild owner or another member is not its commander. Shared mode never reuses the legacy `claw` room.
-- Persistent records contain the Discord owner ID, enrolled Roblox IDs, hashes of high-entropy random pairing keys, credential revisions, main/follow settings, observed slots/regions and timestamps, approvals, preferences and retry/replay metadata. This is not Roblox account-ownership verification.
+- Persistent records contain the Discord owner ID, enrolled Roblox IDs, hashes of high-entropy random pairing keys, credential revisions, main/follow settings, current character summaries (letter, name, level, race, oath/origin, location, playtime and last played), observation timestamps, approvals, preferences and retry/replay metadata. This is not Roblox account-ownership verification.
 - Plaintext pairing keys are returned privately in Discord and stored in `CLAW_PAIRINGS` on the user's device. Anyone who can read those files or the enrollment message can impersonate that paired client. Other scripts running in the same executor are not a security boundary.
 - Presence contains experience/place/server IDs, slot and status. It lives in socket attachments and expires as an actionable destination after 35 seconds; expiry is not a promise of immediate physical deletion from hosting storage.
 - Socket tickets expire in 30 seconds and are single-use. Their URLs must not appear in request logs. Worker observability is deliberately off until a redacted logging path exists; this is an explicit exception to the usual logging recommendation. Use aggregate hosting metrics, not credential-bearing traces.
 - `/claw revoke` removes the account's enrollment/catalog/settings, invalidates its key and closes its connection. Revoking every account clears the roster, but the owner ID and short replay metadata remain. Local pairing files are not remotely erased. Cloudflare may retain recovery data according to its platform retention; do not promise instant deletion from backups.
-- The menu scanner is local-only. It excludes chat branches and text-entry contents, but menu reports can still contain character names. Never upload them automatically.
+- The standalone diagnostic scanner is local-only. The integrated client sends only allowlisted compact card fields, not raw labels, hidden base metadata, friends, chat, text-entry contents or diagnostic report files. The pairing instructions disclose this sync. The host controls the service and can access its stored data; private groups isolate users, not the hosting operator.
 
 ## Limits and failure behavior
 
-Maximum 30 accounts per group and 30 observed slots per account. Request bodies are capped at 8 KiB, socket messages at 4 KiB, and recent mutating command IDs at 1,000 per group. Public entry is limited to 60 requests per minute per client-IP key and per Discord-user command key. Large groups reconnecting together may temporarily wait.
+Maximum 30 accounts per group and 60 observed slots per account. Request bodies are capped at 8 KiB, catalog/profile messages at 64 KiB, other client socket messages at 4 KiB, and recent mutating command IDs at 1,000 per group. Card fields have byte limits. Public entry is limited to 60 requests per minute per client-IP key and per Discord-user command key. Large groups reconnecting together may temporarily wait.
+
+While the menu is open the reader scans only its known card container every 10 seconds with bounded traversal. Changed summaries upload at most once per 10 seconds; unchanged cards refresh every five minutes, or after reconnecting. Full snapshots replace the current roster; partial snapshots cannot erase unseen entries. There is no growing match history or scan archive in cloud state.
 
 Worker restarts preserve configuration. Revocation and preference changes are persisted before being reported as successful. A failed save blocks game actions. No arbitrary Lua commands, external webhook forwarding, Roblox cookies or process-launch permissions are accepted by the relay.
 
@@ -53,7 +55,7 @@ Normal network reconnects back off to one attempt per minute; rejected credentia
 
 Build with `node tools/build-control.mjs` and verify with `--check`. The generated `dist/launcher-beta.lua` contains both local pairing lookup and the full client; it makes no secondary module downloads. Record the Git commit, artifact hashes and deployed Worker version in the release record.
 
-The branch loadstrings are an opt-in moving beta. For stable distribution, link directly to `dist/launcher-beta.lua` at an immutable, reviewed commit or protected release tag. Pin `control/pair.lua` the same way in the hosted enrollment reply. A manifest hash is an operator check, not an executor-enforced signature.
+The branch loadstrings are an opt-in moving beta. For stable distribution, link directly to `dist/launcher-beta.lua` at an immutable, reviewed commit or protected release tag, including in the hosted enrollment reply. Pairing is bundled in that same artifact. A manifest hash is an operator check, not an executor-enforced signature.
 
 Before replacing a live deployment, save its version ID, app endpoint, command schema and client release reference privately. Roll back the Worker to that verified version and restore the matching pinned loader. Do not delete its Durable Object namespace or run a destructive migration to roll back code. Cloudflare's [deployment commands](https://developers.cloudflare.com/workers/wrangler/commands/) describe version management.
 

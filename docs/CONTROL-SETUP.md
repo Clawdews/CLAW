@@ -13,20 +13,20 @@ These instructions apply to the shared-service beta after its host enables your 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/dist/launcher-beta.lua"))()
 ```
 
-Run the loader once after pairing, or restart the client. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
+The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
 
 ## Choose the characters
 
-Load the intended character once with the client running, then use `/claw slots account:...`. The service learns its actual DataSlot and region. The slot ID can be a letter or another game-assigned string; do not guess a number.
+Leave the paired alt at character selection for about 15 seconds, then use `/claw slots account:...`. Its cards sync automatically: slot letter, character name, level, visible race, oath/origin, location, playtime and last played. Use `page:2` for further cards. You no longer need to load each character just to discover it.
 
 ```text
 /claw allow-slot account:<alt UserId> slot:<observed slot> enabled:true
 /claw prefer-slot account:<alt UserId> region:<region> slot:<observed slot>
 ```
 
-The preference is only necessary when several approved characters share a region. Approvals persist. Observations expire after 24 hours; load a character again to refresh its location. The client checks the region returned by selection before requesting a join, even if its earlier observation matched.
+The preference is only necessary when several approved characters share a region. Approvals persist, but a changed character name, observed level reset or removed slot clears the old permission. Cloud observations expire after 24 hours; reopening the menu refreshes them. Selection requires a complete current local scan and matching cloud character details, then checks the region returned by the game before requesting a join.
 
-Only Eastern and Etrean are mapped. Depths, layers and other places are not interchangeable and will not be guessed. Until the real menu parser is validated, loading a character once is required to discover it; the scanner alone does not approve or confirm anything.
+Only Eastern and Etrean are mapped. Depths, layers and other places remain visible in the catalog but are not join destinations. A menu observation is labelled as such, not as an in-world verification. Syncing a card never approves it automatically.
 
 ## Follow your main
 
@@ -64,13 +64,17 @@ Pause/revocation cannot undo a teleport Roblox already accepted. If a key leaks,
 | `AUTH_FAILED` | Check the actual account and its private pairing; use rotate if the key is lost |
 | `WAITING_MAIN` | Keep the main loaded and connected; destinations expire after 35 seconds |
 | `WAITING_MENU` | Return the alt to character selection; no Discord retry is needed just for this |
-| `NO_COMPATIBLE_SLOT` | Load and approve a character in the main's region |
+| `WAITING_SLOT_SCAN` | Leave character selection open until the complete list is readable |
+| `WAITING_SLOT_SYNC` | Wait for the current cards to sync, then check approval in Discord |
+| `NO_COMPATIBLE_SLOT` | Refresh the menu and approve a character in the main's region |
 | `CHOOSE_PREFERRED_SLOT` | Choose which of the matching approved characters to use |
 | `REGION_MISMATCH` | The selection response disagreed; refresh the character's location before retrying |
 | `ATTENTION` | Read the saved reason; fix it before `/claw retry` |
 | `OFFLINE` | Check Roblox, executor, loader and network; Discord cannot launch a closed process |
 
 Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.json`, separate from pairing keys. Share a status report privately, not the contents of `CLAW_PAIRINGS`.
+
+There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
 
 ## Read-only menu capture
 

@@ -1,5 +1,6 @@
 local Regions = require("../control/regions")
 local Scan = require("../control/menu-scan")
+local Catalog = require("../control/catalog")
 local passed = 0
 local function test(name, fn) fn(); passed += 1; print("PASS " .. name) end
 local now = 2000000000
@@ -9,6 +10,7 @@ end
 test("region aliases are exact, not substring matches or guessed layers", function()
     assert(Regions.normalize("Eastern Luminant") == "EastLuminant")
     assert(Regions.normalize("EtreanLuminant") == "EtreanLuminant")
+    assert(Regions.normalize("The Etrean Luminant") == "EtreanLuminant")
     assert(Regions.normalize("not Eastern Luminant") == nil)
     assert(Regions.forPlace(123) == nil and Regions.normalize("Layer 2") == nil)
 end)
@@ -178,5 +180,28 @@ test("card count is bounded and extra cards are reported as partial", function()
     end
     local result = Scan.collect(menu(cards))
     assert(#result.cards == Scan.MAX_CARDS and result.truncated)
+end)
+test("cloud projection excludes raw labels and preserves only complete displayed card fields", function()
+    local p = Catalog.fromScan(Scan.collect(menu({ card("L") })), "22", now)
+    local c = p.cards[1]
+    assert(p.complete and c.complete and not c.confirmed and c.labels == nil and c.fieldSources == nil)
+    assert(c.characterName == "Sample L" and c.race == "Khan" and c.slotLabel == "L")
+    assert(Regions.choose({ approvedSlots = { L = true } }, 6473861193, p.cards, now) == "L")
+    c.complete = false; assert(Regions.choose({ approvedSlots = { L = true } }, 6473861193, p.cards, now) == nil)
+end)
+test("cloud projection does not promote missing slot labels or damaged core fields", function()
+    for _, field in ipairs({ "slotLabel", "characterName", "race", "location", "level" }) do
+        local report = Scan.collect(menu({ card("L") })); report.cards[1][field] = nil
+        local p = Catalog.fromScan(report, "22", now); assert(not p.complete and not p.cards[1].complete)
+    end
+end)
+test("compact text is UTF-8 safe and its fingerprint excludes timestamps and raw report details", function()
+    local report = Scan.collect(menu({ card("L") })); report.cards[1].characterName = string.rep("é", 41)
+    local a = Catalog.fromScan(report, "22", now); assert(#a.cards[1].characterName <= 80 and utf8.len(a.cards[1].characterName))
+    report.cards[1].labels = { "should not leave this device" }
+    local b = Catalog.fromScan(report, "22", now + 10); assert(Catalog.signature(a) == Catalog.signature(b))
+    b.cards[1].race = "Canor"; assert(Catalog.signature(a) ~= Catalog.signature(b))
+    report.cards[1].characterName = string.char(255)
+    assert(not Catalog.fromScan(report, "22", now).complete)
 end)
 print(tostring(passed) .. " slot/region tests passed")

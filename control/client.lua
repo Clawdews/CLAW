@@ -28,7 +28,8 @@ local function module(path)
 	return chunk()
 end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.1", "Module version mismatch")
+local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.2", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
@@ -38,6 +39,8 @@ local core, auto, coreSaved, selectedSlot, saved
 local stopped, busy, socket, socketGeneration = false, false, nil, 0
 local reconnectAt, backoff, presenceAt, packetAt = 0, 2, 0, 0
 local networkProblem
+local menuCatalog, scanBusy, scanAt, catalogSentAt, catalogPending = nil, false, 0, 0, false
+local menuSignature, sentSignature
 local api = {}
 local function decode(raw, maximum)
 	if type(raw) ~= "string" or #raw > (maximum or 32768) then return nil end
@@ -102,7 +105,27 @@ core = Core.new({ now = os.time, current = current, nonce = function() return Ht
 })
 auto = Auto.new({ now = os.time, current = current, save = save,
 	requireRegionCheck = true,
-	chooseSlot = function(profile, placeId) return Regions.choose(profile, placeId, profile.catalog, os.time()) end,
+	chooseSlot = function(profile, placeId)
+		if game.PlaceId == Core.LOBBY_PLACE_ID then
+			if not menuCatalog or not menuCatalog.complete or os.time() - menuCatalog.observedAt > 20 then
+				return nil, "WAITING_SLOT_SCAN: reading current character cards"
+			end
+			-- A reused slot letter must not inherit permission before the cloud has
+			-- seen this character and cleared any previous character's approval.
+			local synced = {}
+			for _, card in ipairs(profile.catalog or {}) do synced[card.slot] = card end
+			for _, card in ipairs(menuCatalog.cards) do
+				local known = synced[card.slot]
+				if profile.approvedSlots and profile.approvedSlots[card.slot] and
+					(not known or (known.source == "menu-card" and not known.complete)
+						or known.characterName ~= card.characterName or known.level ~= card.level) then
+					return nil, "WAITING_SLOT_SYNC: waiting for current character permissions"
+				end
+			end
+			return Regions.choose(profile, placeId, menuCatalog.cards, os.time())
+		end
+		return Regions.choose(profile, placeId, profile.catalog, os.time())
+	end,
 	regionMatches = function(placeId)
 		local expected, actual = Regions.forPlace(placeId), Regions.normalize(core.realm)
 		return expected ~= nil and actual == expected, "REGION_MISMATCH: selected " .. tostring(core.realm) .. "; main requires " .. tostring(expected)
@@ -190,7 +213,7 @@ local function connectRelay()
 	socket = connected; packetAt = os.clock(); presenceAt = os.clock() + 2.2
 	socketConnections[#socketConnections + 1] = connected.OnMessage:Connect(function(raw)
 		if stopped or socket ~= connected then return end
-		local data = decode(raw, 32768) -- A full 30-character catalog plus approvals can exceed 8 KiB.
+		local data = decode(raw, 65536) -- Bounded 60-card compact roster; never raw UI reports.
 		if not data then disconnect(); return end
 		packetAt = os.clock(); backoff = 2
 		if data.type == "profile" then
@@ -202,12 +225,30 @@ local function connectRelay()
 		if socket == connected then disconnect() end
 	end)
 	send({ type = "hello" })
+	catalogPending = menuCatalog ~= nil; catalogSentAt = 0; sentSignature = nil
+end
+local function refreshMenu()
+	if stopped or scanBusy then return end
+	scanBusy = true
+	local ok, result = pcall(function()
+		local report = MenuScan.collect(player:FindFirstChild("PlayerGui"), function() task.wait() end)
+		return Catalog.fromScan(report, accountId, os.time())
+	end)
+	if not stopped and game.PlaceId == Core.LOBBY_PLACE_ID then
+		menuCatalog = ok and result or nil
+		menuSignature = menuCatalog and Catalog.signature(menuCatalog) or nil
+		catalogPending = menuCatalog ~= nil and (menuSignature ~= sentSignature or os.clock() - catalogSentAt >= 300)
+	end
+	scanBusy = false
 end
 local elapsed, ticking = 0, false
 connect(Run.Heartbeat, function(dt)
 	if stopped then return end
 	elapsed += dt; if elapsed < 1 then return end; elapsed = 0
 	bindSlot()
+	if game.PlaceId == Core.LOBBY_PLACE_ID and os.clock() >= scanAt and not scanBusy then
+		scanAt = os.clock() + 10; task.spawn(refreshMenu)
+	elseif game.PlaceId ~= Core.LOBBY_PLACE_ID then menuCatalog = nil; catalogPending = false; scanAt = 0 end
 	if not ticking then
 		ticking = true
 		local ok = pcall(function()
@@ -218,6 +259,9 @@ connect(Run.Heartbeat, function(dt)
 		ticking = false
 	end
 	if socket and os.clock() - packetAt > 40 then disconnect() end
+	if socket and auto.profile and catalogPending and os.clock() - catalogSentAt >= 10 then
+		if send(menuCatalog) then catalogSentAt = os.clock(); sentSignature = menuSignature; catalogPending = false end
+	end
 	if socket and os.clock() >= presenceAt then
 		presenceAt = os.clock() + 10
 		local snapshot = current(); snapshot.state = auto.status
@@ -234,7 +278,8 @@ function api:destroy()
 end
 function api:report()
 	return { version = Auto.VERSION, status = auto.status, accountId = accountId, current = current(),
-		join = core:report(), attempt = auto.attempt, connected = socket ~= nil, connectionProblem = networkProblem }
+		join = core:report(), attempt = auto.attempt, connected = socket ~= nil, connectionProblem = networkProblem,
+		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards, complete = menuCatalog.complete } }
 end
 env.CLAW_CONTROL = api
 if env.CLAW_RELAY then warn("[CLAW CONTROL] Disable competing relay auto-start on this account during join testing; no other script was changed.") end

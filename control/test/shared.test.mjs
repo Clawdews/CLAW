@@ -32,7 +32,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
   const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
   const options = { workers: [{ name: 'shared-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey,
       // Even if mistakenly left in a shared deployment, legacy seed data cannot enter a user's room.
@@ -106,7 +106,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
   await t.test('observed characters are not automatically approved; owner can approve and prefer', async () => {
     const p = alt.messages.find(m => m.type === 'profile' && m.catalog?.some(s => s.slot === 'L'));
     assert.deepEqual(p.approvedSlots, {}); assert.equal(p.catalog[0].region, 'EastLuminant');
-    assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'X', enabled: true }), /Load that character/);
+    assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'X', enabled: true }), /Refresh that character/);
     assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true }), /approved/);
     assert.match(await command(alice, 'prefer-slot', { account: '22', slot: 'L', region: 'EastLuminant' }), /Preferred/);
     assert.match(await command(alice, 'slots', { account: '22' }), /L: EastLuminant \| approved/);
@@ -119,6 +119,52 @@ test('two users in the same Discord server have isolated commands, credentials, 
     await command(bob, 'revoke', { account: '11' });
     assert.equal((await session(bob, '11', b11)).status, 401);
     assert.equal((await session(alice, '11', a11)).status, 200);
+  });
+  const card = (slot, name, level = 1, location = 'Eastern Luminant') => ({ slot, slotLabel: slot, characterName: name,
+    level, race: 'Khan', origin: 'Authority Ensign', location, complete: true, labels: ['must not be stored'] });
+  async function upload(cards, complete = true, change = {}) {
+    const client = await connect(alice, '22', a22);
+    await waitFor(() => client.messages.length >= 2);
+    const prior = client.messages.length;
+    client.socket.send(JSON.stringify({ type: 'catalog', version: 1, accountId: '22', placeId: 4111023553, cards, complete, ...change }));
+    await waitFor(() => client.messages.length > prior || client.socket.readyState !== 1);
+    return client.messages.slice(prior).find(m => m.type === 'profile');
+  }
+  await t.test('menu catalog reaches only its own account profile and Discord owner, without loading characters', async () => {
+    const profile = await upload([card('L', 'Rook Janus'), card('H', 'Alexandra Atamli', 1, 'Fragments of Else')]);
+    assert.equal(profile.catalog.length, 2); assert.equal(profile.catalog[0].confirmed, false);
+    assert.equal(profile.catalog[0].characterName, 'Rook Janus'); assert.equal(profile.catalog[0].labels, undefined);
+    assert.ok(profile.catalog.every(c => c.source === 'menu-card')); assert.deepEqual(profile.approvedSlots, {});
+    const text = await command(alice, 'slots', { account: '22' });
+    assert.match(text, /Rook Janus · Lv. 1 Khan/); assert.match(text, /Alexandra Atamli/);
+    assert.match(await command(bob, 'slots', { account: '22' }), /Enroll/);
+    assert.ok(!main.messages.some(m => m.catalog?.some(c => c.characterName === 'Rook Janus')));
+    assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true }), /approved/);
+    assert.match(await command(alice, 'prefer-slot', { account: '22', slot: 'L', region: 'EastLuminant' }), /Preferred/);
+  });
+  await t.test('ordinary progression keeps permission; a renamed replacement clears approval and preference', async () => {
+    let profile = await upload([card('L', 'Rook Janus', 2)]);
+    assert.equal(profile.approvedSlots.L, true); assert.equal(profile.preferredSlots.EastLuminant, 'L');
+    profile = await upload([card('L', 'Different Character', 1)]);
+    assert.equal(profile.approvedSlots.L, undefined); assert.deepEqual(profile.preferredSlots, {});
+  });
+  await t.test('a level reset on the same named character also requires approval again', async () => {
+    await upload([card('L', 'Different Character', 20)]);
+    await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true });
+    const profile = await upload([card('L', 'Different Character', 1)]);
+    assert.equal(profile.approvedSlots.L, undefined);
+  });
+  await t.test('partial snapshots preserve existing cards; complete removal cannot leave an approved slot behind', async () => {
+    await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true });
+    const partial = await upload([], false); assert.equal(partial.catalog.length, 1); assert.equal(partial.approvedSlots.L, true);
+    const replaced = await upload([card('H', 'Alexandra Atamli', 1, 'Fragments of Else')]);
+    assert.equal(replaced.catalog.length, 1); assert.deepEqual(replaced.approvedSlots, {});
+    const restored = await upload([card('L', 'Rook Janus')]); assert.deepEqual(restored.approvedSlots, {});
+  });
+  await t.test('malformed or cross-account catalog claims close the socket without altering stored cards', async () => {
+    assert.equal(await upload([card('L', 'Injected Name')], true, { accountId: '11' }), undefined);
+    assert.match(await command(alice, 'slots', { account: '22' }), /Rook Janus/);
+    assert.ok(!(await command(alice, 'slots', { account: '22' })).includes('Injected Name'));
   });
   await t.test('status and slots never echo pairing keys', async () => {
     const text = await command(alice, 'status') + await command(alice, 'slots', { account: '22' });
