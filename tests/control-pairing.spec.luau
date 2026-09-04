@@ -26,6 +26,7 @@ return function(pairSource, launcherSource, bundledSource)
         f.runtime = setmetatable({
             game = game, getgenv = function() return f.env end,
             readfile = function(path) return assert(f.files[path], "missing file") end,
+            isfile = function(path) return f.files[path] ~= nil end,
             writefile = function(path, raw) f.files[path] = raw; f.writes += 1 end,
             isfolder = function() return true end, makefolder = function() end,
             request = function(r)
@@ -55,6 +56,62 @@ return function(pairSource, launcherSource, bundledSource)
         assert(failure:find(expected, 1, true), "Missing useful setup instruction")
         for _, message in ipairs(f.logs) do assert(not message:find(f.input.Key, 1, true), "A private key escaped through a log") end
     end
+    test("an unreadable file cannot bypass the existing owner check", function()
+        for _, owner in ipairs({ "123456789012345678", "234567890123456789" }) do
+            local f = fixture(); f:existing({ OwnerId = owner }); local before = f.files["CLAW_PAIRINGS/22.json"]
+            f.runtime.readfile = function() error("read failed " .. f.input.Key) end
+            privateFailure(f, pairSource, "Cannot read saved pairing")
+            assert(f.requests == 0 and f.writes == 0 and f.files["CLAW_PAIRINGS/22.json"] == before)
+        end
+    end)
+    test("unknown file existence stops pairing without echoing an adapter error", function()
+        for _, detector in ipairs({ function() error("private adapter failure") end, function() return nil end, function() return 1 end }) do
+            local f = fixture(); f.runtime.isfile = detector
+            privateFailure(f, pairSource, "Cannot check pairing file")
+            assert(f.requests == 0 and f.writes == 0)
+        end
+    end)
+    test("missing file support stops before authentication or writes", function()
+        for _, name in ipairs({ "isfile", "readfile", "writefile", "isfolder", "makefolder" }) do
+            local f = fixture(); f.runtime[name] = false
+            privateFailure(f, pairSource, "Executor file support required")
+            assert(f.requests == 0 and f.writes == 0)
+        end
+    end)
+    test("a pairing changed while authentication yields is never overwritten", function()
+        for _, wasPresent in ipairs({ true, false }) do
+            local f = fixture(); if wasPresent then f:existing() end
+            local request, changed = f.runtime.request, nil
+            f.runtime.request = function(r)
+                local result = request(r); f:existing({ OwnerId = "234567890123456789" })
+                changed = f.files["CLAW_PAIRINGS/22.json"]; return result
+            end
+            privateFailure(f, pairSource, "Pairing file changed during setup")
+            assert(f.requests == 1 and f.writes == 0 and f.files["CLAW_PAIRINGS/22.json"] == changed)
+        end
+    end)
+    test("a file removed while authentication yields is not silently recreated", function()
+        local f = fixture(); f:existing(); local request = f.runtime.request
+        f.runtime.request = function(r) local result = request(r); f.files["CLAW_PAIRINGS/22.json"] = nil; return result end
+        privateFailure(f, pairSource, "Pairing file changed during setup")
+        assert(f.requests == 1 and f.writes == 0 and not f.files["CLAW_PAIRINGS/22.json"])
+    end)
+    test("unreadable saved files are not described as first setup by either launcher", function()
+        for _, source in ipairs({ launcherSource, bundledSource }) do
+            local f = fixture(); f.env.CLAW_PAIR = nil; f:existing()
+            f.runtime.readfile = function() error("read failed " .. f.input.Key) end
+            privateFailure(f, source, "Cannot read saved pairing")
+            assert(f.downloads == 0 and #f.logs == 0 and not f.env.CLAW_CONTROL_CONFIG)
+        end
+    end)
+    test("launcher cannot call an unknown file state unpaired", function()
+        for _, source in ipairs({ launcherSource, bundledSource }) do
+            local f = fixture(); f.env.CLAW_PAIR = nil
+            f.runtime.isfile = function() error("file check failed " .. f.input.Key) end
+            privateFailure(f, source, "Cannot check pairing file")
+            assert(f.downloads == 0 and #f.logs == 0)
+        end
+    end)
     test("pairing decode errors cannot echo the saved key", function()
         local f = fixture(); f:existing()
         function f.http:JSONDecode() error("decoder included " .. f.input.Key) end

@@ -11,7 +11,18 @@ assert(type(input.OwnerId) == "string" and input.OwnerId:match("^%d+$") and #inp
 assert(type(input.Key) == "string" and #input.Key == 64 and input.Key:match("^[a-f0-9]+$"), "Invalid pairing key")
 assert(type(input.Endpoint) == "string" and input.Endpoint:match("^https://[%w%.%-]+$"), "Invalid relay origin")
 local path = "CLAW_PAIRINGS/" .. input.AccountId .. ".json"
-local exists, oldRaw = pcall(readfile, path)
+assert(type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
+    and type(isfolder) == "function" and type(makefolder) == "function", "Executor file support required; nothing saved")
+-- A failed read is not evidence that no pairing exists.
+local function readSnapshot()
+    local checked, present = pcall(isfile, path)
+    assert(checked and type(present) == "boolean", "Cannot check pairing file; check executor file access. Nothing saved.")
+    if not present then return false, nil end
+    local readable, raw = pcall(readfile, path)
+    assert(readable and type(raw) == "string", "Cannot read saved pairing; check executor file access. Nothing saved.")
+    return true, raw
+end
+local exists, oldRaw = readSnapshot()
 local previous
 if exists then
     assert(type(oldRaw) == "string" and #oldRaw <= 4096, "Existing pairing file is invalid; inspect it before replacing it")
@@ -35,6 +46,9 @@ assert(encoded and type(body) == "string" and type(raw) == "string" and #raw <= 
 local sent, response = pcall(request, { Url = input.Endpoint .. "/session?owner=" .. input.OwnerId, Method = "POST",
     Headers = { ["Content-Type"] = "application/json" }, Body = body })
 assert(sent and type(response) == "table" and response.StatusCode == 200, "Pairing rejected or relay unavailable; nothing saved")
+local stillExists, latestRaw = readSnapshot()
+assert(stillExists == exists and latestRaw == oldRaw,
+    "Pairing file changed during setup; nothing overwritten. Stop the other setup and rerun this account's snippet.")
 local stored = pcall(function()
     if not isfolder("CLAW_PAIRINGS") then makefolder("CLAW_PAIRINGS") end
     writefile(path, raw); assert(readfile(path) == raw)
@@ -47,12 +61,17 @@ end
 local player = game:GetService("Players").LocalPlayer
 if not player then return end
 local Http = game:GetService("HttpService")
-local ok, raw = pcall(readfile, "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json")
-if not ok then
+local path = "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json"
+assert(type(isfile) == "function" and type(readfile) == "function", "Executor file support required; saved pairing was not changed")
+local checked, exists = pcall(isfile, path)
+assert(checked and type(exists) == "boolean", "Cannot check pairing file; check executor file access before trying again")
+if not exists then
     print("[CLAW] First setup: in Discord use /claw enroll account:" .. tostring(player.UserId))
     print("[CLAW] Run its private pairing reply once on this account. Afterward this same public loader reconnects automatically.")
     return
 end
+local ok, raw = pcall(readfile, path)
+assert(ok, "Cannot read saved pairing; check executor file access. Do not enroll again just because a read failed.")
 assert(type(raw) == "string" and #raw <= 4096, "Invalid local pairing file")
 local decoded, config = pcall(Http.JSONDecode, Http, raw)
 assert(decoded, "Invalid local pairing file; keep it private and follow Recover pairing in the setup guide")

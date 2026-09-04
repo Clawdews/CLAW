@@ -8,12 +8,17 @@ end
 local player = game:GetService("Players").LocalPlayer
 if not player then return end
 local Http = game:GetService("HttpService")
-local ok, raw = pcall(readfile, "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json")
-if not ok then
+local path = "CLAW_PAIRINGS/" .. tostring(player.UserId) .. ".json"
+assert(type(isfile) == "function" and type(readfile) == "function", "Executor file support required; saved pairing was not changed")
+local checked, exists = pcall(isfile, path)
+assert(checked and type(exists) == "boolean", "Cannot check pairing file; check executor file access before trying again")
+if not exists then
     print("[CLAW] First setup: in Discord use /claw enroll account:" .. tostring(player.UserId))
     print("[CLAW] Run its private pairing reply once on this account. Afterward this same public loader reconnects automatically.")
     return
 end
+local ok, raw = pcall(readfile, path)
+assert(ok, "Cannot read saved pairing; check executor file access. Do not enroll again just because a read failed.")
 assert(type(raw) == "string" and #raw <= 4096, "Invalid local pairing file")
 local decoded, config = pcall(Http.JSONDecode, Http, raw)
 assert(decoded, "Invalid local pairing file; keep it private and follow Recover pairing in the setup guide")

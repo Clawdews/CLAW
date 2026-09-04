@@ -2,8 +2,10 @@
 
 ## Client fixes
 
+- Unreadable pairings stop setup instead of being replaced.
+- Setup checks the saved pairing again before replacing it.
 - Pairing errors hide private file and request contents.
-- A failed session encoder no longer leaves reconnect stuck.
+- Reconnect recovers if preparing a request fails.
 - Invalid pairing files stop with a readable next step.
 
 ## 0.2.0-beta.3

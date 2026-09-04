@@ -123,6 +123,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 					Body = http:JSONEncode({ ticket = data.accountId .. ".12345678-1234-1234-1234-123456789012" }) }
 			end,
 			isfolder = function() return true end, makefolder = function() end,
+			isfile = function(path) return f.files[path] ~= nil end,
 			writefile = function(path, raw) assert(not options.storageFail); f.files[path] = raw end,
 			readfile = function(path) return assert(f.files[path]) end,
 			warn = function() end,

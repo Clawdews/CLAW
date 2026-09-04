@@ -89,6 +89,8 @@ There are two small persistent files per paired account: its pairing and current
 
 ## Recover pairing
 
+- **Cannot check/read pairing, or file support required:** fix executor file access first, then rerun the loader. A read failure is not the same as an unpaired account. Do not delete or rotate a working pairing for this error. Volt's [file functions](https://docs.voltbz.net/docs/filesystem) must be available.
+- **Pairing file changed during setup:** another setup changed it while authentication was running. Let that setup finish, then rerun only the snippet for this account. The conflicting save is stopped.
 - **Key rejected or lost:** use `/claw rotate account:...`, then run the new private snippet on that same Roblox account. A valid existing pairing file is updated for you.
 - **Invalid local pairing file:** stop the loader on that account. Get a new private snippet with `/claw rotate`, move only its damaged `CLAW_PAIRINGS/<RobloxUserId>.json` file aside privately, then run the snippet. Leave other accounts' files alone. Never upload the damaged file; it may still contain a key.
 - **Could not save and verify pairing:** check executor file access, then rerun the same private snippet. A write may have happened even though verification failed. If it now reports an invalid file, use the recovery step above.
