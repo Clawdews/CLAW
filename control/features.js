@@ -70,13 +70,18 @@ export function readyReport(config, connections, requestedTeam, at = now()) {
   else if (config.activeTeam) team = config.teams[config.activeTeam];
   const ids = team ? teamMembers(config, team) : Object.keys(config.members || {});
   if (!ids.length) return team ? 'That team has no paired accounts.' : 'No accounts are paired.';
+  const mainId = team?.mainId || config.mainId, main = connections[mainId];
+  const fresh = connection => connection && at - connection.seen <= FRESH_SECONDS
+    && connection.presence && at - (connection.presenceSeen ?? connection.seen) <= FRESH_SECONDS;
+  const mainReady = fresh(main) && main.presence.placeId !== LOBBY && main.presence.gameId && main.presence.jobId;
   const lines = [], totals = { ready: 0, waiting: 0, offline: 0 };
   for (const account of ids) {
     const member = config.members[account], connection = connections[account];
     const live = connection && at - connection.seen <= FRESH_SECONDS;
     const state = live ? stateName(connection) : 'OFFLINE';
-    const withMain = account === config.mainId ? state === 'MAIN' : ['VERIFIED', 'WITH_MAIN'].includes(state);
-    const ready = live && (withMain || (!config.follow && state === 'PAUSED'));
+    const presence = connection?.presence;
+    const ready = mainReady && fresh(connection) && presence.placeId === main.presence.placeId
+      && presence.gameId === main.presence.gameId && presence.jobId === main.presence.jobId;
     if (!live) totals.offline++; else if (ready) totals.ready++; else totals.waiting++;
     const where = !live ? 'not connected' : !connection.presence ? 'connecting' : connection.presence.placeId === LOBBY ? 'character selection'
       : regionForPlace(connection.presence?.placeId) || 'another region';
@@ -136,7 +141,11 @@ export function inventoryReport(config, account) {
   if (!inventory) return 'No item scan yet. Leave the public loader running in-game.';
   const section = source => {
     const items = inventory[source] || [];
-    return '**' + (source === 'bank' ? 'Bank' : 'Inventory') + '**\n'
+    if (source === 'bank' && inventory.bankObserved === false && !inventory.bankObservedAt && !items.length) {
+      return '**Bank**\nNo visible bank data recorded yet.';
+    }
+    return '**' + (source === 'bank' ? 'Bank' : 'Inventory') + '**'
+      + (source === 'bank' && inventory.bankObservedAt ? ' · last seen <t:' + inventory.bankObservedAt + ':R>' : '') + '\n'
       + (items.length ? items.map(item => item.count + '× ' + escape(item.name)).join('\n') : 'Nothing recorded');
   };
   return (escape(display(account, member)) + ' · scanned <t:' + inventory.observedAt + ':R>\n' + section('inventory') + '\n\n' + section('bank')).slice(0, 1950);

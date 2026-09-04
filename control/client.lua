@@ -31,7 +31,7 @@ end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
 local Movement = module("control/movement.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.2", "Module version mismatch")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.3", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
@@ -43,6 +43,8 @@ local reconnectAt, backoff, presenceAt, packetAt = 0, 2, 0, 0
 local networkProblem
 local movement, movementState = nil, "idle"
 local actionResults, inventoryAt, lastInventory = {}, 0, nil
+local inventoryCharacter, lootPending, lootAt = nil, {}, 0
+local movementRevision = 0
 local menuCatalog, scanBusy, scanAt, catalogSentAt, catalogPending = nil, false, 0, 0, false
 local menuSignature, sentSignature
 local api = {}
@@ -78,7 +80,7 @@ if saved and type(saved.actions) == "table" then
 		end
 	end
 end
-local function save()
+local function save(requireFile)
 	storageRevision += 1
 	local encoded, raw = pcall(Http.JSONEncode, Http, { version = 1, accountId = accountId, endpoint = endpoint, revision = storageRevision,
 		ownerId = ownerId, updatedAt = os.time(), status = auto and auto.status, core = coreSaved,
@@ -96,7 +98,7 @@ local function save()
 			writefile(file, raw); assert(readfile(file) == raw)
 		end)
 	end
-	return memoryOK or fileOK
+	return fileOK or (not requireFile and memoryOK)
 end
 local function current()
 	local slot = player:GetAttribute("DataSlot")
@@ -213,6 +215,9 @@ connect(Teleport.TeleportInitFailed, function(who, result)
 end)
 local function disconnect()
 	socketGeneration += 1
+	movementRevision += 1
+	movement:stop("control disconnected")
+	lastInventory = nil; inventoryCharacter = nil; table.clear(lootPending)
 	for _, connection in ipairs(socketConnections) do connection:Disconnect() end
 	table.clear(socketConnections)
 	local old = socket; socket = nil
@@ -236,7 +241,9 @@ end
 local function addItem(counts, name, amount)
 	name = itemName(name)
 	if not name then return end
-	counts[name] = math.clamp((counts[name] or 0) + (amount or 1), 1, 9999)
+	amount = amount or 1
+	if type(amount) ~= "number" or amount ~= amount or amount < 1 or amount == math.huge then return end
+	counts[name] = math.clamp((counts[name] or 0) + math.floor(amount), 1, 9999)
 end
 local function sortedItems(counts)
 	local items = {}
@@ -246,8 +253,15 @@ local function sortedItems(counts)
 	return items
 end
 local function scanItems()
+	local backpack, character = player:FindFirstChildOfClass("Backpack"), player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not backpack or not humanoid or humanoid.Health <= 0 then
+		lastInventory = nil; inventoryCharacter = nil
+		return false
+	end
+	if inventoryCharacter ~= character then lastInventory = nil; inventoryCharacter = character end
 	local inventory = {}
-	for _, parent in ipairs({ player:FindFirstChildOfClass("Backpack"), player.Character }) do
+	for _, parent in ipairs({ backpack, character }) do
 		for _, child in ipairs(parent and parent:GetChildren() or {}) do
 			if child:IsA("Tool") then
 				local name = child:GetAttribute("ItemName")
@@ -256,31 +270,51 @@ local function scanItems()
 			end
 		end
 	end
-	local bank, gui = {}, player:FindFirstChildOfClass("PlayerGui")
+	local bank, gui, bankObserved = {}, player:FindFirstChildOfClass("PlayerGui"), false
 	for _, object in ipairs(gui and gui:GetDescendants() or {}) do
-		local parent, visibleBank = object, false
-		for _ = 1, 8 do
-			parent = parent and parent.Parent
-			local label = parent and tostring(parent.Name):lower() or ""
-			if label:find("bank", 1, true) or label:find("storage", 1, true) then visibleBank = true; break end
+		local parent, visibleBank, hidden = object, false, false
+		for _ = 1, 16 do
+			if not parent or parent == gui then break end
+			if (parent:IsA("GuiObject") and parent.Visible == false) or (parent:IsA("ScreenGui") and parent.Enabled == false) then hidden = true; break end
+			local label = tostring(parent.Name):lower()
+			if label:find("bank", 1, true) or label:find("storage", 1, true) then visibleBank = true end
+			parent = parent.Parent
 		end
-		if visibleBank then
+		if visibleBank and not hidden and parent == gui then
 			local name = object:GetAttribute("ItemName") or object:GetAttribute("Item") or object:GetAttribute("ToolName")
-			if type(name) == "string" then addItem(bank, name, tonumber(object:GetAttribute("Amount")) or 1) end
+			if itemName(name) then
+				bankObserved = true
+				addItem(bank, name, tonumber(object:GetAttribute("Amount")) or 1)
+			end
 		end
 	end
 	local packet = { type = "inventory", version = 1, accountId = accountId,
-		inventory = sortedItems(inventory), bank = sortedItems(bank) }
+		inventory = sortedItems(inventory), bank = sortedItems(bank), bankObserved = bankObserved }
 	if lastInventory then
-		local gained = {}
-		for name, count in pairs(inventory) do
+		for _, item in ipairs(packet.inventory) do
+			local name, count = item.name, item.count
 			local difference = count - (lastInventory[name] or 0)
-			if difference > 0 then gained[#gained + 1] = { name = name, count = difference } end
+			if difference > 0 then lootPending[name] = math.min(9999, (lootPending[name] or 0) + difference) end
 		end
-		if #gained > 0 then send({ type = "loot", version = 1, accountId = accountId, items = gained }) end
+		local pending = sortedItems(lootPending); table.clear(lootPending)
+		for _, item in ipairs(pending) do lootPending[item.name] = item.count end
 	end
 	lastInventory = inventory
 	return send(packet)
+end
+local function flushLoot()
+	local items = {}
+	for name, count in pairs(lootPending) do
+		items[#items + 1] = { name = name, count = math.min(100, count) }
+		if #items == 20 then break end
+	end
+	if #items == 0 then return end
+	if send({ type = "loot", version = 1, accountId = accountId, items = items }) then
+		for _, item in ipairs(items) do
+			local left = (lootPending[item.name] or 0) - item.count
+			lootPending[item.name] = left > 0 and left or nil
+		end
+	end
 end
 local function actionReply(id, ok, message)
 	message = tostring(message or (ok and "completed" or "failed")):gsub("[%c]", " "):sub(1, 160)
@@ -288,11 +322,12 @@ local function actionReply(id, ok, message)
 	local count = 0
 	for _ in pairs(actionResults) do count += 1 end
 	if count > 30 then actionResults = { [id] = actionResults[id] } end
-	save() -- Prevent an acknowledged command from running again after a teleport or restart.
+	save()
 	return send({ type = "action-result", accountId = accountId, id = id, ok = ok == true, message = message })
 end
 local function handleAction(data)
-	if type(data.id) ~= "string" or #data.id > 160 or type(data.expiresAt) ~= "number" or data.expiresAt <= os.time()
+	if type(data.id) ~= "string" or #data.id > 160 or not data.id:match("^[%w%-]+$")
+		or type(data.expiresAt) ~= "number" or data.expiresAt ~= data.expiresAt or data.expiresAt <= os.time()
 		or data.expiresAt > os.time() + 300 or type(data.args) ~= "table" then return disconnect() end
 	if data.action ~= "stop" and data.action ~= "scan-items" and data.action ~= "bring" and data.action ~= "park" then
 		return disconnect()
@@ -300,6 +335,7 @@ local function handleAction(data)
 	local previous = actionResults[data.id]
 	if previous then return actionReply(data.id, previous.ok, previous.message) end
 	if data.action == "stop" then
+		movementRevision += 1
 		movement:stop("stopped by owner")
 		return actionReply(data.id, true, "movement stopped")
 	end
@@ -307,16 +343,26 @@ local function handleAction(data)
 		local ok = scanItems()
 		return actionReply(data.id, ok, ok and "item scan sent" or "item scan could not be sent")
 	end
-	if not auto.profile or auto.profile.role ~= "alt" or auto.profile.halted == true then
+	if not auto.profile or auto.profile.role ~= "alt" or auto.profile.halted == true or auto.profile.enabled == false then
 		return actionReply(data.id, false, "account is not available for movement")
+	end
+	-- Claim before starting. A restart cannot safely determine whether an interrupted start ran.
+	movementRevision += 1
+	local revision, generation = movementRevision, socketGeneration
+	actionResults[data.id] = { ok = false, message = "start was interrupted; send a new command" }
+	if not save(true) then return actionReply(data.id, false, "could not save command receipt; movement not started") end
+	if revision ~= movementRevision or generation ~= socketGeneration or not socket or data.expiresAt <= os.time() then
+		return actionReply(data.id, false, "command cancelled before movement started")
 	end
 	if data.action == "bring" then
 		if tostring(data.args.mainId) ~= tostring(auto.profile.mainId) then return actionReply(data.id, false, "main changed") end
-		local ok, reason = movement:bring(data.args.mainId, data.args.offset)
+		local called, ok, reason = pcall(movement.bring, movement, data.args.mainId, data.args.offset)
+		if not called then movement:stop("movement error"); return actionReply(data.id, false, "movement could not start") end
 		return actionReply(data.id, ok, reason)
 	end
 	if data.action == "park" then
-		local ok, reason = movement:park(data.args.position, data.args.placeId, data.args.jobId)
+		local called, ok, reason = pcall(movement.park, movement, data.args.position, data.args.placeId, data.args.jobId)
+		if not called then movement:stop("movement error"); return actionReply(data.id, false, "movement could not start") end
 		return actionReply(data.id, ok, reason)
 	end
 	return disconnect()
@@ -353,9 +399,14 @@ local function connectRelay()
 		if not data then disconnect(); return end
 		packetAt = os.clock(); backoff = 2
 		if data.type == "profile" then
+			local previous = auto.profile
 			if (ownerId and data.ownerId ~= ownerId) or not auto:setProfile(data) then disconnect() else
 				networkProblem = nil
-				if data.halted == true or data.enabled == false then movement:stop(data.halted and "emergency stop" or "standby") end
+				if data.halted == true or data.enabled == false or data.role ~= "alt"
+					or (previous and (previous.mainId ~= data.mainId or previous.activeTeam ~= data.activeTeam)) then
+					movementRevision += 1
+					movement:stop(data.halted and "emergency stop" or "account settings changed")
+				end
 			end
 		elseif data.type == "target" then auto:setTarget(data)
 		elseif data.type == "action" and data.version == 1 then handleAction(data)
@@ -411,6 +462,7 @@ connect(Run.Heartbeat, function(dt)
 		inventoryAt = os.clock() + 60
 		task.spawn(scanItems)
 	end
+	if socket and os.clock() >= lootAt then lootAt = os.clock() + 2; flushLoot() end
 end)
 function api:destroy()
 	if stopped then return end

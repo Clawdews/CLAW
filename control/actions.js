@@ -1,4 +1,5 @@
 import { identifier, now } from './protocol.js';
+import { activeFor } from './features.js';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const text = (value, size) => typeof value === 'string' && !/[\x00-\x1f\x7f]/.test(value) && value.length <= size ? value : null;
@@ -21,7 +22,8 @@ export function cleanInventory(input, accountId) {
     return out.sort((a, b) => a.name.localeCompare(b.name));
   };
   const inventory = clean(input.inventory), bank = clean(input.bank);
-  return inventory && bank ? { inventory, bank, observedAt: now() } : null;
+  return inventory && bank ? { inventory, bank, observedAt: now(), bankObserved: input.bankObserved !== false,
+    bankObservedAt: input.bankObserved === false ? null : now() } : null;
 }
 export function cleanLoot(input, accountId) {
   if (!input || input.type !== 'loot' || input.version !== 1 || input.accountId !== accountId
@@ -47,4 +49,35 @@ export function cleanQueuedAction(value, at = now()) {
       || !Number.isSafeInteger(value.createdAt) || !Number.isSafeInteger(value.expiresAt)
       || value.expiresAt <= at || value.expiresAt > value.createdAt + 300) return null;
   return value;
+}
+
+const moves = packet => packet.action === 'bring' || packet.action === 'park';
+export function reconcileActions(config, previous = {}, requests = [], at = now()) {
+  const queue = {};
+  const allowed = (account, packet) => {
+    const member = config.members[account], scope = packet.scope;
+    if (!member || !cleanQueuedAction(packet, at) || scope?.credential !== member.credential) return false;
+    return !moves(packet) || (!config.halted && account !== config.mainId && activeFor(config, account)
+      && scope.mainId === config.mainId && scope.team === config.activeTeam);
+  };
+  for (const [account, pending] of Object.entries(previous)) {
+    const kept = pending.filter(packet => allowed(account, packet)).slice(-10);
+    if (kept.length) queue[account] = kept;
+  }
+  for (const request of requests) for (const account of request.accounts || []) {
+    if (!config.members[account]) continue;
+    const packet = { ...request.packet, scope: { credential: config.members[account].credential,
+      mainId: config.mainId, team: config.activeTeam } };
+    if (!allowed(account, packet)) continue;
+    const pending = (queue[account] || []).filter(old => {
+      if (packet.action === 'stop' || moves(packet)) return !moves(old) && old.action !== 'stop';
+      return old.action !== packet.action;
+    });
+    queue[account] = [...pending, packet].slice(-10);
+  }
+  return queue;
+}
+export function clientAction(packet) {
+  const { scope, ...wire } = packet;
+  return wire;
 }

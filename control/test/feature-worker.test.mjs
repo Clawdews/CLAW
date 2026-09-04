@@ -118,6 +118,11 @@ test('teams, deployment, movement queue, spots, inventory, loot and emergency st
   assert.match(stopped.data.content, /Emergency stop locked/);
   const stop = await waitFor(() => alt.messages.find(message => message.type === 'action' && message.action === 'stop'));
   assert.ok(stop);
+  assert.match((await command('follow', { enabled: true })).data.content, /Emergency stop is locked/);
+  alt.socket.close();
+  alt = await connect('22', altKey);
+  await waitFor(() => alt.messages.some(message => message.id === stop.id));
+  assert.ok(alt.messages.every(message => message.action !== 'bring' && message.action !== 'park'));
   const blocked = await command('bring', { team: 'Enmity' }, 'move');
   assert.match(blocked.data.content, /Emergency stop is locked/);
   assert.match((await command('emergency', { action: 'resume' })).data.content, /Controls unlocked/);
@@ -130,4 +135,10 @@ test('teams, deployment, movement queue, spots, inventory, loot and emergency st
   assert.match((await command('enmity', { team: 'Enmity', action: 'finish' })).data.content, /finished/);
   const history = await command('history', {}, 'data');
   assert.match(history.data.content, /Emergency stop/);
+  await command('bring', { team: 'Enmity' }, 'move');
+  const rotated = await command('rotate', { account: '22' });
+  const replacementKey = rotated.data.content.match(/[a-f0-9]{64}/)?.[0]; assert.ok(replacementKey);
+  alt.socket.close(); alt = await connect('22', replacementKey);
+  await waitFor(() => alt.messages.some(message => message.type === 'profile'));
+  assert.ok(alt.messages.every(message => message.type !== 'action'), 'rotated pairing inherited old commands');
 });

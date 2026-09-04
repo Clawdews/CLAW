@@ -20,6 +20,10 @@ Create a team with `/claw team create`, add its accounts, then choose its main. 
 
 Movement, parking spots, formations, presets, inventory, loot history, notes and the Enmity flow are under their matching `/claw` command groups. `/claw emergency` stops movement and following.
 
+Bring and Park need the accounts in the same server. A new movement command replaces the previous one; Stop clears it. Bank scans only read supported data in an open bank window. Item gains are observations, not a complete loot ledger.
+
+The chat bringer is separate. Do not run chat movement and Discord movement at the same time.
+
 Discord alerts need [the optional server install](https://discord.com/oauth2/authorize?client_id=1545435882784559124&permissions=2048&scope=bot%20applications.commands). The app tests the channel before saving alerts.
 
 [Full setup](../docs/CONTROL-SETUP.md) · [Privacy](../docs/PRIVACY.md) · [Hosting](../docs/CONTROL-HOSTING.md) · [Changelog](../docs/CONTROL-RELEASE.md)

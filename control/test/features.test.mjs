@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { sharedCommand } from '../commands.js';
 import { commandInput, featureCommand } from '../feature-commands.js';
 import { ensureFeatures, formationOffset, readyReport, keyFor, named, earliestOfflineDue } from '../features.js';
-import { cleanActionResult, cleanInventory, cleanLoot, cleanPosition, actionPacket, cleanQueuedAction } from '../actions.js';
+import { cleanActionResult, cleanInventory, cleanLoot, cleanPosition, actionPacket, cleanQueuedAction, reconcileActions, clientAction } from '../actions.js';
 import { shouldAlert, postAlert } from '../alerts.js';
 
 test('public command stays inside Discord limits and exposes the complete control surface', () => {
@@ -33,6 +33,58 @@ test('saved names cannot collide with object internals', () => {
   assert.deepEqual(named({ normal: { name: 'Normal' } }, 'normal'), ['normal', { name: 'Normal' }]);
 });
 
+test('team creation rejects reserved names without saving a null key', async () => {
+  const config = ensureFeatures({ members: {} });
+  const result = await featureCommand({}, 'team:create', { team: 'constructor' }, {}, config, {});
+  assert.equal(result.changed, false);
+  assert.deepEqual(config.teams, {});
+});
+
+test('new movement supersedes old movement and Stop clears it from reconnect queues', () => {
+  const config = ensureFeatures({ mainId: '11', members: { '11': { credential: 'main' }, '22': { credential: 'alt' } } });
+  const request = action => ({ accounts: ['22'], packet: actionPacket(action, {}) });
+  const bring = request('bring'), park = request('park'), stop = request('stop'), scan = request('scan-items');
+  let queue = reconcileActions(config, {}, [bring, scan, park]);
+  assert.deepEqual(queue['22'].map(packet => packet.action), ['scan-items', 'park']);
+  assert.equal('scope' in clientAction(queue['22'][0]), false);
+  queue = reconcileActions(config, queue, [stop]);
+  assert.deepEqual(queue['22'].map(packet => packet.action), ['scan-items', 'stop']);
+});
+
+test('queued actions cannot cross key rotation, main changes or team changes', () => {
+  const config = ensureFeatures({ mainId: '11', members: { '11': { credential: 'main' }, '22': { credential: 'alt' } } });
+  const queue = reconcileActions(config, {}, [{ accounts: ['22'], packet: actionPacket('bring', {}) }]);
+  for (const changed of [
+    { ...config, mainId: '33' }, { ...config, halted: true }, { ...config, activeTeam: 'other', teams: { other: { members: ['11'] } } },
+    { ...config, members: { ...config.members, '22': { credential: 'new' } } },
+  ]) assert.deepEqual(reconcileActions(changed, queue), {});
+  assert.deepEqual(reconcileActions(config, { '22': [actionPacket('bring', {})] }), {}, 'old unscoped actions must expire safely');
+});
+
+test('editing an active team main pauses following and updates its destination', async () => {
+  const config = ensureFeatures({ mainId: '11', follow: true, activeTeam: 'run', members: { '11': {}, '22': {} },
+    teams: { run: { name: 'Run', members: ['11', '22'], mainId: '11' } } });
+  await featureCommand({}, 'team:main', { team: 'Run', account: '22' }, {}, config, {});
+  assert.equal(config.mainId, '22'); assert.equal(config.follow, false);
+  await featureCommand({}, 'team:remove', { team: 'Run', account: '22' }, {}, config, {});
+  assert.equal(config.mainId, null); assert.equal(config.follow, false);
+});
+
+test('ready requires fresh observations of the same server, not just a previous success', () => {
+  const config = ensureFeatures({ mainId: '11', follow: true, members: { '11': {}, '22': {} } });
+  const main = { seen: 100, presence: { state: 'MAIN', gameId: 99, placeId: 6032399813, jobId: 'new-job' } };
+  const alt = { seen: 100, presence: { state: 'VERIFIED', gameId: 99, placeId: 6032399813, jobId: 'old-job' } };
+  assert.match(readyReport(config, { '11': main, '22': alt }, null, 110), /1 ready/);
+  main.presence.placeId = 4111023553;
+  assert.match(readyReport(config, { '11': main, '22': alt }, null, 110), /0 ready/);
+  main.presence.placeId = 6032399813;
+  main.presenceSeen = 10;
+  assert.match(readyReport(config, { '11': main, '22': alt }, null, 110), /0 ready/);
+  config.follow = false;
+  alt.presence.state = 'PAUSED';
+  assert.match(readyReport(config, { '22': alt }, null, 110), /0 ready/);
+});
+
 test('disconnect alerts keep the earliest pending deadline', () => {
   assert.equal(earliestOfflineDue({ alt2: { due: 130 }, alt1: { due: 120 } }), 120);
   assert.equal(earliestOfflineDue({ broken: {}, alt1: { due: 120 } }), 120);
@@ -51,8 +103,8 @@ test('formations are deterministic and ready checks explain every account', () =
   assert.ok(Math.abs(circle[2].x + 10) < 0.001);
   assert.deepEqual(formationOffset('stack', 2, 4, 6), { x: 0, y: 3, z: 0 });
   const config = ensureFeatures({ mainId: '11', follow: true, members: { '11': { username: 'Main' }, '22': { username: 'Alt' } } });
-  const report = readyReport(config, { '11': { seen: 100, presence: { state: 'MAIN', placeId: 6032399813 } },
-    '22': { seen: 100, presence: { state: 'VERIFIED', placeId: 6032399813 } } }, null, 110);
+  const report = readyReport(config, { '11': { seen: 100, presence: { state: 'MAIN', gameId: 99, jobId: 'same', placeId: 6032399813 } },
+    '22': { seen: 100, presence: { state: 'VERIFIED', gameId: 99, jobId: 'same', placeId: 6032399813 } } }, null, 110);
   assert.match(report, /2 ready/); assert.match(report, /@Main/); assert.match(report, /@Alt/);
 });
 

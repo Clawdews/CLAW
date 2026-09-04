@@ -108,6 +108,12 @@ test('follow requires confirmation and an old control cannot be replayed', async
   assert.match((await panelCommand(r, confirmInteraction, owner)).data.content, /expired/);
   assert.equal(r.broadcasts, 1);
 });
+test('the panel cannot re-enable follow while emergency stop is locked', async () => {
+  const r = room(); r.config.follow = false; r.config.halted = true;
+  let panel = await open(r); panel = await click(r, panel, 'follow'); panel = await click(r, panel, 'confirm');
+  assert.equal(r.config.follow, false); assert.equal(r.broadcasts, 0);
+  assert.match(panel.data.content, /Emergency stop is locked/);
+});
 test('stale confirmations reject config, credential, and character changes', async () => {
   for (const mutate of [r => r.config.revision = 'other', r => r.config.members['11'].credential = 'rotated',
     r => r.config.members['11'].slots.L.characterName = 'Replaced']) {

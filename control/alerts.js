@@ -14,7 +14,7 @@ export async function postAlert(env, alerts, content, fetcher = fetch) {
     const response = await fetcher('https://discord.com/api/v10/channels/' + alerts.channelId + '/messages', {
       method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(2000),
       headers: { Authorization: 'Bot ' + env.DISCORD_BOT_TOKEN, 'Content-Type': 'application/json',
-        'User-Agent': 'DiscordBot (https://github.com/Clawdews/CLAW, 0.3.0-beta.2)' },
+        'User-Agent': 'DiscordBot (https://github.com/Clawdews/CLAW, 0.3.0-beta.3)' },
       body: JSON.stringify({ content: 'CLAW · ' + safe(content), allowed_mentions: { parse: [] } }),
     });
     await response.body?.cancel();

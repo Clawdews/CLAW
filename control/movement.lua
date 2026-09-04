@@ -27,7 +27,7 @@ local function braking(distance, limit, acceleration, dt)
 end
 local function property(active, object, key, value)
 	active.properties[object] = active.properties[object] or {}
-	if active.properties[object][key] == nil then active.properties[object][key] = object[key] end
+	if active.properties[object][key] == nil then active.properties[object][key] = { value = object[key] } end
 	object[key] = value
 end
 
@@ -45,7 +45,7 @@ function Movement:_restore(active)
 	end
 	for object, properties in pairs(active and active.properties or {}) do
 		for key, value in pairs(properties) do
-			if object and object.Parent then pcall(function() object[key] = value end) end
+			if object and object.Parent then pcall(function() object[key] = value.value end) end
 		end
 	end
 	if active and active.root and active.root.Parent then

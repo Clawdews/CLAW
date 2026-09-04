@@ -4,7 +4,7 @@ import { actionPacket } from './actions.js';
 import { postAlert } from './alerts.js';
 import { ensureFeatures, cleanName, cleanNote, keyFor, named, teamMembers, formationOffset,
   MAX_TEAMS, MAX_PRESETS, MAX_SPOTS, readyReport, teamsReport, presetsReport, spotsReport,
-  historyReport, lootReport, inventoryReport, sessionReport } from './features.js';
+  historyReport, lootReport, inventoryReport, sessionReport, activeFor } from './features.js';
 
 export function commandInput(interaction) {
   const root = interaction.data?.options?.[0];
@@ -34,7 +34,7 @@ export async function featureCommand(room, name, values, interaction, config, co
 
   if (name === 'team:create') {
     const label = cleanName(values.team), key = keyFor(values.team);
-    if (!label) return failed('Use a team name between 1 and 32 bytes.');
+    if (!label || !key) return failed('Choose another team name between 1 and 32 bytes.');
     if (config.teams[key]) return failed('That team already exists.');
     if (Object.keys(config.teams).length >= MAX_TEAMS) return failed('Team limit reached.');
     config.teams[key] = { name: label, members: [], mainId: null, formation: { shape: 'circle', spacing: 6 }, recovery: false };
@@ -59,13 +59,17 @@ export async function featureCommand(room, name, values, interaction, config, co
     }
     if (name === 'team:remove') {
       team.members = team.members.filter(value => value !== account);
-      if (team.mainId === account) team.mainId = null;
+      if (team.mainId === account) {
+        team.mainId = null;
+        if (config.activeTeam === key) { config.mainId = null; config.follow = false; }
+      }
       return saved('Removed ' + display(account, config.members[account]) + ' from ' + team.name + '.',
         'Removed an account from ' + team.name);
     }
     if (name === 'team:main') {
       if (!team.members.includes(account)) team.members.push(account);
       team.mainId = account;
+      if (config.activeTeam === key) { config.mainId = account; config.follow = false; }
       return saved('Team main set to ' + display(account, config.members[account]) + '.', 'Changed the main for ' + team.name);
     }
   }
@@ -89,6 +93,7 @@ export async function featureCommand(room, name, values, interaction, config, co
     if (!team) return failed('That team does not exist.');
     const ids = movementTargets(config, team), mainId = team.mainId || config.mainId;
     if (!mainId || !config.members[mainId]) return failed('Choose a team main first.');
+    if (mainId !== config.mainId || ids.some(account => !activeFor(config, account))) return failed('Deploy this team before bringing it.');
     const formation = team.formation || { shape: 'circle', spacing: 6 };
     const actions = ids.map((account, index) => ({ accounts: [account], packet: actionPacket('bring',
       { mainId, offset: formationOffset(formation.shape, index, ids.length, formation.spacing) }) }));
@@ -110,6 +115,7 @@ export async function featureCommand(room, name, values, interaction, config, co
     if (!team) return failed('That team does not exist.');
     if (!spot) return failed('That parking spot does not exist.');
     const ids = movementTargets(config, team), formation = team.formation || { shape: 'circle', spacing: 6 };
+    if ((team.mainId || config.mainId) !== config.mainId || ids.some(account => !activeFor(config, account))) return failed('Deploy this team before parking it.');
     const actions = ids.map((account, index) => {
       const offset = formationOffset(formation.shape, index, ids.length, formation.spacing);
       return { accounts: [account], packet: actionPacket('park', { placeId: spot.placeId, jobId: spot.jobId,
@@ -230,7 +236,7 @@ export async function featureCommand(room, name, values, interaction, config, co
   if (name === 'emergency') {
     if (values.action === 'stop') {
       config.halted = true; config.follow = false; config.activeTeam = null;
-      return saved('Emergency stop locked. Following is off and all movement was stopped.', 'Emergency stop',
+      return saved('Emergency stop locked. Following is off; Stop was sent to all accounts.', 'Emergency stop',
         [{ accounts: Object.keys(config.members), packet: actionPacket('stop', {}, 300) }]);
     }
     if (values.action === 'resume') {
@@ -255,6 +261,7 @@ export async function featureCommand(room, name, values, interaction, config, co
     }
     if (config.halted) return failed('Emergency stop is locked.');
     const ids = movementTargets(config, team), formation = team.formation || { shape: 'circle', spacing: 6 };
+    if (mainId !== config.mainId || ids.some(account => !activeFor(config, account))) return failed('Prepare this Enmity team first.');
     if (values.action === 'recall') {
       const actions = ids.map((account, index) => ({ accounts: [account], packet: actionPacket('bring',
         { mainId, offset: formationOffset(formation.shape, index, ids.length, formation.spacing) }) }));

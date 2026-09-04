@@ -59,6 +59,11 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		local player = object("Player"); player.UserId = options.main and 11 or 22; player.OnTeleport = signal()
 		player.DataSlot = options.slot
 		f.player = player
+		if options.items then
+			player.Character = object("Model")
+			local humanoid = object("Humanoid"); humanoid.Health = 100; player.Character.children.Humanoid = humanoid
+			player.children.Backpack = object("Backpack")
+		end
 		if pairedLauncher then
 			local pairing = clone(f.env.CLAW_CONTROL_CONFIG); pairing.Version = 1; pairing.AccountId = tostring(player.UserId)
 			if options.firstPair then f.env.CLAW_PAIR = pairing
@@ -149,6 +154,23 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 			print = function(message) f.logs[#f.logs + 1] = message end,
 		}, { __index = getfenv() })
 		runtime.loadstring = function(source, name)
+			if options.movement and name == "@CLAW/control/movement.lua" then
+				return function() return { new = function()
+					local mover = {}
+					function mover:stop() f.moveStops = (f.moveStops or 0) + 1 end
+					function mover:destroy() self:stop() end
+					function mover:bring()
+						f.moves = (f.moves or 0) + 1
+						for _, raw in pairs(f.files) do
+							local value = http:JSONDecode(raw)
+							if value.actions then f.receiptsAtMove = value.actions end
+						end
+						return true, "movement started"
+					end
+					mover.park = mover.bring
+					return mover
+				end } end
+			end
 			local chunk, failure = loadstring(source, name)
 			if chunk then setfenv(chunk, runtime) end
 			return chunk, failure
@@ -158,6 +180,16 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		end
 		function f:advance(seconds)
 			for _ = 1, seconds do self.now += 1; self.clock += 1; self.heartbeat:Fire(1) end
+		end
+		function f:action(id, action, args)
+			self.sockets[#self.sockets].OnMessage:Fire(http:JSONEncode({ type = "action", version = 1,
+				id = id, action = action, args = args or {}, createdAt = self.now, expiresAt = self.now + 60 }))
+		end
+		function f:profile(extra)
+			local profile = { type = "profile", accountId = tostring(player.UserId), ownerId = options.owner,
+				mainId = "11", role = "alt", enabled = true, follow = false, approvedSlots = {} }
+			for key, value in pairs(extra or {}) do profile[key] = value end
+			self.sockets[#self.sockets].OnMessage:Fire(http:JSONEncode(profile))
 		end
 		f:reload(); return f
 	end
@@ -409,7 +441,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		f:advance(3); assert(f.confirms == 0)
 	end)
 	test("authenticated cloud actions are bounded and return results", function()
-		local f = boot({ main = true }); f:advance(3)
+		local f = boot({ main = true, items = true }); f:advance(3)
 		local socket = f.sockets[#f.sockets]
 		socket.OnMessage:Fire(f.http:JSONEncode({ type = "action", version = 1, id = "action-stop", action = "stop",
 			args = {}, createdAt = f.now, expiresAt = f.now + 60 }))
@@ -427,6 +459,72 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		end
 		assert(inventory and #inventory.inventory == 0 and #inventory.bank == 0 and scanned and scanned.ok)
 		assert(f.picks == 0 and f.joins == 0 and f.menus == 0)
+	end)
+	test("inactive teams cannot start movement and disconnect stops active movement", function()
+		local f = boot({ movement = true }); f:advance(3)
+		f:profile({ enabled = false })
+		f:action("inactive-bring", "bring", { mainId = "11" })
+		assert((f.moves or 0) == 0, "standby account moved")
+		f:profile()
+		f:action("active-bring", "bring", { mainId = "11" }); assert(f.moves == 1)
+		local stops = f.moveStops or 0
+		f.sockets[#f.sockets]:Close()
+		assert(f.moveStops > stops, "movement outlived its connection")
+	end)
+	test("changing the main stops movement and failed storage cannot start it", function()
+		local options = { movement = true }
+		local f = boot(options); f:advance(3); f:profile()
+		f:action("first-bring", "bring", { mainId = "11" }); assert(f.moves == 1)
+		assert(f.receiptsAtMove["first-bring"].ok == false, "no receipt existed before starting movement")
+		f:reload(); f:advance(3); f:profile()
+		f:action("first-bring", "bring", { mainId = "11" }); assert(f.moves == 1, "duplicate command ran after reload")
+		local stops = f.moveStops or 0
+		f:profile({ mainId = "33" })
+		assert(f.moveStops > stops, "old main still controlled movement")
+		options.storageFail = true
+		f:action("unsaved-bring", "bring", { mainId = "33" })
+		assert(f.moves == 1, "movement started without a saved receipt")
+		f:action("stop-without-storage", "stop")
+		assert(f.moveStops > stops + 1, "storage failure blocked Stop")
+	end)
+	test("missing backpacks and new characters do not create fake item gains", function()
+		local f = boot({ main = true, world = true, items = true }); f:advance(3)
+		local backpack = f.player.children.Backpack
+		local tool = object("Tool"); tool.Name = "Sword"; backpack.children.Sword = tool
+		f:action("scan-one", "scan-items")
+		local before = #f.packets
+		f.player.children.Backpack = nil; f:action("scan-missing", "scan-items")
+		f.player.children.Backpack = backpack; f:action("scan-returned", "scan-items")
+		for i = before + 1, #f.packets do assert(f.packets[i].type ~= "loot", "reappearing inventory became loot") end
+		f.player.Character = object("Model")
+		local humanoid = object("Humanoid"); humanoid.Health = 100; f.player.Character.children.Humanoid = humanoid
+		local extra = object("Tool"); backpack.children.Axe = extra
+		before = #f.packets; f:action("scan-respawn", "scan-items")
+		for i = before + 1, #f.packets do assert(f.packets[i].type ~= "loot", "respawn inventory became loot") end
+	end)
+	test("large item gains stay within the server packet limits", function()
+		local f = boot({ main = true, world = true, items = true }); f:advance(3)
+		for i = 1, 25 do f.player.children.Backpack.children["Item" .. i] = object("Tool") end
+		f:action("scan-many", "scan-items"); f:advance(12)
+		local count = 0
+		for _, packet in ipairs(f.packets) do if packet.type == "loot" then
+			assert(#packet.items <= 20, "client sent more items than its server accepts")
+			for _, item in ipairs(packet.items) do assert(item.count <= 100); count += item.count end
+		end end
+		assert(count == 25, "gains were lost")
+	end)
+	test("hidden bank windows are not reported as current bank scans", function()
+		local f = boot({ main = true, items = true }); f:advance(3)
+		local gui = f.player.children.PlayerGui
+		local bank = object("Frame"); bank.Name = "BankWindow"; bank.Parent = gui; gui.children.BankWindow = bank
+		local row = object("Frame"); row.ItemName = "Crown"; row.Amount = 2; row.Parent = bank; bank.children.Row = row
+		f:action("bank-open", "scan-items")
+		local function latest()
+			for i = #f.packets, 1, -1 do if f.packets[i].type == "inventory" then return f.packets[i] end end
+		end
+		assert(latest().bankObserved and latest().bank[1].count == 2)
+		bank.Visible = false; f:action("bank-closed", "scan-items")
+		assert(latest().bankObserved == false and #latest().bank == 0)
 	end)
 	test("unknown cloud actions close without touching the game", function()
 		local f = boot({ main = true }); f:advance(3)

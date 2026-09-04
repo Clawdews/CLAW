@@ -11,7 +11,7 @@ import { panelCommand } from './panel-controller.js';
 import { batchInput, batchRequest } from './batch.js';
 import { commandInput, featureCommand } from './feature-commands.js';
 import { ensureFeatures, activeFor, addHistory, addLoot, earliestOfflineDue } from './features.js';
-import { cleanActionResult, cleanInventory, cleanLoot, cleanQueuedAction } from './actions.js';
+import { cleanActionResult, cleanInventory, cleanLoot, reconcileActions, clientAction } from './actions.js';
 import { shouldAlert, postAlert } from './alerts.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -32,7 +32,7 @@ async function bodyText(request, limit = 8192) {
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.3.0-beta.2', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.3.0-beta.3', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -108,7 +108,8 @@ export class ControlRoom extends DurableObject {
   live(ws, at = now()) {
     const a = this.attachment(ws), member = a && this.config.members[a.userId];
     return member && member.credential === a.credential && ws.readyState === 1
-      && at - a.seen <= FRESH_SECONDS ? a : null;
+      && at - a.seen <= FRESH_SECONDS
+      && (!a.presence || at - (a.presenceSeen ?? a.seen) <= FRESH_SECONDS) ? a : null;
   }
   send(ws, value) { try { ws.send(JSON.stringify(value)); } catch { /* Next liveness check expires it. */ } }
   accountName(userId) {
@@ -132,17 +133,20 @@ export class ControlRoom extends DurableObject {
   async alarm() {
     const at = now(), pending = await this.ctx.storage.get('offline') || {};
     let next = null;
+    const alerts = [];
     for (const [account, item] of Object.entries(pending)) {
       const live = Object.values(this.connections()).some(connection => connection.userId === account);
       if (live || this.config.members[account]?.credential !== item.credential) delete pending[account];
       else if (item.due <= at) {
         delete pending[account];
         await addHistory(this, 'offline', this.accountName(account) + ' disconnected', account);
-        if (this.config.alerts?.mode !== 'off') await this.notify(this.accountName(account) + ' disconnected.');
+        if (this.config.alerts?.mode !== 'off') alerts.push(this.accountName(account) + ' disconnected.');
       } else next = next === null ? item.due : Math.min(next, item.due);
     }
     await this.ctx.storage.put('offline', pending);
     if (next !== null) await this.ctx.storage.setAlarm(next * 1000 + 1000);
+    // Finish timer updates before Discord I/O lets another socket event run.
+    if (alerts.length) this.ctx.waitUntil(Promise.all(alerts.map(text => this.notify(text))));
   }
   profile(userId) {
     const member = this.config.members[userId];
@@ -164,33 +168,25 @@ export class ControlRoom extends DurableObject {
     for (const ws of this.sockets()) { const live = this.live(ws); if (live) connections[live.userId] = live; }
     return connections;
   }
-  async queueActions(actions) {
-    if (!actions?.length) return;
-    const at = now(), queue = await this.ctx.storage.get('actions') || {};
-    for (const request of actions) for (const account of request.accounts || []) {
-      if (!this.config.members[account]) continue;
-      const packet = cleanQueuedAction(request.packet, at);
-      if (!packet) continue;
-      queue[account] = [...(queue[account] || []).filter(item => cleanQueuedAction(item, at)), packet].slice(-10);
-      for (const ws of this.sockets()) if (this.live(ws)?.userId === account) this.send(ws, packet);
+  dispatchActions(queue, requests) {
+    const ids = new Set((requests || []).map(request => request.packet.id));
+    for (const ws of this.sockets()) {
+      const account = this.live(ws)?.userId;
+      for (const packet of queue[account] || []) if (ids.has(packet.id)) this.send(ws, clientAction(packet));
     }
-    await this.ctx.storage.put('actions', queue);
   }
   async sendPending(ws, userId) {
-    const at = now(), queue = await this.ctx.storage.get('actions') || {};
-    const pending = (queue[userId] || []).filter(item => cleanQueuedAction(item, at));
-    if (pending.length !== (queue[userId] || []).length) {
-      queue[userId] = pending; await this.ctx.storage.put('actions', queue);
-    }
-    for (const packet of pending) this.send(ws, packet);
+    const queue = reconcileActions(this.config, await this.ctx.storage.get('actions'));
+    await this.ctx.storage.put('actions', queue);
+    for (const packet of queue[userId] || []) this.send(ws, clientAction(packet));
   }
   target() {
-    if (!this.config.follow || !this.config.mainId) return { type: 'target', enabled: false, reason: 'PAUSED' };
+    if (this.config.halted || !this.config.follow || !this.config.mainId) return { type: 'target', enabled: false, reason: 'PAUSED' };
     for (const ws of this.sockets()) {
       const a = this.live(ws);
       if (a?.userId !== this.config.mainId || !a.presence || a.presence.placeId === LOBBY) continue;
       return { type: 'target', enabled: true, key: targetKey(a.presence), revision: this.config.revision,
-        expiresAt: a.seen + FRESH_SECONDS,
+        expiresAt: (a.presenceSeen ?? a.seen) + FRESH_SECONDS,
         ticket: ticketFor(this.config.mainId, a.presence, this.config.revision) };
     }
     return { type: 'target', enabled: false, reason: 'WAITING_MAIN' };
@@ -301,7 +297,7 @@ export class ControlRoom extends DurableObject {
       updated.lastAction = result;
       await this.ctx.storage.put({ actions: queue, config: next });
       this.config = next;
-      await addHistory(this, 'action', (result.ok ? 'Completed: ' : 'Failed: ') + result.message, a.userId);
+      await addHistory(this, 'action', (result.ok ? 'Accepted: ' : 'Failed: ') + result.message, a.userId);
       return;
     }
     if (data.type === 'inventory') {
@@ -311,6 +307,11 @@ export class ControlRoom extends DurableObject {
       a.lastInventory = now(); a.seen = now(); ws.serializeAttachment(a);
       const next = structuredClone(this.config), updated = next.members[a.userId];
       if (!updated || updated.credential !== a.credential) return;
+      if (inventory.bankObserved === false && updated.inventory) {
+        inventory.bank = updated.inventory.bank;
+        inventory.bankObservedAt = updated.inventory.bankObservedAt
+          ?? (updated.inventory.bank?.length ? updated.inventory.observedAt : null);
+      }
       updated.inventory = inventory;
       await this.ctx.storage.put('config', next); this.config = next;
       return;
@@ -348,7 +349,7 @@ export class ControlRoom extends DurableObject {
     const presence = cleanPresence(data.current);
     if (!presence) return ws.close(1008, 'Invalid presence');
     const previousState = a.presence?.state;
-    a.presence = presence; a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
+    a.presence = presence; a.presenceSeen = now(); a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
     if (previousState && previousState !== presence.state) {
       await addHistory(this, 'state', this.accountName(a.userId) + ': ' + presence.state, a.userId);
       if (shouldAlert(this.config.alerts?.mode, presence.state)) {
@@ -431,11 +432,12 @@ export class ControlRoom extends DurableObject {
         if (!feature.changed && !feature.actions?.length) return reply(feature.content);
         if (feature.changed) config.revision = nonce();
         replay.push({ id: interaction.id, expires: signedAt + 301 });
-        await this.ctx.storage.put({ config, replay });
+        const actions = reconcileActions(config, await this.ctx.storage.get('actions'), feature.actions);
+        await this.ctx.storage.put({ config, replay, actions });
         this.config = config;
-        if (feature.actions?.length) await this.queueActions(feature.actions);
-        if (feature.event) await addHistory(this, 'command', feature.event);
         if (feature.changed) this.broadcast(true);
+        this.dispatchActions(actions, feature.actions);
+        if (feature.event) await addHistory(this, 'command', feature.event);
         return reply(feature.content);
       }
       if (option?.name === 'enroll' || option?.name === 'rotate') {
@@ -455,6 +457,7 @@ export class ControlRoom extends DurableObject {
         content = `Main set to ${account}. Follow is paused; enable it when the accounts are ready.`;
       } else if (option?.name === 'follow') {
         if (typeof values.enabled !== 'boolean') return reply('Specify enabled true or false.');
+        if (values.enabled && config.halted) return reply('Emergency stop is locked. Unlock controls before enabling follow.');
         if (values.enabled && !config.mainId) return reply('Choose an enrolled main first.');
         config.follow = values.enabled;
         content = values.enabled ? 'Auto-follow enabled. Fresh main destinations will be delivered to paired alts.'
@@ -511,7 +514,8 @@ export class ControlRoom extends DurableObject {
       config.revision = nonce();
       // Keep the complete accepted-signature replay window, capped by a command limit.
       replay.push({ id: interaction.id, expires: signedAt + 301 });
-      await this.ctx.storage.put({ config, replay });
+      const actions = reconcileActions(config, await this.ctx.storage.get('actions'));
+      await this.ctx.storage.put({ config, replay, actions });
       this.config = config;
       if (disconnectAccount) for (const ws of this.sockets()) if (this.attachment(ws)?.userId === disconnectAccount) { try { ws.close(4003, 'Pairing changed'); } catch {} }
       this.broadcast(true);

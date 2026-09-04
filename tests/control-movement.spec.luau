@@ -114,6 +114,11 @@ return function(source)
 	assert(sensor.SearchDistance == 6 and torso.CanCollide == true and added.CanCollide == true)
 	assert(pin.destroyed == false and pin.MaxForce.X == 9 and helio.MaxForce.X == 5)
 	assert(localRoot.AssemblyLinearVelocity.Magnitude == 0)
+	manager.ActiveController = nil
+	assert(movement:bring("11", { x = 0, y = 0, z = 0 }))
+	run.PreSimulation:Fire(0.1)
+	movement:stop()
+	assert(manager.ActiveController == nil, "a missing controller must be restored as nil")
 
 	ok, reason = movement:bring("99", { x = 0, y = 0, z = 0 })
 	assert(ok == false and reason == "main character unavailable")

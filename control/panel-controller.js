@@ -1,6 +1,7 @@
 import { now, nonce, hash, MAX_MEMBERS, reply } from './protocol.js';
 import { selectable } from './catalog.js';
 import { PANEL_TTL, renderPanel, confirmation, confirmationFresh, accountName } from './panel.js';
+import { reconcileActions } from './actions.js';
 
 const expired = () => reply('That panel has expired or changed. Open /claw panel again; no settings were changed.');
 export async function panelCommand(room, interaction, ownerId, initial) {
@@ -29,7 +30,8 @@ export async function panelCommand(room, interaction, ownerId, initial) {
       if (!change || !confirmationFresh(config, change)) view.notice = 'Settings or this character changed. Review the latest information before confirming again.';
       else if (change.kind === 'follow') {
         if (change.enabled && !config.mainId) return expired();
-        config.follow = change.enabled; changed = true;
+        if (change.enabled && config.halted) view.notice = 'Emergency stop is locked. Unlock controls before enabling follow.';
+        else { config.follow = change.enabled; changed = true; }
       } else if (change.kind === 'main') {
         if (!config.members[change.account]) return expired();
         config.mainId = change.account; config.follow = false; config.activeTeam = null; changed = true;
@@ -108,7 +110,9 @@ export async function panelCommand(room, interaction, ownerId, initial) {
   while (Object.keys(views).length >= 40) delete views[Object.keys(views)[0]];
   views[view.token] = view;
   // Permission changes, consumed controls and pending requests commit together.
-  await room.ctx.storage.put({ panels: views, ...(changed || privateSnippet ? { config } : {}), ...(batchChanged ? { batch } : {}) });
+  const actions = changed ? reconcileActions(config, await room.ctx.storage.get('actions')) : null;
+  await room.ctx.storage.put({ panels: views, ...(changed || privateSnippet ? { config } : {}),
+    ...(changed ? { actions } : {}), ...(batchChanged ? { batch } : {}) });
   if (changed || privateSnippet) room.config = config;
   if (changed) room.broadcast(true);
   if (privateSnippet) rendered.data.content = privateSnippet;
