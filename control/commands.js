@@ -14,6 +14,7 @@ export const command = {
     { type: 1, name: 'revoke', description: 'Disconnect an account and invalidate its key', options: [account] },
   ],
 };
+const usernameAccount = { ...account, description: 'Roblox username (not display name), or numeric UserId', max_length: 64 };
 export const sharedCommand = {
   ...command, default_member_permissions: null, integration_types: [0, 1], contexts: [0, 1, 2],
   options: [
@@ -37,3 +38,6 @@ export const sharedCommand = {
       { type: 3, name: 'slot', description: 'Approved DataSlot in that region', required: true }] },
   ],
 };
+sharedCommand.options = sharedCommand.options.map(option => ({ ...option,
+  ...(option.options ? { options: option.options.map(value => value.name === 'account' ? { ...usernameAccount } : value) } : {}),
+}));

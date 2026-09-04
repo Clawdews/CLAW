@@ -9,13 +9,15 @@ The **public loader** is safe to share. The **pairing snippet** contains your ac
 ## 1. Pair your accounts
 
 1. Install the host's CLAW Discord app, then run `/claw setup`. In closed beta, the host must enable your Discord User ID first.
-2. Run `/claw enroll account:<Roblox UserId>` for your main and each alt. `UserId` means the number in that account's Roblox profile URL, not its username. Replace the `<...>` text with that number; do not type the brackets.
+2. Run `/claw enroll account:<username>` for your main and each alt. Enter the actual Roblox username, not the display name; do not type the brackets. Numeric UserIds still work. All `account` fields accept either.
 3. On each matching Roblox account, execute its private pairing snippet from Discord once. It checks the local account, verifies the key and saves it to that executor's workspace. Never share this snippet.
 4. Put the following **public** loader in autoexec. It reads only the current account's pairing file. Unlike the enrollment snippet, this line is safe to share:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/launcher-beta.lua"))()
 ```
+
+Username lookup uses Roblox’s public API. Capitalization and a leading `@` are fine. Use the current username; former names and display names are not selected. If a username consists only of digits, prefix it with `@` so it is not treated as an ID. If lookup fails, nothing is changed; retry or use the numeric UserId. Replies show the resolved username and ID so you can check the account. Existing pairings do not need to be redone.
 
 The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
 
@@ -26,8 +28,8 @@ Leave the paired alt at character selection for about 15 seconds, then use `/cla
 Nothing is selected just because it appeared in the list. **Allow** means “this alt may use this character.” **Prefer** means “use this one when more than one allowed character fits.” Choose the region shown by the command's menu.
 
 ```text
-/claw allow-slot account:<alt UserId> slot:<observed slot> enabled:true
-/claw prefer-slot account:<alt UserId> region:<region> slot:<observed slot>
+/claw allow-slot account:<alt username> slot:<observed slot> enabled:true
+/claw prefer-slot account:<alt username> region:<region> slot:<observed slot>
 ```
 
 The preference is only necessary when several approved characters share a region. Approvals persist, but a changed character name, observed level reset or removed slot clears the old permission. Cloud observations expire after 24 hours; reopening the menu refreshes them. Selection requires a complete current local scan and matching cloud character details, then checks the region returned by the game before requesting a join.
@@ -39,7 +41,7 @@ Only Eastern and Etrean are mapped. Depths, layers and other places remain visib
 Keep the main in the world and return one alt to character selection:
 
 ```text
-/claw main account:<main UserId>
+/claw main account:<main username>
 /claw follow enabled:true
 /claw status
 ```
@@ -50,7 +52,7 @@ For a normal later session, let autoexec start the paired clients and check `/cl
 
 `VERIFIED` means the paired client checked the expected account, character, experience, place, exact server and main's presence after joining. `WITH_MAIN` means it was already there. Discord relays those client reports; it does not independently observe Roblox.
 
-Automatic exits are off by default. After a successful menu test, opt in from Discord with `/claw auto-return account:<alt UserId> enabled:true`. Use `enabled:false` to switch it off, including pending menu confirmations once the client receives the update. It requests the normal return-to-menu flow; it does not bypass combat restrictions or force a respawn. Older explicit local settings remain effective only until a cloud setting overrides them. You no longer need to edit the private pairing file for this option.
+Automatic exits are off by default. After a successful menu test, opt in from Discord with `/claw auto-return account:<alt username> enabled:true`. Use `enabled:false` to switch it off, including pending menu confirmations once the client receives the update. It requests the normal return-to-menu flow; it does not bypass combat restrictions or force a respawn. Older explicit local settings remain effective only until a cloud setting overrides them. You no longer need to edit the private pairing file for this option.
 
 ## Everyday controls
 

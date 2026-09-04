@@ -6,6 +6,7 @@ import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeS
 import { pairingReply, setupReply } from './onboarding.js';
 import { cleanCatalog, selectable, catalogPage, MAX_SLOTS } from './catalog.js';
 import { cleanNickname, statusPage } from './status.js';
+import { resolveCommandAccount } from './accounts.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request) {
@@ -41,7 +42,14 @@ export default {
       }
       if (interaction.type !== 2 || interaction.data?.name !== 'claw') return json(reply('Unsupported command.'));
       if (!await entryAllowed(env, 'command:' + user)) return json(reply('Control is temporarily rate-limited or unavailable. Try again later.'));
-      try { return json(await env.ROOM.getByName(roomName(env, user)).command(interaction, Number(request.headers.get('X-Signature-Timestamp')), user)); }
+      try {
+        // Resolve outside the account room so a slow lookup cannot block its sockets.
+        const resolved = shared(env) ? await resolveCommandAccount(interaction) : { interaction };
+        if (resolved.error) return json(reply(resolved.error));
+        const result = await env.ROOM.getByName(roomName(env, user)).command(resolved.interaction, Number(request.headers.get('X-Signature-Timestamp')), user);
+        if (resolved.username && result.type === 4) result.data.content = `Account: @${resolved.username} (${resolved.accountId})\n` + result.data.content;
+        return json(result);
+      }
       catch { return json(reply('Control service unavailable. No success was confirmed; try status before retrying.')); }
     }
     if ((path === '/session' && request.method === 'POST') || (path === '/socket' && request.method === 'GET')) {

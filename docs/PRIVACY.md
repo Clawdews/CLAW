@@ -14,6 +14,7 @@ The source code and public loader are safe to share. Your filled-in setup is not
 - **GitHub:** code, blank examples and documentation. The push-notification webhook lives in an encrypted repository secret, not in the source.
 - **Your device:** cloud pairing and attempt files stay in the executor workspace. Keep that folder private; do not upload it as a whole.
 - **Shared controller (beta):** the host stores account IDs, hashed pairing keys, character cards, settings and connection/attempt information. Groups are separated by Discord user, but the service owner can access stored data. This is not end-to-end encryption.
+- **Roblox username lookup:** when you use a username in a beta command, only that name is sent to Roblox’s public users API. No Discord identity, server destination, pairing key or cookie is sent with the lookup. Numeric IDs skip this request.
 - **Discord:** private pairing/status replies and the notifications you configure. Private replies are not permission to share their contents.
 - **Loot notifications:** your chosen channel receives the username, items and session/server details described in the loot guide. Everyone who can view that channel can read them.
 
