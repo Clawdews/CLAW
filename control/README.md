@@ -2,7 +2,7 @@
 
 Discord selects the main; the main publishes its current server; paired alts join and verify automatically. No clipboard, chat commands, in-game panel or local HTTP service.
 
-**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. Discord application setup and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
+**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Discord has accepted the interactions endpoint; the owner and server restrictions are configured. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. Server installation, slash-command registration and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
 
 The working alt manager, loot notifier, and `main/loader.lua` are unchanged. This lives on `codex/discord-control`.
 
@@ -38,6 +38,8 @@ node --env-file=.env register.mjs
 ```
 
 The Git ignore rules cover `.env`, `.dev.vars`, `*.local.lua`, dependency folders, and build state. Never add real values to an example file. Registration and login are real account operations; dry-run compilation is not deployment.
+
+If registration reports Discord API code `50001` (Missing Access), install the app in the configured server with the `applications.commands` scope before retrying. The registration script supplies Discord's required client identification header and never prints API response bodies or credentials on failure.
 
 ## Pair the accounts
 
