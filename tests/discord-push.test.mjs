@@ -1,12 +1,51 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { shortTitle, pushPayload, webhookUrl, sendPush, branches } from '../tools/discord-push.mjs';
 
 const sha = 'a'.repeat(40);
 const event = (overrides = {}) => ({ repository: { full_name: 'Clawdews/CLAW' }, ref: 'refs/heads/main',
   after: sha, deleted: false, head_commit: { id: sha, message: 'Tidy setup instructions\n\nLong body' }, ...overrides });
 const webhook = 'https://discord.com/api/' + 'webhooks/' + '1'.repeat(19) + '/' + 'example'.repeat(10);
+
+function runCLI(args = [], data = event(), extraEnv = {}) {
+  const folder = mkdtempSync(join(tmpdir(), 'claw-notifier-test-'));
+  const eventPath = join(folder, 'push.json');
+  try {
+    writeFileSync(eventPath, JSON.stringify(data));
+    return spawnSync(process.execPath, [fileURLToPath(new URL('../tools/discord-push.mjs', import.meta.url)), ...args], {
+      encoding: 'utf8', env: { ...process.env, GITHUB_EVENT_NAME: 'push', GITHUB_REPOSITORY: 'Clawdews/CLAW',
+        GITHUB_EVENT_PATH: eventPath, DISCORD_UPDATES_WEBHOOK: '', ...extraEnv },
+    });
+  } finally {
+    if (existsSync(eventPath)) unlinkSync(eventPath);
+    rmdirSync(folder);
+  }
+}
+
+test('dry run needs no secret and previews only one public line', () => {
+  const result = runCLI(['--dry-run']);
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout.trim(), pushPayload(event(), 'Clawdews/CLAW').content);
+});
+test('unconnected workflow warns instead of claiming delivery', () => {
+  const result = runCLI();
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /::warning::Discord updates are not connected/);
+  assert.ok(!result.stdout.includes('update sent'));
+});
+test('CLI rejects other events and arguments without exposing configuration', () => {
+  for (const [args, extraEnv] of [[[], { GITHUB_EVENT_NAME: 'pull_request' }], [['--invalid'], {}]]) {
+    const result = runCLI(args, event(), { DISCORD_UPDATES_WEBHOOK: webhook, ...extraEnv });
+    assert.equal(result.status, 1);
+    assert.ok(!result.stderr.includes(webhook));
+  }
+});
 
 test('one short line, one commit link, no pings or embeds', () => {
   const payload = pushPayload(event(), 'Clawdews/CLAW');
