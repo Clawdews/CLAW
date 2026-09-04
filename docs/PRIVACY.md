@@ -21,6 +21,8 @@ The controller does not need your Roblox password or session cookie. The host ne
 
 ## Before sharing a screenshot or report
 
+For the shared beta, prefer the [short support report](CONTROL-SETUP.md#a-report-you-can-share). It leaves out identities, keys and raw errors without uploading anything.
+
 1. Hide keys, webhook URLs and pairing snippets completely.
 2. Remove account IDs, character names and server details you do not want others to see.
 3. Share the error and what you were doing, not your entire workspace or configuration.

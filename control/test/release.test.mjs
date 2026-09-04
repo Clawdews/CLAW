@@ -22,3 +22,9 @@ test('release version consistency fails instead of shipping mismatched client, W
     assert.throws(() => checkVersions(path => path === changed ? read(path).replaceAll(version, '0.0.0-old') : read(path)), /version mismatch/);
   }
 });
+test('published clients carry the same source fingerprint as the manifest', () => {
+  const read = path => readFileSync(new URL('../../' + path, import.meta.url), 'utf8');
+  const manifest = JSON.parse(read('dist/control-beta.json'));
+  assert.match(manifest.build, /^[a-f0-9]{12}$/);
+  for (const file of ['dist/control-beta.lua', 'dist/launcher-beta.lua']) assert.ok(read(file).includes(`local BUILD_ID = "${manifest.build}"`));
+});

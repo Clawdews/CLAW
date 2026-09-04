@@ -639,6 +639,7 @@ return Catalog
 }
 -- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
+local BUILD_ID = "7bc5f201848a"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
@@ -925,6 +926,46 @@ function api:report()
 	return { version = Auto.VERSION, status = auto.status, accountId = accountId, current = current(),
 		join = core:report(), attempt = auto.attempt, connected = socket ~= nil, connectionProblem = networkProblem,
 		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards, complete = menuCatalog.complete } }
+end
+function api:supportReport()
+	-- Share fixed states, never copy free-form errors, tickets or profile fields.
+	local nextSteps = {
+		CONNECTING = "Wait for the cloud connection.", RECONNECTING = "Check your connection and leave the loader running.",
+		AUTH_FAILED = "Check the account's private pairing; see Recover pairing in the setup guide.",
+		MAIN = "Keep the main online in the world.", PAUSED = "Enable follow in Discord when ready.",
+		WAITING_MAIN = "Keep the main online in the world and check /claw status privately.",
+		WAITING_MAIN_PRESENCE = "Wait for the main to appear; arrival is not confirmed.",
+		WAITING_MENU = "Return this alt to character selection.",
+		WAITING_SLOT_SCAN = "Leave character selection open until its cards can be read.",
+		WAITING_SLOT_SYNC = "Wait for character cards to sync, then check slot approval in Discord.",
+		NEEDS_SLOT = "Choose and approve a character in Discord.", NO_APPROVED_SLOT = "Approve a character in Discord.",
+		NO_COMPATIBLE_SLOT = "Approve a character in the main's region.",
+		CHOOSE_PREFERRED_SLOT = "Choose a preferred character in Discord.",
+		UNSUPPORTED_REGION = "This location is not supported for following.",
+		WAITING_TARGET_SETTLE = "Wait for the main destination to settle.",
+		RETURN_MENU = "Wait for the normal return-to-menu flow.", WAIT_SLOT = "Wait for character selection to finish.",
+		JOINING = "Wait for arrival verification; do not send another join.",
+		REQUESTED = "Wait for arrival verification; do not send another join.",
+		TRAVELLING = "Wait for arrival verification; do not send another join.",
+		VERIFIED = "Arrival was checked by this client.", WITH_MAIN = "The client reports it is already with the main.",
+		ATTENTION = "Read /claw status privately and fix its reason before retrying.",
+		STOPPED = "Start the public loader again when ready.", UNKNOWN = "Read /claw status privately for more information.",
+	}
+	local code = stopped and "STOPPED" or (type(auto.status) == "string" and auto.status:match("^([A-Z_]+)"))
+	if not nextSteps[code] then code = "UNKNOWN" end
+	local joinStates = { IDLE = true, SLOT_READY = true, REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true,
+		VERIFIED = true, STALE = true, FAILED = true, TIMED_OUT = true, WRONG_DESTINATION = true, CANCELLED = true }
+	local menu = "not-in-menu"
+	if game.PlaceId == Core.LOBBY_PLACE_ID then
+		menu = not menuCatalog and "not-read" or (os.time() - menuCatalog.observedAt > 20 and "stale"
+			or (menuCatalog.complete and "complete" or "incomplete"))
+	end
+	return table.concat({ "CLAW SUPPORT 1", "release=" .. Auto.VERSION, "build=" .. BUILD_ID,
+		"client=" .. (stopped and "stopped" or "running"),
+		"connection=" .. (socket and (auto.profile and "ready" or "waiting-profile") or "offline"),
+		"status=" .. code, "join=" .. (joinStates[core.state] and core.state or "UNKNOWN"), "menu=" .. menu,
+		"storage=" .. (auto.storageBlocked == nil and "not-tested" or (auto.storageBlocked and "unavailable" or "ready")),
+		"next=" .. nextSteps[code] }, "\n")
 end
 env.CLAW_CONTROL = api
 if env.CLAW_RELAY then warn("[CLAW CONTROL] Disable competing relay auto-start on this account during join testing; no other script was changed.") end

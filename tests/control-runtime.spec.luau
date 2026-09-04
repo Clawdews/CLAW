@@ -29,7 +29,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		options = options or {}
 		if pairedLauncher then options.owner = options.owner or "123456789012345678" end
 		local f = { now = 2000000000, clock = 0, files = {}, memory = {}, values = {}, encoded = 0,
-			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, hasMain = false, authRequests = 0, encodeFailures = 0 }
+			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, logs = {}, hasMain = false, authRequests = 0, encodeFailures = 0 }
 		f.cloudMenu = options.cloudMenu
 		f.env = { CLAW_CONTROL_CONFIG = { Endpoint = "https://claw-test.example", Key = string.rep("a", 64),
 			AllowMenuReturn = options.menu == true, OwnerId = options.owner } }
@@ -127,6 +127,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 			writefile = function(path, raw) assert(not options.storageFail); f.files[path] = raw end,
 			readfile = function(path) return assert(f.files[path]) end,
 			warn = function() end,
+			print = function(message) f.logs[#f.logs + 1] = message end,
 		}, { __index = getfenv() })
 		runtime.loadstring = function(source, name)
 			local chunk, failure = loadstring(source, name)
@@ -143,6 +144,44 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 	end
 	local passed = 0
 	local function test(name, fn) fn(); passed += 1; print("PASS runtime " .. name) end
+	test("support report omits identities and has no file, network or game side effects", function()
+		local f = boot({ owner = "123456789012345678" }); f:advance(3)
+		assert(type(f.api.supportReport) == "function", "Missing private-by-default support report")
+		local files, memory = clone(f.files), clone(f.memory)
+		local packets, requests, encoded, logs = #f.packets, f.authRequests, f.encoded, #f.logs
+		local report = f.api:supportReport()
+		assert(type(report) == "string" and #report < 1000 and report:find("CLAW SUPPORT 1", 1, true))
+		assert(report:find("status=REQUESTED", 1, true) and report:find("connection=ready", 1, true))
+		local build = report:match("build=([%w]+)"); assert(build == "source" or (#build == 12 and build:match("^[a-f0-9]+$")))
+		for _, private in ipairs({ string.rep("a", 64), "123456789012345678", "claw-test.example", "main-job", "origin-job", "Test Character", "revision-1" }) do
+			assert(not report:find(private, 1, true), "Support report included private data")
+		end
+		assert(f.api:supportReport() == report and packets == #f.packets and requests == f.authRequests and encoded == f.encoded and logs == #f.logs)
+		for path, raw in pairs(f.files) do assert(files[path] == raw) end
+		for path, raw in pairs(files) do assert(f.files[path] == raw) end
+		for path, raw in pairs(f.memory) do assert(memory[path] == raw) end
+		assert(f.picks == 1 and f.joins == 1 and f.menus == 0 and f.confirms == 0)
+	end)
+	test("support report never copies free-form failure details", function()
+		local f = boot(); f:advance(3)
+		local private = "PRIVATE_" .. string.rep("b", 64) .. "\nsecret-server"
+		local attempt = f.api:report().attempt; attempt.phase = "HOLD"; attempt.reason = private
+		f:advance(1); assert(f.api:report().status:find(private, 1, true))
+		local report = f.api:supportReport()
+		assert(report:find("status=ATTENTION", 1, true) and not report:find(private, 1, true) and not report:find("secret-server", 1, true))
+		assert(not report:find(string.rep("b", 64), 1, true))
+	end)
+	test("support report explains pairing and menu waits without claiming arrival", function()
+		for _, case in ipairs({ { options = { badAuth = true }, status = "AUTH_FAILED", next = "pairing" },
+			{ options = { noMenu = true }, status = "WAITING_SLOT_SCAN", next = "character selection" },
+			{ options = { world = true }, status = "WAITING_MENU", next = "character selection" } }) do
+			local f = boot(case.options); f:advance(3); local report = f.api:supportReport()
+			assert(report:find("status=" .. case.status, 1, true) and report:find("next=", 1, true) and report:find(case.next, 1, true))
+			assert(not report:find("VERIFIED", 1, true))
+			f.api:destroy(); report = f.api:supportReport()
+			assert(report:find("client=stopped", 1, true) and report:find("connection=offline", 1, true))
+		end
+	end)
 	test("session encode errors remain private and reconnect can recover", function()
 		local options = { requestEncodeFail = true }
 		local ok, f = pcall(boot, options)

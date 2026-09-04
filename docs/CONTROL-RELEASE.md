@@ -2,6 +2,7 @@
 
 ## Client fixes
 
+- Shareable support report with a build ID and no account/server details.
 - Unreadable pairings stop setup instead of being replaced.
 - Setup checks the saved pairing again before replacing it.
 - Pairing errors hide private file and request contents.

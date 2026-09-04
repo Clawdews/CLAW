@@ -98,6 +98,19 @@ There are two small persistent files per paired account: its pairing and current
 
 Setup errors intentionally hide raw file and request contents. Send the short error message when asking for help, not the pairing snippet.
 
+## A report you can share
+
+If the beta is running but an alt is stuck, execute this on that account:
+
+```lua
+local control = getgenv().CLAW_CONTROL
+print(control and control.supportReport and control:supportReport() or "CLAW support report unavailable. Copy the short setup error, or reload the current beta.")
+```
+
+Copy only the `CLAW SUPPORT 1` block from the console. It includes the build ID, connection/slot-reading state and a next step. The build ID identifies the code, not your account. The report excludes keys, account IDs, character names, server IDs, endpoint URLs and raw failure details. It creates no file and sends nothing anywhere.
+
+The older `report()` method and saved attempt files are detailed private diagnostics; do not paste those publicly. The short report is for troubleshooting, not proof that Roblox accepted a request.
+
 ## Optional menu report
 
 Only use this for troubleshooting; normal cloud sync does not need it.
