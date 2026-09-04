@@ -9,7 +9,7 @@ const cut = (value, n) => String(value || '').slice(0, n);
 const escape = value => String(value ?? '').replace(/[\\`*_~|<>@\[\]()]/g, '\\$&');
 export const accountName = (account, member) => member?.nickname || (member?.username ? '@' + member.username : 'Account ' + account);
 const states = { OFFLINE: 'Not connected', CONNECTING: 'Connecting', RECONNECTING: 'Reconnecting', MAIN: 'Main connected',
-  PAUSED: 'Following paused', VERIFIED: 'Joined the correct server', WAITING_MAIN: 'Waiting for your main',
+  PAUSED: 'Following paused', VERIFIED: 'Joined the correct server', WITH_MAIN: 'Already with your main', WAITING_MAIN: 'Waiting for your main',
   WAITING_MENU: 'Waiting at the game menu', WAITING_SLOT_SCAN: 'Reading character cards', WAITING_SLOT_SYNC: 'Syncing character permissions',
   NO_APPROVED_SLOT: 'Choose an allowed character', NO_COMPATIBLE_SLOT: 'No allowed character in this region',
   CHOOSE_PREFERRED_SLOT: 'Choose a preferred character', JOINING: 'Joining your main', TELEPORTING: 'Joining your main' };
@@ -17,8 +17,8 @@ export function accountStatus(connection, at) {
   const live = connection && connection.seen <= at && at - connection.seen <= FRESH_SECONDS;
   const state = live ? connection.presence?.state || 'CONNECTING' : 'OFFLINE';
   return { state, text: states[state] || cut(state.replaceAll('_', ' ').toLowerCase(), 60),
-    where: live ? (connection.presence?.placeId === LOBBY ? 'Character selection' : regionName(regionForPlace(connection.presence?.placeId))) : 'Open Roblox and run the public loader.',
-    advice: nextStep(state) };
+    where: live ? (connection.presence?.placeId === LOBBY ? 'Character selection' : regionName(regionForPlace(connection.presence?.placeId))) : '',
+    advice: state === 'OFFLINE' ? 'Open Roblox with your executor and run the public loader.' : nextStep(state) };
 }
 export const cardStamp = card => JSON.stringify(card ? [card.slot, card.characterName, card.level, card.race, card.region, card.location, card.complete, card.confirmed] : null);
 export function slotChoices(member, filter) {
@@ -72,14 +72,15 @@ export function renderPanel(config, connections, view, at, batch = null) {
     view.page = Math.min(view.page || 0, pages - 1);
     const shown = entries.slice(view.page * 5, view.page * 5 + 5);
     const card = view.screen === 'detail' && member.slots?.[view.slot];
-    title(escape(accountName(view.account, member)) + ' · Characters', `Page ${view.page + 1}/${pages} · ${entries.length} characters\nApprovals allow automatic selection; they do not make an unsupported region joinable.`);
+    title(escape(accountName(view.account, member)) + ' · Characters', `Page ${view.page + 1}/${pages} · ${entries.length} characters\nChoose which characters this account may use.`);
     const cardEmbed = s => {
       const approved = member.approvedSlots?.[s.slot] === true;
       const preferred = member.preferredSlots?.[s.region] === s.slot;
       const ready = selectable(s, at);
       return { title: `Slot ${escape(s.slot)} · ${escape(s.characterName || 'Unnamed character')}`, color: approved ? 0x48a879 : 0x747780,
         description: `**Power ${s.level ?? '?'} · ${escape(s.race || 'Race unknown')}**\n${[s.oath, s.origin].filter(Boolean).map(escape).join(' · ') || 'Origin not recorded'}\n${escape(regionName(s.region || s.location))}\n`
-          + `${approved ? 'Allowed' : 'Not allowed'}${preferred ? ' · Preferred' : ''} · ${ready ? 'Recently observed' : 'Needs a fresh menu scan'}` };
+          + `${approved ? 'Allowed' : 'Not allowed'}${preferred ? ' · Preferred' : ''} · ${ready ? 'Up to date' : 'Reopen character selection to refresh'}`
+          + (['EastLuminant', 'EtreanLuminant'].includes(s.region) ? '' : '\nJoining not supported here') };
     };
     if (card) {
       const item = cardEmbed(card);
@@ -89,10 +90,12 @@ export function renderPanel(config, connections, view, at, batch = null) {
       const supported = ['EastLuminant', 'EtreanLuminant'].includes(card.region);
       row(button('allow', approved ? 'Disable character' : 'Allow character', { kind: 'policy', operation: 'allow', enabled: !approved }, !approved && !selectable(card, at), approved ? 4 : 3),
         button('prefer', 'Prefer in this region', { kind: 'policy', operation: 'prefer' }, !approved || !supported || !selectable(card, at) || member.preferredSlots?.[card.region] === card.slot),
-        button('back', 'Back to characters', { kind: 'screen', screen: 'slots' }), button('home', 'Accounts', { kind: 'home' }));
+        button('refresh', 'Refresh', { kind: 'refresh' }), button('back', 'Back to characters', { kind: 'screen', screen: 'slots' }), button('home', 'Accounts', { kind: 'home' }));
     } else {
       embeds.push(...shown.map(cardEmbed));
-      if (!shown.length) embeds[0].description += '\nNo cards here yet. Leave this account at character selection with the public loader running.';
+      if (!shown.length) embeds[0].description += Object.keys(member.slots || {}).length
+        ? '\nNo characters in this region. Try All regions.'
+        : '\nNo cards yet. Leave this account at character selection with the public loader running.';
       select('filter', 'Filter by region', [{ label: 'All regions', value: 'all' }, { label: 'Eastern Luminant', value: 'EastLuminant' },
         { label: 'Etrean Luminant', value: 'EtreanLuminant' }, { label: 'Other regions', value: 'other' }].map(o => ({ ...o, default: o.value === (view.filter || 'all') })), { kind: 'filter' });
       select('slot', 'Choose a character for details and permissions', shown.map(s => ({ label: cut(`${s.slot} · ${s.characterName || 'Unnamed character'}`, 100), value: s.slot,
@@ -108,8 +111,11 @@ export function renderPanel(config, connections, view, at, batch = null) {
     title('CLAW · Your accounts', `**Following ${config.follow ? 'ON' : 'OFF'}** · Main: ${escape(main)}\nPage ${view.page + 1}/${pages} · Choose an account below to see its characters.${member ? '\nSelected: **' + escape(accountName(view.account, member)) + '**' : ''}`);
     for (const [account, m] of shown) {
       const status = accountStatus(connections[account], at);
+      const autoReturn = typeof m.allowMenuReturn === 'boolean' ? (m.allowMenuReturn ? 'ON' : 'OFF') : 'local setting';
       embeds.push({ title: `${account === config.mainId ? 'MAIN' : 'ALT'} · ${escape(accountName(account, m))}`, color: status.state === 'OFFLINE' ? 0x747780 : 0x48a879,
-        description: `**${escape(status.text)}**\n${escape(status.where)}\n${Object.values(m.approvedSlots || {}).filter(Boolean).length} allowed / ${Object.keys(m.slots || {}).length} characters · Auto-return ${m.allowMenuReturn === true ? 'ON' : 'OFF'}${status.advice ? '\n' + status.advice : ''}` });
+        description: [`**${escape(status.text)}**`, escape(status.where),
+          `${Object.values(m.approvedSlots || {}).filter(Boolean).length} allowed / ${Object.keys(m.slots || {}).length} characters · Auto-return: ${autoReturn}`,
+          status.advice].filter(Boolean).join('\n') });
     }
     select('account', 'Choose an account', shown.map(([account, m]) => ({ label: cut(accountName(account, m), 100), value: account, default: account === view.account,
       description: account === config.mainId ? 'Main account' : 'Alt account' })), { kind: 'account' });
@@ -118,7 +124,7 @@ export function renderPanel(config, connections, view, at, batch = null) {
       button('setup', 'Setup', { kind: 'screen', screen: 'setup' }));
     if (member) row(button('characters', 'Characters', { kind: 'screen', screen: 'slots' }), button('main', 'Use as main', { kind: 'main' }, view.account === config.mainId));
   }
-  embeds[0].footer = { text: 'Private to you · Status reported by paired clients · Refresh to update' };
+  embeds[0].footer = { text: 'Only you can see this · Updates come from your running scripts' };
   return { data: { content: view.notice || '', embeds, components, allowed_mentions: { parse: [] } }, offers };
 }
 

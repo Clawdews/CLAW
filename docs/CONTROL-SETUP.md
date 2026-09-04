@@ -1,174 +1,151 @@
 # Set up your accounts
 
-**Closed beta:** use this guide only after the host gives you access. Do not replace a working older controller with this one yet.
+CLAW is in closed beta. Ask the host for access first. You don't need your own bot or website.
 
-You pair each account once, choose which characters it may use, then tell your alts to follow your main. You do not need your own website, Cloudflare account or bot token.
+Already paired? Open `/claw panel` in Discord. Your saved accounts are still there.
 
-The **public loader** is safe to share. The **pairing snippet** contains your account's private key: treat it like a password. [What to keep private](PRIVACY.md).
+## 1. Pair once
 
-## Already paired? Start here
+### One account
 
-Type **`/claw panel`** in Discord. Only you can see it.
+1. In Discord, use `/claw enroll account:<username>`. Enter the Roblox username, not the display name or the brackets.
+2. Run the private snippet from the reply on that Roblox account.
+3. Do the same for your main and each alt.
 
-1. Choose an account from the dropdown.
-2. Click **Characters**. Filter by region or use **Next** to see more.
-3. Choose a character to see its details. **Allow character** and **Prefer in this region** both ask you to confirm.
-4. Back on **Accounts**, you can choose your main, enable following, or pause it.
+That snippet contains a private key. **Don't share it.** The public loader below has no keys.
 
-You do not need to pair working accounts again. Keep the same public loader below. The panel shows a snapshot: click **Refresh** for an update. Controls expire after 15 minutes; open `/claw panel` again if needed.
+### Several alts on one device
 
-### Adding several alts
+1. Open `/claw panel` → **Setup → Start alt setup**.
+2. Run its private snippet once on one account.
+3. Run the public loader on your other accounts.
+4. In Discord, click **Refresh**, then choose a pairing request.
+5. Match its check code with the code in that account's Roblox console, then confirm.
 
-1. In `/claw panel`, click **Setup → Start alt setup**.
-2. Run the private snippet **once** on one account in your executor's shared workspace.
-3. Start your other accounts with the same public loader (or run it on accounts already open).
-4. In Discord, click **Refresh**. Choose each request and compare its eight-character check code with that account's Roblox console. Confirm only your own matching requests.
-5. Pairing finishes on the next check, usually within 30 seconds. Then choose which characters each alt may use.
+Pairing finishes within about 30 seconds. Only approve matching requests from your own accounts. If a request looks unfamiliar, close setup and start again.
 
-The setup window lasts 10 minutes. It does not change existing pairings, turn following on, or allow every character. Each account gets its own private key. A username alone is not proof that a request came from your device—check the code too. If an unfamiliar request appears, close setup and start a fresh window.
+The window lasts 10 minutes. This works across accounts sharing the same executor workspace; another device or workspace needs the snippet there too. Existing pairings are left alone. New accounts still need character approval.
 
-Accounts must use the same executor workspace for one setup snippet to reach them all. Another device or workspace needs the snippet there too. Roblox must be open and the executor running; Discord cannot launch them. If the window expires, open a new one and rerun the same public loader on unfinished accounts. Single-account enrollment below still works.
+If time runs out, start a new setup window and rerun the public loader on the unfinished accounts.
 
-## 1. Pair your accounts
+## 2. Use one startup script
 
-1. Install the host's CLAW Discord app, then run `/claw panel`. In closed beta, the host must enable your Discord User ID first.
-2. Run `/claw enroll account:<username>` for your main and each alt. Enter the actual Roblox username, not the display name; do not type the brackets. Numeric UserIds still work. All `account` fields accept either.
-3. On each matching Roblox account, execute its private pairing snippet from Discord once. It checks the local account, verifies the key and saves it to that executor's workspace. Never share this snippet.
-4. Put the following **public** loader in autoexec. It reads only the current account's pairing file. Unlike the enrollment snippet, this line is safe to share:
+Put this public loader in autoexec:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/launcher-beta.lua"))()
 ```
 
-Username lookup uses Roblox’s public API. Capitalization and a leading `@` are fine. Use the current username; former names and display names are not selected. If a username consists only of digits, prefix it with `@` so it is not treated as an ID. If lookup fails, nothing is changed; retry or use the numeric UserId. Replies show the resolved username and ID so you can check the account. Existing pairings do not need to be redone.
+For Volt, save [control-autoexec.lua](../control-autoexec.lua) in its `autoexec` folder as `CLAW Control.luau`. Use that file **or** the line above, not both. One copy serves every account using that Volt installation.
 
-The private pairing snippet already starts the client. Later, autoexec uses just the public line. Do not run the beta and legacy control loaders together. Keep unrelated working scripts intact; disable competing automatic slot selection/server-hopping during the first test.
+Don't run the older Discord controller alongside the beta. During your first test, turn off other scripts that automatically select characters or hop servers. Your loot notifier can stay as it is.
 
-### One startup file in Volt
+## 3. Choose the characters
 
-Save [control-autoexec.lua](../control-autoexec.lua) in Volt's `autoexec` folder as `CLAW Control.luau`. Use either this file or the public line above, not both. This file contains no private keys. It waits for the local player, retries a failed download up to three times, and starts only in the character menu, Eastern or Etrean. It does not restart an already-running controller.
+1. Leave an alt at character selection for about 15 seconds.
+2. Open `/claw panel`, choose the account, then click **Characters**.
+3. Find a character in your main's region. Use the region filter or **Next** if needed.
+4. Open its card, click **Allow character**, and confirm.
+5. If you allow several characters in the same region, use **Prefer in this region** to choose one.
 
-Every instance using that same Volt installation and workspace uses this one file. You do **not** need one copy per alt. If you use another computer or a separate executor workspace, set it up there too; keys do not download from Discord automatically. Keep existing pairings private rather than posting them with the loader.
+Only Eastern and Etrean are supported for joining. Characters elsewhere still appear in the list, but CLAW cannot join with them there.
 
-For **new** alts, use the setup window above or `/claw enroll account:<username>`. They then use the existing shared startup file on later joins. Choose the characters they may use in Discord; the loader never approves every character for you.
+Approvals stay saved. Replacing a character, resetting its level or removing its slot clears that character's old permission. Reopening character selection refreshes old cards.
 
-### What happens next time?
+## 4. Follow your main
 
-1. Open your main and alts with Volt attached. Autoexec starts CLAW; you paste nothing.
-2. Enter the world on your selected main. Leave the alts at character selection.
-3. If Follow is still on, the alts use their approved compatible characters to join the main.
+1. On **Accounts**, choose your main and click **Use as main**.
+2. Enter the world on the main. Leave the alt at character selection.
+3. Click **Enable following** and confirm.
 
-The same process applies after a server change. Pairing files stay on your device; your selected main, Follow setting, approvals and preferences stay with your private Discord group. These are saved settings, not instructions you must repeat every session. The loader downloads the current beta at startup; it does not hot-reload an already-running client.
+The alt should select its allowed character and join the main's exact server. Changing your main pauses following until you enable it again.
 
-An alt already in another world waits for the menu unless you opted that account into `/claw auto-return`. This remains off by default. Closing Roblox still closes the client; this script does not start Roblox or attach Volt for you.
+**Joined the correct server** means the running script checked the account, character, server and main's presence. Discord displays that report; it isn't watching Roblox itself.
 
-## 2. Choose which characters the alts may use
+## Next time you play
 
-Leave the paired alt at character selection for about 15 seconds, then open **Characters** in `/claw panel`, or use `/claw slots account:...`. Cards show the slot letter, name, power, race, oath/origin, region and permission. Choose a card for playtime, last played and the last scan time. Use **Next** or the region filter to find another character.
+Open Roblox with Volt attached. Autoexec runs the same loader; you don't pair again or paste another script.
 
-Nothing is selected just because it appeared in the list. **Allow** means “this alt may use this character.” **Prefer** means “use this one when more than one allowed character fits.” Choose the region shown by the command's menu.
+Your keys stay in the executor workspace. Your main, Follow setting and character permissions stay saved with your Discord account. The latest script downloads at startup; it doesn't replace a copy that's already running.
 
-```text
-/claw allow-slot account:<alt username> slot:<observed slot> enabled:true
-/claw prefer-slot account:<alt username> region:<region> slot:<observed slot>
-```
+An alt already in another world waits for character selection. To let it return to the menu automatically, use `/claw auto-return account:<username> enabled:true`. It starts off and uses the normal game menu flow, not a forced respawn. Older local overrides show as **local setting** until you choose ON or OFF in Discord.
 
-The preference is only necessary when several approved characters share a region. Approvals persist, but a changed character name, observed level reset or removed slot clears the old permission. Cloud observations expire after 24 hours; reopening the menu refreshes them. Selection requires a complete current local scan and matching cloud character details, then checks the region returned by the game before requesting a join.
+Roblox and your executor must be running. Discord can't open them for you.
 
-Only Eastern and Etrean are mapped. Depths, layers and other places remain visible in the catalog but are not join destinations. A menu observation is labelled as such, not as an in-world verification. Syncing a card never approves it automatically.
+## Useful controls
 
-## 3. Start following
-
-Keep the main in the world and return one alt to character selection:
-
-```text
-/claw main account:<main username>
-/claw follow enabled:true
-/claw status
-```
-
-Changing the main pauses following until you enable it again. A fresh main destination, an approved compatible character and a working save mechanism are required before an alt acts.
-
-For a normal later session, let autoexec start the paired clients and check `/claw status`. You do not need to enroll them again. To stop new follow requests, use `/claw follow enabled:false`.
-
-`VERIFIED` means the paired client checked the expected account, character, experience, place, exact server and main's presence after joining. `WITH_MAIN` means it was already there. Discord relays those client reports; it does not independently observe Roblox.
-
-Automatic exits are off by default. After a successful menu test, opt in from Discord with `/claw auto-return account:<alt username> enabled:true`. Use `enabled:false` to switch it off, including pending menu confirmations once the client receives the update. It requests the normal return-to-menu flow; it does not bypass combat restrictions or force a respawn. Older explicit local settings remain effective only until a cloud setting overrides them. You no longer need to edit the private pairing file for this option.
-
-## Everyday controls
-
-| Command | What it does |
+| Control | What it does |
 | --- | --- |
-| `/claw panel` | Private account selector, character cards, permissions and setup |
-| `/claw status` | Show your accounts, main and follow state |
-| `/claw status page:2` | See additional accounts without a truncated report |
-| `/claw nickname account:... label:...` | Give an account a readable label; its numeric identity stays visible |
-| `/claw auto-return account:... enabled:true` | Opt an account into normal menu return; default off |
-| `/claw follow enabled:false` | Stop new follow requests once received |
-| `/claw retry account:...` | Allow one new attempt after a stopped attempt |
-| `/claw allow-slot ... enabled:false` | Remove permission to use a character |
-| `/claw rotate account:...` | Replace a lost key; disconnects the old client |
-| `/claw revoke account:...` | Remove one account's stored enrollment and permission |
+| `/claw panel` | Accounts, characters, following and setup |
+| **Refresh** | Update the current card or list |
+| `/claw status` | Show why an account is waiting |
+| `/claw nickname account:... label:...` | Give an account a short label |
+| `/claw follow enabled:false` | Pause following |
+| `/claw auto-return account:... enabled:false` | Turn automatic menu return off |
+| `/claw retry account:...` | Try once more after fixing a stopped attempt |
+| `/claw rotate account:...` | Replace a lost or leaked pairing key |
+| `/claw revoke account:...` | Remove an account from your group |
 
-Pause/revocation cannot undo a teleport Roblox already accepted. If a key leaks, revoke or rotate it in Discord; deleting its local file alone does not revoke it.
+Buttons expire after 15 minutes. Open `/claw panel` again when that happens.
+
+All account fields accept usernames or numeric IDs. Capitalization and a leading `@` are fine. For an all-number username, include `@`. Use current usernames, not display names or former names.
+
+Pausing or revoking stops new requests once received. It can't undo a teleport Roblox has already accepted.
 
 ## If an alt waits
 
-| Status | Next step |
+| Status | What to do |
 | --- | --- |
-| `AUTH_FAILED` | Check the actual account and its private pairing; use rotate if the key is lost |
-| `WAITING_MAIN` | Keep the main loaded and connected; destinations expire after 35 seconds |
-| `WAITING_MENU` | Return the alt to character selection; no Discord retry is needed just for this |
-| `WAITING_SLOT_SCAN` | Leave character selection open until the complete list is readable |
-| `WAITING_SLOT_SYNC` | Wait for the current cards to sync, then check approval in Discord |
-| `NO_COMPATIBLE_SLOT` | Refresh the menu and approve a character in the main's region |
-| `CHOOSE_PREFERRED_SLOT` | Choose which of the matching approved characters to use |
-| `REGION_MISMATCH` | The selection response disagreed; refresh the character's location before retrying |
-| `ATTENTION` | Read the saved reason; fix it before `/claw retry` |
-| `OFFLINE` | Check Roblox, executor, loader and network; Discord cannot launch a closed process |
+| `OFFLINE` | Check Roblox, Volt and the loader are running |
+| `WAITING_MAIN` | Keep your selected main in-world with CLAW running |
+| `WAITING_MENU` | Return the alt to character selection |
+| `WAITING_SLOT_SCAN` | Let the character cards finish loading |
+| `WAITING_SLOT_SYNC` | Wait briefly, then refresh the Discord panel |
+| `NO_APPROVED_SLOT` / `NO_COMPATIBLE_SLOT` | Allow a character in your main's region |
+| `CHOOSE_PREFERRED_SLOT` | Pick a preferred character for that region |
+| `REGION_MISMATCH` | Reopen character selection and check its location |
+| `AUTH_FAILED` | Check the account pairing; replace a lost key with Rotate |
+| `ATTENTION` | Read the reason, fix it, then use Retry |
 
-Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.json`, separate from pairing keys. Share a status report privately, not the contents of `CLAW_PAIRINGS`.
+Reloading during a join keeps checking that attempt. It doesn't force a new one. Use Retry after fixing the reported problem.
 
-There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
+### Pairing or save errors
 
-Batch setup adds one shared `CLAW_PAIRINGS/batch.json` file and, while waiting, one `pending-<RobloxUserId>.json` per account. Both are private. The pending file is removed after a verified pairing save if the executor supports deletion; otherwise it is reused, not multiplied. The shared setup code stops working after its 10-minute window even if the file remains on disk.
-
-**Storage unavailable:** the client could not prepare or save its current attempt. New actions stop. Check executor JSON/file support and storage access, then use `/claw retry account:...` after fixing the problem. Do not delete your pairing or attempt files to force a retry. You can still stop the client while saving is unavailable.
-
-## Recover pairing
-
-- **Cannot check/read pairing, or file support required:** fix executor file access first, then rerun the loader. A read failure is not the same as an unpaired account. Do not delete or rotate a working pairing for this error. Volt's [file functions](https://docs.voltbz.net/docs/filesystem) must be available.
-- **Pairing file changed during setup:** another setup changed it while authentication was running. Let that setup finish, then rerun only the snippet for this account. The conflicting save is stopped.
-- **Key rejected or lost:** use `/claw rotate account:...`, then run the new private snippet on that same Roblox account. A valid existing pairing file is updated for you.
-- **Invalid local pairing file:** stop the loader on that account. Get a new private snippet with `/claw rotate`, move only its damaged `CLAW_PAIRINGS/<RobloxUserId>.json` file aside privately, then run the snippet. Leave other accounts' files alone. Never upload the damaged file; it may still contain a key.
-- **Could not save and verify pairing:** check executor file access, then rerun the same private snippet. A write may have happened even though verification failed. If it now reports an invalid file, use the recovery step above.
-- **Relay unavailable:** wait and retry. Do not rotate keys just because the network is down.
-
-Setup errors intentionally hide raw file and request contents. Send the short error message when asking for help, not the pairing snippet.
+- **Can't check or read pairing:** fix executor file access, then rerun. Don't delete a working pairing or rotate its key for a read error.
+- **Pairing changed during setup:** let the other setup finish, then rerun only this account's snippet.
+- **Key lost or rejected:** use `/claw rotate`, then run its new private snippet on the matching account.
+- **Invalid pairing file:** stop this account's loader. Use Rotate, move only its damaged `CLAW_PAIRINGS/<RobloxUserId>.json` file aside privately, then run the new snippet. Leave other accounts' files alone.
+- **Can't save or verify pairing:** check file access and rerun the same snippet. If the file is now invalid, use the step above.
+- **Storage unavailable:** fix executor file access, then use Retry. Don't delete pairing or attempt files to force it.
+- **Relay unavailable:** wait and retry. A network outage doesn't mean your key needs replacing.
 
 ## A report you can share
 
-If the beta is running but an alt is stuck, execute this on that account:
+If the loader is running but an account is stuck, execute this on that account:
 
 ```lua
 local control = getgenv().CLAW_CONTROL
 print(control and control.supportReport and control:supportReport() or "CLAW support report unavailable. Copy the short setup error, or reload the current beta.")
 ```
 
-Copy only the `CLAW SUPPORT 1` block from the console. It includes the build ID, connection/slot-reading state and a next step. The build ID identifies the code, not your account. The report excludes keys, account IDs, character names, server IDs, endpoint URLs and raw failure details. It creates no file and sends nothing anywhere.
+Copy only the `CLAW SUPPORT 1` block. It leaves out keys, account names/IDs, characters, server IDs, service addresses and raw errors. It creates no file and sends nothing.
 
-The older `report()` method and saved attempt files are detailed private diagnostics; do not paste those publicly. The short report is for troubleshooting, not proof that Roblox accepted a request.
+If setup never finishes, send the short error message instead. Don't post your pairing snippet, full console log, old `report()` output or saved account files.
 
-If Roblox or the loader restarts during a join, the client resumes checking that existing request when a valid saved record is available. It does not select another character just because the separate follow state is incomplete. A timed-out request waits for `/claw retry`; repeated reloads are not a retry button.
+## Files on your device
 
-## Optional menu report
+CLAW keeps two small files per paired account: its key and current join state. It updates those files instead of making new recordings.
 
-Only use this for troubleshooting; normal cloud sync does not need it.
+Group setup adds one shared `CLAW_PAIRINGS/batch.json` and a temporary `pending-<RobloxUserId>.json` per waiting account. The pending file is removed after pairing when the executor supports deletion; otherwise it's reused. The setup code expires even if the file stays there.
+
+Keep these files private. Never upload the whole executor workspace. [More about privacy](PRIVACY.md).
+
+### Optional menu report
+
+Only run this when troubleshooting the character list:
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/dist/slot-scan.lua"))()
 ```
 
-Run at character selection. It prints each card and overwrites one local report at `CLAW_CONTROL/menu-<UserId>.json`. It reads the slot list only: no clicks, selections, teleports or uploads.
-
-Reports include character names and locations, so review them before sharing. Missing or conflicting fields are flagged, not guessed. Loaded offscreen cards are included; the scanner does not scroll to load more. `CARDS_CAPTURED_UNCONFIRMED` describes the scan, not a verified join.
+Run it at character selection. It prints the loaded cards and overwrites one report at `CLAW_CONTROL/menu-<UserId>.json`. It doesn't scroll, select a character or join a server. The report includes character names and locations, so check it before sharing. Normal setup doesn't need it.

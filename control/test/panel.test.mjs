@@ -64,6 +64,32 @@ test('main and character views use readable regions and never call disconnected 
   assert.equal(accountStatus({ seen: now() - 36, presence: { state: 'VERIFIED' } }, now()).text, 'Not connected');
   assert.equal(accountStatus({ seen: now() + 1 }, now()).state, 'OFFLINE');
 });
+test('offline cards give one instruction and do not guess the local auto-return setting', () => {
+  const r = room();
+  const card = () => renderPanel(r.config, {}, { token: nonce(), screen: 'home', account: '11' }, now()).data.embeds[1];
+  assert.match(card().description, /Auto-return: local setting/);
+  assert.equal((card().description.match(/loader/g) || []).length, 1);
+  for (const enabled of [false, true]) {
+    r.config.members['11'].allowMenuReturn = enabled;
+    assert.ok(card().description.includes('Auto-return: ' + (enabled ? 'ON' : 'OFF')));
+  }
+});
+test('empty region filters do not tell users to rescan an existing roster', () => {
+  const r = room(), view = { token: nonce(), screen: 'slots', account: '11', filter: 'EtreanLuminant' };
+  const filtered = renderPanel(r.config, {}, view, now()).data.embeds[0].description;
+  assert.match(filtered, /No characters in this region.*All regions/);
+  assert.ok(!filtered.includes('Leave this account'));
+  r.config.members['11'].slots = {};
+  assert.match(renderPanel(r.config, {}, view, now()).data.embeds[0].description, /character selection/);
+});
+test('character details can refresh and unsupported regions are labelled on the card', () => {
+  const r = room(), member = r.config.members['11'];
+  member.slots.L.region = null; member.slots.L.location = 'The Depths';
+  const panel = renderPanel(r.config, {}, { token: nonce(), screen: 'detail', account: '11', slot: 'L' }, now());
+  assert.match(panel.data.embeds[1].description, /Joining not supported here/);
+  assert.equal(panel.offers.refresh.kind, 'refresh'); limits(panel.data);
+  assert.equal(accountStatus({ seen: now(), presence: { state: 'WITH_MAIN' } }, now()).text, 'Already with your main');
+});
 test('cross-owner, public-message, forged selection, changed and expired controls fail without mutation', async () => {
   const r = room(), p = await open(r), before = JSON.stringify(r.config);
   assert.match((await click(r, p, 'follow', null, '234567890123456789')).data.content, /expired/);

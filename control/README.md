@@ -2,7 +2,7 @@
 
 Manage your alts from Discord and have them join your main's server.
 
-Still in closed beta. Joining works with the main and alt we've tested. The new panel and alt setup need more in-game testing.
+Still in closed beta. Joining and the Discord cards have been tested with one main and alt. Group setup still needs a fresh-alt test.
 
 ## Using it
 
