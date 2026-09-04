@@ -2,7 +2,7 @@
 
 Discord selects the main; the main publishes its current server; paired alts join and verify automatically. No clipboard, chat commands, in-game panel or local HTTP service.
 
-**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Discord has accepted the interactions endpoint; the owner and server restrictions are configured. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. Server installation, slash-command registration and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
+**Status (2026-09-04):** the relay is deployed on the owner's Workers Free account. Discord has accepted the interactions endpoint; the owner and server restrictions are configured. The app is installed in the selected server, and all seven `/claw` subcommands are registered and read back from Discord. Live checks pass for health, rejection of unsigned Discord requests and invalid pairing credentials, and requiring a WebSocket upgrade. A real slash-command round trip and the first end-to-end Discord/Volt test are still pending. The underlying manual exact-server join has passed the user's live test; that does not yet validate automatic slot selection, remote delivery or returning to menu.
 
 The working alt manager, loot notifier, and `main/loader.lua` are unchanged. This lives on `codex/discord-control`.
 
