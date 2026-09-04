@@ -38,6 +38,26 @@ test('clean checkouts are scanned, not only changed files', t => {
   const r = repository(t); r.write('sample.txt', fake()); r.git('add', '.'); r.git('commit', '-qm', 'fixture');
   assert.throws(() => checkPublicFiles(r), /GitHub credential/);
 });
+test('public files allow placeholder hosts, not deployed account addresses', () => {
+  for (const account of ['example-person', 'family-name-42', 'neutral-service']) {
+    const address = 'https://control.' + account + '.workers' + '.dev/health';
+    const issue = credentialIssue('docs/setup.md', address);
+    assert.match(issue, /deployed service address/);
+    assert.ok(!issue.includes(account));
+  }
+  for (const account of ['your-account', 'your-subdomain', 'example']) {
+    assert.equal(credentialIssue('docs/setup.md', 'https://control.' + account + '.workers' + '.dev/health'), null);
+  }
+  assert.equal(credentialIssue('docs/setup.md', 'https://developers.cloudflare.com/workers/'), null);
+});
+test('removed deployment addresses remain detectable in old commits', t => {
+  const r = repository(t);
+  r.write('setup.md', 'https://control.' + 'example-person.workers' + '.dev');
+  r.git('add', '.'); r.git('commit', '-qm', 'fixture');
+  r.write('setup.md', 'Private deployment'); r.git('add', '.'); r.git('commit', '-qm', 'replace');
+  assert.equal(checkPublicFiles(r), 1);
+  assert.throws(() => checkHistory(r), /deployed service address/);
+});
 test('unsafe staged contents are caught even when the working file is clean', t => {
   const r = repository(t); r.write('sample.txt', fake()); r.git('add', '.'); r.write('sample.txt', 'safe');
   assert.throws(() => checkPublicFiles(r), /GitHub credential/);

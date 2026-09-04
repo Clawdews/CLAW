@@ -28,7 +28,7 @@
 
 ## Release status
 
-The [shared backend](https://claw-control-beta.your-account.workers.dev/health) is deployed with enrollment closed. The existing controller remains on its own service.
+The shared backend is deployed with enrollment closed. Deployment addresses stay in private configuration. The existing controller remains on its own service.
 
 Before public onboarding:
 

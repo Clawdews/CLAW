@@ -19,6 +19,9 @@ export function credentialIssue(path, text) {
   if (/_\|WARNING:-DO-NOT-SHARE-THIS\.[^\s"']{30,}/.test(text)) return 'Roblox session cookie';
   if (/\b(?:CLIENT_KEY|ACCOUNT_KEY|BOT_TOKEN|API_TOKEN|API_KEY|TOKEN|Secret|ClientKey|AccountKey|Key)["']?\s*[=:]\s*["'][A-Za-z0-9_./+=-]{24,}["']/i.test(text)) return 'hardcoded credential';
   if (/[A-Za-z]:[\\/]+Users[\\/]+(?!PUBLIC\b|USERNAME\b|YOUR_)[A-Za-z0-9._-]+[\\/]/i.test(text)) return 'personal computer path';
+  for (const match of text.matchAll(/\b(?:[a-z0-9-]+\.)*([a-z0-9-]+)\.workers\.dev\b/gi)) {
+    if (!['your-account', 'your-subdomain', 'example'].includes(match[1].toLowerCase())) return 'deployed service address; use a placeholder in public files';
+  }
   return null;
 }
 
