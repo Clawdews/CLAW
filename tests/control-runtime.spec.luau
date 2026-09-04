@@ -36,6 +36,11 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		local http = {}
 		function http:JSONEncode(value)
 			if options.requestEncodeFail and value.key then f.encodeFailures += 1; error("encoder included " .. value.key) end
+			if options.stateEncodeFail and value.version == 1 and value.revision then
+				if options.stateEncodeFail == "invalid" then return {} end
+				if options.stateEncodeFail == "oversized" then return string.rep("x", 32769) end
+				error("private state " .. string.rep("c", 64))
+			end
 			f.encoded += 1; local key = "json-" .. f.encoded; f.values[key] = clone(value); return key
 		end
 		function http:JSONDecode(key) return clone(assert(f.values[key], "invalid JSON")) end
@@ -230,6 +235,49 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		options.requestEncodeFail = false
 		f:advance(60); assert(f.authRequests == 1 and f.api:report().connected)
 		f.api:destroy()
+	end)
+	test("invalid state encoding stops actions without exposing adapter errors", function()
+		for _, failure in ipairs({ "throw", "invalid", "oversized" }) do
+			local options = { stateEncodeFail = failure }
+			local f = boot(options)
+			local ok = pcall(function() f:advance(5) end)
+			assert(ok, "State encoder failure escaped the client lifecycle")
+			assert(f.picks == 0 and f.joins == 0 and f.menus == 0)
+			assert(f.api:supportReport():find("storage=unavailable", 1, true))
+			for _, line in ipairs(f.logs) do assert(not line:find(string.rep("c", 64), 1, true)) end
+			assert(next(f.memory) == nil, "Invalid serialized state was saved")
+			for path in pairs(f.files) do assert(not path:find("CLAW_CONTROL_BETA/", 1, true)) end
+		end
+	end)
+	test("repaired state encoding waits for an explicit retry", function()
+		for _, options in ipairs({ { stateEncodeFail = "throw" }, { storageFail = true } }) do
+			local f = boot(options); f:advance(3)
+			options.stateEncodeFail = nil; options.storageFail = nil; f:advance(15)
+			assert(f.picks == 0 and f.joins == 0, "Repairing storage is not permission to retry")
+			options.retry = "retry-after-storage-repair"
+			f.sockets[#f.sockets]:Send(f.http:JSONEncode({ type = "hello" })); f:advance(3)
+			assert(f.picks == 1 and f.joins == 1, "One retry must recover the stopped selection")
+			assert(f.api:supportReport():find("storage=ready", 1, true))
+		end
+	end)
+	test("storage recovery retry cannot replace an already pending join", function()
+		local options = {}
+		local f = boot(options); f:advance(3)
+		options.stateEncodeFail = "throw"; f.sockets[#f.sockets]:Close()
+		assert(f.api:supportReport():find("storage=unavailable", 1, true))
+		options.stateEncodeFail = nil; f:advance(10)
+		options.retry = "retry-while-join-pending"
+		f.sockets[#f.sockets]:Send(f.http:JSONEncode({ type = "hello" })); f:advance(3)
+		assert(f.picks == 1 and f.joins == 1 and f.api:report().attempt.phase == "JOINING")
+	end)
+	test("failed state encoding cannot interrupt client shutdown", function()
+		local options = {}
+		local f = boot(options); f:advance(3)
+		options.stateEncodeFail = "throw"
+		local ok = pcall(function() f.api:destroy() end)
+		assert(ok, "Shutdown exposed a private state encoder error")
+		assert(f.env.CLAW_CONTROL == nil and f.sockets[#f.sockets].closed)
+		f:advance(20); assert(f.picks == 1 and f.joins == 1)
 	end)
 	test("autoexec selects saved slot and joins without clipboard or GUI", function()
 		local f = boot(); f:advance(2); assert(f.picks == 1 and f.joins == 1)

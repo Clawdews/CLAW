@@ -43,7 +43,7 @@ function Auto:setProfile(profile)
 	if profile.retry and self.retry ~= profile.retry then
 		self.retry = profile.retry
 		-- Do not abandon an already-issued join; retry is for stopped attempts only.
-		if not pending[self.adapter.joinState()] and (not self.attempt or self.attempt.phase == "HOLD" or self.attempt.phase == "DONE") then
+		if not pending[self.adapter.joinState()] and (self.storageBlocked or not self.attempt or self.attempt.phase == "HOLD" or self.attempt.phase == "DONE") then
 			self.attempt = nil
 		end
 		if not self:save() then return false end

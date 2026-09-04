@@ -2,6 +2,8 @@
 
 ## Client fixes
 
+- Failed state encoding stops new actions without exposing private error text or interrupting shutdown.
+- One explicit retry can recover a selection stopped by storage failure; an already-issued join is not resent.
 - Restarts keep watching an in-flight join even if its saved follow state is incomplete.
 - Shareable support report with a build ID and no account/server details.
 - Unreadable pairings stop setup instead of being replaced.

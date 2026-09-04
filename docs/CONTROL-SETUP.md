@@ -87,6 +87,8 @@ Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.js
 
 There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
 
+**Storage unavailable:** the client could not prepare or save its current attempt. New actions stop. Check executor JSON/file support and storage access, then use `/claw retry account:...` after fixing the problem. Do not delete your pairing or attempt files to force a retry. You can still stop the client while saving is unavailable.
+
 ## Recover pairing
 
 - **Cannot check/read pairing, or file support required:** fix executor file access first, then rerun the loader. A read failure is not the same as an unpaired account. Do not delete or rotate a working pairing for this error. Volt's [file functions](https://docs.voltbz.net/docs/filesystem) must be available.

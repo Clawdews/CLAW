@@ -66,8 +66,10 @@ coreSaved = saved and saved.core
 local storageRevision = saved and saved.revision or 0
 local function save()
 	storageRevision += 1
-	local raw = Http:JSONEncode({ version = 1, accountId = accountId, endpoint = endpoint, revision = storageRevision,
+	local encoded, raw = pcall(Http.JSONEncode, Http, { version = 1, accountId = accountId, endpoint = endpoint, revision = storageRevision,
 		ownerId = ownerId, updatedAt = os.time(), status = auto and auto.status, core = coreSaved, auto = auto and auto:serialize() or nil })
+	-- A failed encoder may include private state in its error. Never write or expose it.
+	if not encoded or type(raw) ~= "string" or #raw == 0 or #raw > 32768 then return false end
 	local memoryOK = pcall(function()
 		Teleport:SetTeleportSetting(setting, raw)
 		assert(Teleport:GetTeleportSetting(setting) == raw)
@@ -154,7 +156,10 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	end,
 	slotReady = function() return selectedSlot ~= nil and auto.attempt and selectedSlot == auto.attempt.slot and core.realm ~= nil end,
 	beginJoin = function(ticket) return core:begin(ticket) end,
-	changed = function(status) print("[CLAW CONTROL] " .. status); if auto then save() end end,
+	changed = function(status)
+		print("[CLAW CONTROL] " .. status)
+		if auto and not save() then auto.storageBlocked = true end
+	end,
 }, saved and saved.auto)
 if saved and saved.core and core:resume(saved.core) then
 	local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
