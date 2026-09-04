@@ -110,7 +110,7 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	requireRegionCheck = true,
 	chooseSlot = function(profile, placeId)
 		if game.PlaceId == Core.LOBBY_PLACE_ID then
-			if not menuCatalog or not menuCatalog.complete or os.time() - menuCatalog.observedAt > 20 then
+			if not menuCatalog or not menuCatalog.scanComplete or os.time() - menuCatalog.observedAt > 20 then
 				return nil, "WAITING_SLOT_SCAN: reading current character cards"
 			end
 			-- A reused slot letter must not inherit permission before the cloud has
@@ -300,7 +300,8 @@ end
 function api:report()
 	return { version = Auto.VERSION, status = auto.status, accountId = accountId, current = current(),
 		join = core:report(), attempt = auto.attempt, connected = socket ~= nil, connectionProblem = networkProblem,
-		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards, complete = menuCatalog.complete } }
+		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards,
+			complete = menuCatalog.complete, scanComplete = menuCatalog.scanComplete } }
 end
 function api:supportReport()
 	-- Share fixed states, never copy free-form errors, tickets or profile fields.
@@ -333,7 +334,7 @@ function api:supportReport()
 	local menu = "not-in-menu"
 	if game.PlaceId == Core.LOBBY_PLACE_ID then
 		menu = not menuCatalog and "not-read" or (os.time() - menuCatalog.observedAt > 20 and "stale"
-			or (menuCatalog.complete and "complete" or "incomplete"))
+			or (menuCatalog.complete and "complete" or (menuCatalog.scanComplete and "partial-details" or "incomplete")))
 	end
 	return table.concat({ "CLAW SUPPORT 1", "release=" .. Auto.VERSION, "build=" .. BUILD_ID,
 		"client=" .. (stopped and "stopped" or "running"),

@@ -2,6 +2,8 @@
 
 ## 0.2.0-beta.4
 
+- Unused slots no longer block a finished, approved character from joining.
+- Full main-to-alt server hopping tested in-game, including automatic menu return and startup.
 - Shorter setup guide and panel messages.
 - Empty region filters now suggest another filter, not an unnecessary rescan.
 - Refresh button on character details; unsupported locations marked on each card.

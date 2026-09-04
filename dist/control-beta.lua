@@ -608,9 +608,14 @@ function Catalog.fromScan(report, accountId, at)
     local packet = { type = "catalog", version = 1, accountId = accountId,
         placeId = 4111023553, complete = not report.truncated and #report.cards > 0,
         cards = {}, status = report.status, observedAt = at }
+    -- Reading every slot does not mean every slot has a finished character.
+    packet.scanComplete = packet.complete
+    local seen = {}
     for _, source in ipairs(report.cards) do
-        if #packet.cards >= Catalog.MAX_CARDS then packet.complete = false; break end
-        if type(source.slot) == "string" and source.slot:match("^[A-Z]+$") and #source.slot <= 3 then
+        if #packet.cards >= Catalog.MAX_CARDS then packet.complete = false; packet.scanComplete = false; break end
+        if type(source) == "table" and type(source.slot) == "string" and source.slot:match("^[A-Z]+$") and #source.slot <= 3 then
+            if seen[source.slot] or source.truncated then packet.scanComplete = false end
+            seen[source.slot] = true
             local card = { slot = source.slot, slotLabel = source.slotLabel, level = source.level,
                 complete = source.complete == true and not source.truncated and source.slotLabel == source.slot,
                 confirmed = false, source = "menu-card", observedAt = at }
@@ -619,14 +624,14 @@ function Catalog.fromScan(report, accountId, at)
                 and type(card.level) == "number" and card.level % 1 == 0 and card.level >= 0 and card.level <= 1000
             packet.cards[#packet.cards + 1] = card
             if not card.complete then packet.complete = false end
-        else packet.complete = false end
+        else packet.complete = false; packet.scanComplete = false end
     end
     return packet
 end
 function Catalog.signature(packet)
     local ordered = table.clone(packet.cards)
     table.sort(ordered, function(a, b) return a.slot < b.slot end)
-    local parts = { tostring(packet.complete) }
+    local parts = { tostring(packet.complete), tostring(packet.scanComplete) }
     for _, card in ipairs(ordered) do
         for _, field in ipairs({ "slot", "slotLabel", "complete", "level", "characterName", "race", "oath", "origin", "location", "playtime", "lastPlayed" }) do
             local value = tostring(card[field]); parts[#parts + 1] = #value .. ":" .. value
@@ -639,7 +644,7 @@ return Catalog
 }
 -- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
-local BUILD_ID = "e85228119977"
+local BUILD_ID = "8adb83203af4"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
@@ -749,7 +754,7 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	requireRegionCheck = true,
 	chooseSlot = function(profile, placeId)
 		if game.PlaceId == Core.LOBBY_PLACE_ID then
-			if not menuCatalog or not menuCatalog.complete or os.time() - menuCatalog.observedAt > 20 then
+			if not menuCatalog or not menuCatalog.scanComplete or os.time() - menuCatalog.observedAt > 20 then
 				return nil, "WAITING_SLOT_SCAN: reading current character cards"
 			end
 			-- A reused slot letter must not inherit permission before the cloud has
@@ -939,7 +944,8 @@ end
 function api:report()
 	return { version = Auto.VERSION, status = auto.status, accountId = accountId, current = current(),
 		join = core:report(), attempt = auto.attempt, connected = socket ~= nil, connectionProblem = networkProblem,
-		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards, complete = menuCatalog.complete } }
+		menu = menuCatalog and { status = menuCatalog.status, cards = #menuCatalog.cards,
+			complete = menuCatalog.complete, scanComplete = menuCatalog.scanComplete } }
 end
 function api:supportReport()
 	-- Share fixed states, never copy free-form errors, tickets or profile fields.
@@ -972,7 +978,7 @@ function api:supportReport()
 	local menu = "not-in-menu"
 	if game.PlaceId == Core.LOBBY_PLACE_ID then
 		menu = not menuCatalog and "not-read" or (os.time() - menuCatalog.observedAt > 20 and "stale"
-			or (menuCatalog.complete and "complete" or "incomplete"))
+			or (menuCatalog.complete and "complete" or (menuCatalog.scanComplete and "partial-details" or "incomplete")))
 	end
 	return table.concat({ "CLAW SUPPORT 1", "release=" .. Auto.VERSION, "build=" .. BUILD_ID,
 		"client=" .. (stopped and "stopped" or "running"),

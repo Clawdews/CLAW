@@ -195,6 +195,25 @@ test("cloud projection does not promote missing slot labels or damaged core fiel
         local p = Catalog.fromScan(report, "22", now); assert(not p.complete and not p.cards[1].complete)
     end
 end)
+
+test("unused slots do not make a complete roster unreadable", function()
+    local blank = object("A", "TextButton", "", { label("Slot", "A") })
+    local p = Catalog.fromScan(Scan.collect(menu({ blank, card("L") })), "22", now)
+    assert(p.scanComplete == true and p.complete == false and #p.cards == 2)
+    assert(p.cards[1].complete == false and p.cards[2].complete == true)
+    assert(Regions.choose({ approvedSlots = { L = true } }, 6473861193, p.cards, now) == "L")
+    assert(Regions.choose({ approvedSlots = { A = true } }, 6473861193, p.cards, now) == nil)
+end)
+
+test("partial or ambiguous roster scans cannot be used for selection", function()
+    local duplicate = Catalog.fromScan(Scan.collect(menu({ card("L"), card("L") })), "22", now)
+    assert(duplicate.scanComplete == false)
+    local report = Scan.collect(menu({ card("L") })); report.truncated = true
+    assert(Catalog.fromScan(report, "22", now).scanComplete == false)
+    report.truncated = false; report.cards[1].slot = "not-a-slot"
+    assert(Catalog.fromScan(report, "22", now).scanComplete == false)
+    assert(Catalog.fromScan(Scan.collect(menu({})), "22", now).scanComplete == false)
+end)
 test("compact text is UTF-8 safe and its fingerprint excludes timestamps and raw report details", function()
     local report = Scan.collect(menu({ card("L") })); report.cards[1].characterName = string.rep("é", 41)
     local a = Catalog.fromScan(report, "22", now); assert(#a.cards[1].characterName <= 80 and utf8.len(a.cards[1].characterName))

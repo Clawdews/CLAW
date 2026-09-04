@@ -50,6 +50,8 @@ Don't run the older Discord controller alongside the beta. During your first tes
 
 Only Eastern and Etrean are supported for joining. Characters elsewhere still appear in the list, but CLAW cannot join with them there.
 
+Unused slots are fine. You only need a finished, allowed character in the right region; you don't need to fill every slot.
+
 Approvals stay saved. Replacing a character, resetting its level or removing its slot clears that character's old permission. Reopening character selection refreshes old cards.
 
 ## 4. Follow your main

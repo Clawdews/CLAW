@@ -59,10 +59,12 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 			local parent = gui
 			for _, name in ipairs({ "LoadingGui", "Overlay", "Columns", "MainFrame", "Slots", "SlotScroll", "L" }) do
 				local next = object("Frame"); parent.children[name] = next; parent = next
+				if name == "SlotScroll" then f.slotList = next end
 			end
 			for name, value in pairs({ CharacterName = "Test Character", Race = "Khan", Level = "Lv. 1", Realm = "Etrean Luminant", Slot = "L" }) do
 				local label = object("TextLabel"); label.Text = value; parent.children[name] = label
 			end
+			if options.editMenu then options.editMenu(f.slotList, parent) end
 		end
 		f.prompt = object("Frame"); f.prompt.Title = "Some unrelated choice"; gui.children.ChoicePrompt = f.prompt
 		local choice = object("RemoteEvent"); f.prompt.children.Choice = choice
@@ -110,7 +112,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 					role = options.main and "main" or "alt", slot = "L", follow = true,
 					retry = options.retry,
 					allowMenuReturn = f.cloudMenu,
-					approvedSlots = { ["L"] = true }, catalog = { { slot = "L", region = "EtreanLuminant", observedAt = f.now, confirmed = true,
+					approvedSlots = options.approvedSlots or { ["L"] = true }, catalog = { { slot = "L", region = "EtreanLuminant", observedAt = f.now, confirmed = true,
 						characterName = options.oldCharacter and "Previous Character" or "Test Character", level = 1 } } })) end
 				self.OnMessage:Fire(http:JSONEncode(target()))
 			end
@@ -337,6 +339,49 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 	test("missing current menu cannot select from a stale cloud roster", function()
 		local f = boot({ noMenu = true }); f:advance(20)
 		assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SCAN", 1, true))
+	end)
+
+	local function addUnusedSlots(list)
+		for _, slot in ipairs({ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J" }) do
+			local blank, label = object("Frame"), object("TextLabel")
+			label.Text = slot; blank.children.Slot = label; list.children[slot] = blank
+		end
+	end
+	test("one approved character still joins alongside ten unused slots", function()
+		local f = boot({ editMenu = addUnusedSlots }); f:advance(20)
+		assert(f.picks == 1 and f.joins == 1, "Unused slots blocked the finished character")
+		assert(f.api:report().menu.cards == 11 and not f.api:report().menu.complete)
+	end)
+	test("unused slots never weaken selected-character or cloud identity checks", function()
+		for _, field in ipairs({ "CharacterName", "Race", "Level", "Realm", "Slot" }) do
+			local f = boot({ editMenu = function(list, selected)
+				addUnusedSlots(list); selected.children[field] = nil
+			end }); f:advance(20)
+			assert(f.picks == 0 and f.joins == 0, "Selected a character missing " .. field)
+		end
+		local f = boot({ oldCharacter = true, editMenu = addUnusedSlots }); f:advance(20)
+		assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SYNC", 1, true))
+		local unapproved = boot({ approvedSlots = {}, editMenu = addUnusedSlots }); unapproved:advance(20)
+		assert(unapproved.picks == 0 and unapproved.joins == 0)
+		local mismatch = boot({ wrongRegion = true, editMenu = addUnusedSlots }); mismatch:advance(20)
+		assert(mismatch.picks == 1 and mismatch.joins == 0)
+	end)
+	test("an account with only unused slots never selects or joins", function()
+		local f = boot({ editMenu = function(list) list.children = {}; addUnusedSlots(list) end }); f:advance(20)
+		assert(f.picks == 0 and f.joins == 0 and f.menus == 0)
+	end)
+	test("truncated and duplicate roster scans still block selection", function()
+		for _, duplicate in ipairs({ false, true }) do
+			local f = boot({ editMenu = function(list, selected)
+				if duplicate then
+					selected.Name = "L"
+					function list:GetChildren() return { selected, selected } end
+				else
+					for i = 1, 170 do selected.children["Decoration" .. i] = object("Frame") end
+				end
+			end }); f:advance(20)
+			assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SCAN", 1, true))
+		end
 	end)
 	test("a different character reusing an approved letter waits for permission sync", function()
 		local f = boot({ oldCharacter = true }); f:advance(20)
