@@ -9,6 +9,10 @@ import { cleanNickname, statusPage } from './status.js';
 import { resolveCommandAccount, resolveAccount, canDeferAccount, finishAccountReply } from './accounts.js';
 import { panelCommand } from './panel-controller.js';
 import { batchInput, batchRequest } from './batch.js';
+import { commandInput, featureCommand } from './feature-commands.js';
+import { ensureFeatures, activeFor, addHistory, addLoot } from './features.js';
+import { cleanActionResult, cleanInventory, cleanLoot, cleanQueuedAction } from './actions.js';
+import { shouldAlert, postAlert } from './alerts.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request, limit = 8192) {
@@ -28,7 +32,7 @@ async function bodyText(request, limit = 8192) {
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.6', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.3.0-beta.1', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -96,7 +100,7 @@ export class ControlRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx.blockConcurrencyWhile(async () => {
-      this.config = await loadConfig(this.ctx.storage, shared(this.env) ? {} : this.env);
+      this.config = ensureFeatures(await loadConfig(this.ctx.storage, shared(this.env) ? {} : this.env));
     });
   }
   sockets() { return this.ctx.getWebSockets(); }
@@ -107,14 +111,77 @@ export class ControlRoom extends DurableObject {
       && at - a.seen <= FRESH_SECONDS ? a : null;
   }
   send(ws, value) { try { ws.send(JSON.stringify(value)); } catch { /* Next liveness check expires it. */ } }
+  accountName(userId) {
+    const member = this.config.members[userId];
+    return member?.nickname || (member?.username ? '@' + member.username : 'Account ' + userId);
+  }
+  notify(text) { return postAlert(this.env, this.config.alerts, text); }
+  async markOffline(userId) {
+    if (!this.config.members[userId]) return;
+    const pending = await this.ctx.storage.get('offline') || {};
+    pending[userId] = { due: now() + 15, credential: this.config.members[userId].credential };
+    await this.ctx.storage.put('offline', pending);
+    await this.ctx.storage.setAlarm(Date.now() + 16000);
+  }
+  async clearOffline(userId) {
+    const pending = await this.ctx.storage.get('offline') || {};
+    if (!pending[userId]) return;
+    delete pending[userId]; await this.ctx.storage.put('offline', pending);
+  }
+  async alarm() {
+    const at = now(), pending = await this.ctx.storage.get('offline') || {};
+    let next = null;
+    for (const [account, item] of Object.entries(pending)) {
+      const live = Object.values(this.connections()).some(connection => connection.userId === account);
+      if (live || this.config.members[account]?.credential !== item.credential) delete pending[account];
+      else if (item.due <= at) {
+        delete pending[account];
+        await addHistory(this, 'offline', this.accountName(account) + ' disconnected', account);
+        if (this.config.alerts?.mode !== 'off') await this.notify(this.accountName(account) + ' disconnected.');
+      } else next = next === null ? item.due : Math.min(next, item.due);
+    }
+    await this.ctx.storage.put('offline', pending);
+    if (next !== null) await this.ctx.storage.setAlarm(next * 1000 + 1000);
+  }
   profile(userId) {
     const member = this.config.members[userId];
+    const team = this.config.activeTeam && this.config.teams?.[this.config.activeTeam];
+    const teamRecovery = userId !== this.config.mainId && team?.recovery === true && activeFor(this.config, userId);
     return { type: 'profile', accountId: userId, mainId: this.config.mainId,
       role: userId === this.config.mainId ? 'main' : 'alt', slot: member?.slot || null,
       ownerId: this.config.ownerId || null, approvedSlots: member?.approvedSlots || {},
-      allowMenuReturn: typeof member?.allowMenuReturn === 'boolean' ? member.allowMenuReturn : null,
+      allowMenuReturn: teamRecovery || member?.allowMenuReturn === true ? true
+        : typeof member?.allowMenuReturn === 'boolean' ? false : null,
       preferredSlots: member?.preferredSlots || {}, catalog: Object.values(member?.slots || {}),
-      follow: this.config.follow, revision: this.config.revision, retry: member?.retry || null };
+      follow: this.config.follow, revision: this.config.revision, retry: member?.retry || null,
+      enabled: activeFor(this.config, userId), activeTeam: this.config.activeTeam,
+      halted: this.config.halted === true, capabilities: { movement: true, inventory: true, queue: true } };
+  }
+
+  connections() {
+    const connections = {};
+    for (const ws of this.sockets()) { const live = this.live(ws); if (live) connections[live.userId] = live; }
+    return connections;
+  }
+  async queueActions(actions) {
+    if (!actions?.length) return;
+    const at = now(), queue = await this.ctx.storage.get('actions') || {};
+    for (const request of actions) for (const account of request.accounts || []) {
+      if (!this.config.members[account]) continue;
+      const packet = cleanQueuedAction(request.packet, at);
+      if (!packet) continue;
+      queue[account] = [...(queue[account] || []).filter(item => cleanQueuedAction(item, at)), packet].slice(-10);
+      for (const ws of this.sockets()) if (this.live(ws)?.userId === account) this.send(ws, packet);
+    }
+    await this.ctx.storage.put('actions', queue);
+  }
+  async sendPending(ws, userId) {
+    const at = now(), queue = await this.ctx.storage.get('actions') || {};
+    const pending = (queue[userId] || []).filter(item => cleanQueuedAction(item, at));
+    if (pending.length !== (queue[userId] || []).length) {
+      queue[userId] = pending; await this.ctx.storage.put('actions', queue);
+    }
+    for (const packet of pending) this.send(ws, packet);
   }
   target() {
     if (!this.config.follow || !this.config.mainId) return { type: 'target', enabled: false, reason: 'PAUSED' };
@@ -166,7 +233,8 @@ export class ControlRoom extends DurableObject {
       }
       const [client, server] = Object.values(new WebSocketPair());
       this.ctx.acceptWebSocket(server, [userId]);
-      server.serializeAttachment({ userId, credential: member.credential, seen: now(), presence: null, lastMessage: 0 });
+      server.serializeAttachment({ userId, credential: member.credential, seen: now(), presence: null, lastMessage: 0,
+        lastInventory: 0, lootWindowAt: 0, lootPackets: 0 });
       // The client requests a profile after binding its listeners; do not race that setup.
       return new Response(null, { status: 101, webSocket: client });
     });
@@ -220,6 +288,44 @@ export class ControlRoom extends DurableObject {
       if (next) { this.config = next; this.send(ws, this.profile(a.userId)); }
       this.send(ws, this.target()); return;
     }
+    if (data.type === 'action-result') {
+      const result = cleanActionResult(data, a.userId);
+      if (!result) return ws.close(1008, 'Invalid action result');
+      const queue = await this.ctx.storage.get('actions') || {};
+      const pending = queue[a.userId] || [];
+      if (!pending.some(item => item.id === result.id)) return;
+      queue[a.userId] = pending.filter(item => item.id !== result.id);
+      const next = structuredClone(this.config), updated = next.members[a.userId];
+      if (!updated || updated.credential !== a.credential) return;
+      updated.lastAction = result;
+      await this.ctx.storage.put({ actions: queue, config: next });
+      this.config = next;
+      await addHistory(this, 'action', (result.ok ? 'Completed: ' : 'Failed: ') + result.message, a.userId);
+      return;
+    }
+    if (data.type === 'inventory') {
+      if (now() - (a.lastInventory || 0) < 5) return;
+      const inventory = cleanInventory(data, a.userId);
+      if (!inventory) return ws.close(1008, 'Invalid inventory');
+      a.lastInventory = now(); a.seen = now(); ws.serializeAttachment(a);
+      const next = structuredClone(this.config), updated = next.members[a.userId];
+      if (!updated || updated.credential !== a.credential) return;
+      updated.inventory = inventory;
+      await this.ctx.storage.put('config', next); this.config = next;
+      return;
+    }
+    if (data.type === 'loot') {
+      const at = now();
+      if (at - (a.lootWindowAt || 0) >= 10) { a.lootWindowAt = at; a.lootPackets = 0; }
+      a.lootPackets = (a.lootPackets || 0) + 1;
+      if (a.lootPackets > 10) return ws.close(1008, 'Loot rate exceeded');
+      const items = cleanLoot(data, a.userId);
+      if (!items) return ws.close(1008, 'Invalid loot');
+      a.seen = at; ws.serializeAttachment(a);
+      await addLoot(this, a.userId, items);
+      await addHistory(this, 'loot', 'Recorded ' + items.reduce((sum, item) => sum + item.count, 0) + ' new item(s)', a.userId);
+      return;
+    }
     if (raw.length > 4096) return ws.close(1009, 'Message too large');
     if (data.type === 'hello') {
       if (now() - a.lastMessage < 1) return;
@@ -233,13 +339,21 @@ export class ControlRoom extends DurableObject {
           await this.ctx.storage.put('config', next); this.config = next;
         });
       }
-      this.send(ws, this.profile(a.userId)); this.send(ws, this.target()); return;
+      await this.clearOffline(a.userId);
+      this.send(ws, this.profile(a.userId)); this.send(ws, this.target()); await this.sendPending(ws, a.userId); return;
     }
     if (data.type !== 'presence') return ws.close(1008, 'Unsupported message');
     if (now() - a.lastMessage < 2) return;
     const presence = cleanPresence(data.current);
     if (!presence) return ws.close(1008, 'Invalid presence');
+    const previousState = a.presence?.state;
     a.presence = presence; a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
+    if (previousState && previousState !== presence.state) {
+      await addHistory(this, 'state', this.accountName(a.userId) + ': ' + presence.state, a.userId);
+      if (shouldAlert(this.config.alerts?.mode, presence.state)) {
+        this.ctx.waitUntil(this.notify(this.accountName(a.userId) + ': ' + presence.state));
+      }
+    }
     // Observations are not permission: newly learned characters stay unapproved.
     const observedRegion = regionForPlace(presence.placeId);
     const previousSlot = safeSlot(presence.slot) && member.slots?.[presence.slot];
@@ -263,8 +377,18 @@ export class ControlRoom extends DurableObject {
     if (a.userId === this.config.mainId) this.broadcast();
     else this.send(ws, this.target());
   }
-  webSocketClose(ws, code) { try { ws.close(code === 1006 ? 1000 : code, 'Closed'); } catch {} this.broadcast(); }
-  webSocketError(ws) { try { ws.close(1011, 'Connection error'); } catch {} this.broadcast(); }
+  async webSocketClose(ws, code) {
+    const userId = this.attachment(ws)?.userId;
+    try { ws.close(code === 1006 ? 1000 : code, 'Closed'); } catch {}
+    if (userId && code !== 4001 && code !== 4003) await this.markOffline(userId);
+    this.broadcast();
+  }
+  async webSocketError(ws) {
+    const userId = this.attachment(ws)?.userId;
+    try { ws.close(1011, 'Connection error'); } catch {}
+    if (userId) await this.markOffline(userId);
+    this.broadcast();
+  }
   async batch(input, ownerId, register = false) {
     return this.ctx.blockConcurrencyWhile(() => batchRequest(this, input, ownerId, register));
   }
@@ -275,8 +399,9 @@ export class ControlRoom extends DurableObject {
       if (shared(this.env) && interaction.type === 3) return panelCommand(this, interaction, ownerId);
       const config = structuredClone(this.config);
       if (shared(this.env)) config.ownerId = ownerId;
-      const option = interaction.data.options?.[0];
-      const values = Object.fromEntries((option?.options || []).map(o => [o.name, o.value]));
+      const parsed = commandInput(interaction);
+      const option = { name: parsed.name };
+      const values = parsed.values;
       const account = values.account;
       if (shared(this.env) && ['panel', 'setup', 'slots'].includes(option?.name)) {
         if (option.name === 'slots' && !config.members[account]) return reply('Enroll that account first.');
@@ -295,12 +420,23 @@ export class ControlRoom extends DurableObject {
         return reply((`Characters for ${account}\n` + catalogPage(member, now(), values.page ?? 1)).slice(0, 1950));
       }
       if (option?.name === 'status') {
-        const connections = {};
-        for (const ws of this.sockets()) { const live = this.live(ws); if (live) connections[live.userId] = live; }
+        const connections = this.connections();
         return reply(statusPage(this.config, connections, now(), values.page ?? 1));
       }
       let content, disconnectAccount;
       if (replay.length >= 1000) return reply('Too many recent commands. Wait a few minutes.');
+      const feature = await featureCommand(this, option.name, values, interaction, config, this.connections());
+      if (feature.handled) {
+        if (!feature.changed && !feature.actions?.length) return reply(feature.content);
+        if (feature.changed) config.revision = nonce();
+        replay.push({ id: interaction.id, expires: signedAt + 301 });
+        await this.ctx.storage.put({ config, replay });
+        this.config = config;
+        if (feature.actions?.length) await this.queueActions(feature.actions);
+        if (feature.event) await addHistory(this, 'command', feature.event);
+        if (feature.changed) this.broadcast(true);
+        return reply(feature.content);
+      }
       if (option?.name === 'enroll' || option?.name === 'rotate') {
         if (shared(this.env) && option.name === 'enroll' && config.members[account]) return reply('Already paired. Use /claw rotate only if you need a replacement key.');
         if (option.name === 'rotate' && !config.members[account]) return reply('Enroll that account first.');
@@ -314,7 +450,7 @@ export class ControlRoom extends DurableObject {
         disconnectAccount = account;
       } else if (option?.name === 'main') {
         if (!config.members[account]) return reply('Enroll that numeric Roblox UserId first.');
-        config.mainId = account; config.follow = false;
+        config.mainId = account; config.follow = false; config.activeTeam = null;
         content = `Main set to ${account}. Follow is paused; enable it when the accounts are ready.`;
       } else if (option?.name === 'follow') {
         if (typeof values.enabled !== 'boolean') return reply('Specify enabled true or false.');
@@ -358,6 +494,10 @@ export class ControlRoom extends DurableObject {
       } else if (option?.name === 'revoke') {
         if (!config.members[account]) return reply('Account is not enrolled.');
         delete config.members[account]; await this.ctx.storage.delete('ticket:' + account);
+        for (const team of Object.values(config.teams || {})) {
+          team.members = (team.members || []).filter(value => value !== account);
+          if (team.mainId === account) team.mainId = null;
+        }
         if (config.mainId === account) { config.mainId = null; config.follow = false; }
         disconnectAccount = account;
         content = `Revoked ${account}.`;

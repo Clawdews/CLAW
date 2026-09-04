@@ -2,6 +2,7 @@ import { FRESH_SECONDS, LOBBY } from './protocol.js';
 import { selectable } from './catalog.js';
 import { nextStep } from './status.js';
 import { regionForPlace } from './tenancy.js';
+import { ensureFeatures, readyReport, teamsReport } from './features.js';
 
 export const PANEL_TTL = 900;
 export const regionName = value => ({ EastLuminant: 'Eastern Luminant', EtreanLuminant: 'Etrean Luminant' })[value] || value || 'Unknown region';
@@ -13,6 +14,8 @@ const states = { OFFLINE: 'Not connected', CONNECTING: 'Connecting', RECONNECTIN
   WAITING_MENU: 'Waiting at the game menu', WAITING_SLOT_SCAN: 'Reading character cards', WAITING_SLOT_SYNC: 'Syncing character permissions',
   NO_APPROVED_SLOT: 'Choose an allowed character', NO_COMPATIBLE_SLOT: 'No allowed character in this region',
   CHOOSE_PREFERRED_SLOT: 'Choose a preferred character', JOINING: 'Joining your main', TELEPORTING: 'Joining your main' };
+states.STANDBY = 'Not in the active team';
+states.EMERGENCY_STOP = 'Emergency stop locked';
 export function accountStatus(connection, at) {
   const live = connection && connection.seen <= at && at - connection.seen <= FRESH_SECONDS;
   const state = live ? connection.presence?.state || 'CONNECTING' : 'OFFLINE';
@@ -29,6 +32,7 @@ export function slotChoices(member, filter) {
 
 // The offered actions are stored with a short-lived, owner-bound view. Custom IDs contain no account keys.
 export function renderPanel(config, connections, view, at, batch = null) {
+  ensureFeatures(config);
   const offers = {}, components = [], embeds = [];
   const cid = action => `claw:${view.token}:${action}`;
   const button = (action, label, spec, disabled = false, style = 2) => {
@@ -67,6 +71,12 @@ export function renderPanel(config, connections, view, at, batch = null) {
     select('request', 'Choose a request to review', shown.map(r => ({ label: '@' + r.username, value: r.id, description: 'Check ' + r.check })), { kind: 'request', batchId: batch?.id });
     row(button('prev', 'Previous', { kind: 'page', page: view.page - 1 }, view.page === 0), button('next', 'Next', { kind: 'page', page: view.page + 1 }, view.page + 1 >= pages),
       button('refresh', 'Refresh', { kind: 'refresh' }), button('close', 'Close setup', { kind: 'batch-close', batchId: batch?.id }, !batch || batch.expires <= at, 4), button('home', 'Accounts', { kind: 'home' }));
+  } else if (view.screen === 'ready') {
+    title('CLAW · Ready check', readyReport(config, connections, view.team || null, at));
+    row(button('refresh', 'Refresh', { kind: 'refresh' }), button('teams', 'Teams', { kind: 'screen', screen: 'teams' }), button('home', 'Accounts', { kind: 'home' }));
+  } else if (view.screen === 'teams') {
+    title('CLAW · Teams', teamsReport(config) + '\n\nUse `/claw team` to edit teams and `/claw deploy` to start one.');
+    row(button('refresh', 'Refresh', { kind: 'refresh' }), button('ready', 'Ready check', { kind: 'screen', screen: 'ready' }), button('home', 'Accounts', { kind: 'home' }));
   } else if ((view.screen === 'slots' || view.screen === 'detail') && member) {
     const entries = slotChoices(member, view.filter), pages = Math.max(1, Math.ceil(entries.length / 5));
     view.page = Math.min(view.page || 0, pages - 1);
@@ -84,7 +94,8 @@ export function renderPanel(config, connections, view, at, batch = null) {
     };
     if (card) {
       const item = cardEmbed(card);
-      item.fields = [{ name: 'Details', value: `Playtime: ${escape(card.playtime || 'Not recorded')}\nLast played: ${escape(card.lastPlayed || 'Not recorded')}\nLast scan: ${Number.isInteger(card.observedAt) ? `<t:${card.observedAt}:R>` : 'Not recorded'}` }];
+      item.fields = [{ name: 'Details', value: `Playtime: ${escape(card.playtime || 'Not recorded')}\nLast played: ${escape(card.lastPlayed || 'Not recorded')}\nLast scan: ${Number.isInteger(card.observedAt) ? `<t:${card.observedAt}:R>` : 'Not recorded'}` },
+        { name: 'Note', value: escape(member.notes?.[card.slot] || 'No note') }];
       embeds.push(item);
       const approved = member.approvedSlots?.[card.slot] === true;
       const supported = ['EastLuminant', 'EtreanLuminant'].includes(card.region);
@@ -115,6 +126,8 @@ export function renderPanel(config, connections, view, at, batch = null) {
       embeds.push({ title: `${account === config.mainId ? 'MAIN' : 'ALT'} · ${escape(accountName(account, m))}`, color: status.state === 'OFFLINE' ? 0x747780 : 0x48a879,
         description: [`**${escape(status.text)}**`, escape(status.where),
           `${Object.values(m.approvedSlots || {}).filter(Boolean).length} allowed / ${Object.keys(m.slots || {}).length} characters · Auto-return: ${autoReturn}`,
+          connections[account]?.presence?.movement && connections[account].presence.movement !== 'idle' ? `Movement: ${escape(connections[account].presence.movement)}` : '',
+          m.lastAction ? `Last command: ${m.lastAction.ok ? 'done' : 'failed'} · ${escape(m.lastAction.message)}` : '',
           status.advice].filter(Boolean).join('\n') });
     }
     select('account', 'Choose an account', shown.map(([account, m]) => ({ label: cut(accountName(account, m), 100), value: account, default: account === view.account,
@@ -123,6 +136,7 @@ export function renderPanel(config, connections, view, at, batch = null) {
       button('refresh', 'Refresh', { kind: 'refresh' }), button('follow', config.follow ? 'Pause following' : 'Enable following', { kind: 'follow', enabled: !config.follow }, !config.mainId, config.follow ? 4 : 3),
       button('setup', 'Setup', { kind: 'screen', screen: 'setup' }));
     if (member) row(button('characters', 'Characters', { kind: 'screen', screen: 'slots' }), button('main', 'Use as main', { kind: 'main' }, view.account === config.mainId));
+    row(button('ready', 'Ready check', { kind: 'screen', screen: 'ready' }), button('teams', 'Teams', { kind: 'screen', screen: 'teams' }));
   }
   embeds[0].footer = { text: 'Only you can see this · Updates come from your running scripts' };
   return { data: { content: view.notice || '', embeds, components, allowed_mentions: { parse: [] } }, offers };

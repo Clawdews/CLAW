@@ -9,7 +9,7 @@ test('signed username commands retain enrollment, replay and per-user isolation 
   const alice = '123456789012345678', bob = '234567890123456789', guild = '345678901234567890';
   let lookups = 0, failLookup = false;
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'username-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js']
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js', 'features.js', 'actions.js', 'alerts.js', 'feature-commands.js']
       .map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey },

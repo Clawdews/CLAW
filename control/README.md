@@ -1,6 +1,6 @@
 # CLAW Control
 
-Discord control for pairing alts and following a main's exact Deepwoken server. Each Discord user has a separate account group.
+Discord control for pairing alts, following a main, teams, movement, character presets and account status. Each Discord user has a separate account group.
 
 [Install CLAW Control](https://discord.com/oauth2/authorize?client_id=1545435882784559124&scope=applications.commands&integration_type=1)
 
@@ -12,7 +12,15 @@ Discord control for pairing alts and following a main's exact Deepwoken server. 
 4. Leave each alt at character selection and allow a character in the main's region.
 5. Choose the main and enable following.
 
-Eastern and Etrean are supported. Automatic menu return starts off. Roblox and the executor must be running.
+Eastern and Etrean are supported. Automatic menu return and Discord alerts start off. Roblox and the executor must be running.
+
+## Teams
+
+Create a team with `/claw team create`, add its accounts, then choose its main. `/claw deploy` starts following. `/claw ready` shows what still needs attention.
+
+Movement, parking spots, formations, presets, inventory, loot history, notes and the Enmity flow are under their matching `/claw` command groups. `/claw emergency` stops movement and following.
+
+Discord alerts need [the optional server install](https://discord.com/oauth2/authorize?client_id=1545435882784559124&permissions=2048&scope=bot%20applications.commands). The app tests the channel before saving alerts.
 
 [Full setup](../docs/CONTROL-SETUP.md) · [Privacy](../docs/PRIVACY.md) · [Hosting](../docs/CONTROL-HOSTING.md) · [Changelog](../docs/CONTROL-RELEASE.md)
 

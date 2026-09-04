@@ -9,6 +9,8 @@ export function cleanNickname(value) {
   return label && new TextEncoder().encode(label).length <= 32 ? label : null;
 }
 export function nextStep(state) {
+  if (/EMERGENCY_STOP/.test(state)) return 'Unlock controls in Discord when it is safe.';
+  if (/STANDBY/.test(state)) return 'This account is not part of the active team.';
   if (/WAITING_SLOT_SCAN/.test(state)) return 'Keep character selection open until the cards finish loading.';
   if (/WAITING_SLOT_SYNC/.test(state)) return 'Waiting for cloud permissions to match the current cards.';
   if (/NO_APPROVED_SLOT|NO_COMPATIBLE_SLOT|NEEDS_SLOT/.test(state)) return 'Use /claw slots, then approve a character in the main’s region.';
@@ -44,7 +46,7 @@ export function statusPage(config, connections, at, page = 1) {
   if (!Number.isInteger(page) || page < 1 || page > pages.length) return `Choose status page 1–${pages.length}.`;
   const main = config.mainId ? (config.members?.[config.mainId]?.nickname
     ? `${escape(config.members[config.mainId].nickname)} (${config.mainId})` : config.mainId) : 'not selected';
-  return `Follow: ${config.follow ? 'ON' : 'OFF'} | Main: ${main}\nPage ${page}/${pages.length}\n\n`
+  return `Follow: ${config.follow ? 'ON' : 'OFF'} | Main: ${main}${config.activeTeam ? ' | Team: ' + (config.teams?.[config.activeTeam]?.name || config.activeTeam) : ''}${config.halted ? ' | STOPPED' : ''}\nPage ${page}/${pages.length}\n\n`
     + (pages[page - 1].join('\n\n') || 'No accounts paired yet. Use /claw setup.')
     + '\n\nStatuses are reported by your paired clients, not independently observed by Discord.';
 }

@@ -32,7 +32,7 @@ export async function panelCommand(room, interaction, ownerId, initial) {
         config.follow = change.enabled; changed = true;
       } else if (change.kind === 'main') {
         if (!config.members[change.account]) return expired();
-        config.mainId = change.account; config.follow = false; changed = true;
+        config.mainId = change.account; config.follow = false; config.activeTeam = null; changed = true;
         view.notice = 'Main selected. Following is paused until you enable it.';
       } else if (change.kind === 'allow' || change.kind === 'prefer') {
         const member = config.members[change.account], card = member?.slots?.[change.slot];

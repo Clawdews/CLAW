@@ -8,7 +8,7 @@ function quote(source) {
   let eq = '='; while (source.includes(']' + eq + ']')) eq += '=';
   return '[' + eq + '[' + source + ']' + eq + ']';
 }
-const modules = ['join/core.lua', 'control/auto.lua', 'control/regions.lua', 'control/menu-scan.lua', 'control/catalog.lua'];
+const modules = ['join/core.lua', 'control/auto.lua', 'control/regions.lua', 'control/menu-scan.lua', 'control/catalog.lua', 'control/movement.lua'];
 const client = read('control/client.lua');
 const buildId = createHash('sha256').update(JSON.stringify([...modules, 'control/client.lua', 'control/pair.lua', 'control/batch.lua', 'control-launcher.lua']
   .map(path => [path, read(path)]))).digest('hex').slice(0, 12);

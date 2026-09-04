@@ -1,4 +1,4 @@
-return function(clientSource, autoSource, coreSource, regionSource, menuSource, catalogSource, pairedLauncher)
+return function(clientSource, autoSource, coreSource, regionSource, menuSource, catalogSource, movementSource, pairedLauncher)
 	local function clone(value)
 		if type(value) ~= "table" then return value end
 		local copy = {}; for k, v in pairs(value) do copy[k] = clone(v) end; return copy
@@ -21,7 +21,17 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		function o:GetChildren()
 			local result = {}; for key, child in pairs(self.children) do child.Name = key; table.insert(result, child) end; return result
 		end
+		function o:GetDescendants()
+			local result = {}
+			local function visit(parent)
+				for _, child in ipairs(parent:GetChildren()) do result[#result + 1] = child; visit(child) end
+			end
+			visit(self); return result
+		end
 		function o:FindFirstChild(name) return self.children[name] end
+		function o:FindFirstChildOfClass(name)
+			for _, child in pairs(self.children) do if child.ClassName == name then return child end end
+		end
 		function o:GetAttribute(name) return self[name] end
 		return o
 	end
@@ -91,6 +101,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 			if url:find("control/regions.lua", 1, true) then return regionSource end
 			if url:find("control/menu-scan.lua", 1, true) then return menuSource end
 			if url:find("control/catalog.lua", 1, true) then return catalogSource end
+			if url:find("control/movement.lua", 1, true) then return movementSource end
 			return autoSource
 		end
 		local function target()
@@ -396,6 +407,34 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		f.cloudMenu = true; f.sockets[1]:Send(f.http:JSONEncode({ type = "hello" })); f:advance(1); assert(f.menus == 1)
 		f.cloudMenu = false; f.sockets[1]:Send(f.http:JSONEncode({ type = "hello" })); f.prompt.Title = "Return to Main Menu"
 		f:advance(3); assert(f.confirms == 0)
+	end)
+	test("authenticated cloud actions are bounded and return results", function()
+		local f = boot({ main = true }); f:advance(3)
+		local socket = f.sockets[#f.sockets]
+		socket.OnMessage:Fire(f.http:JSONEncode({ type = "action", version = 1, id = "action-stop", action = "stop",
+			args = {}, createdAt = f.now, expiresAt = f.now + 60 }))
+		local stopped
+		for _, packet in ipairs(f.packets) do
+			if packet.type == "action-result" and packet.id == "action-stop" then stopped = packet end
+		end
+		assert(stopped and stopped.ok == true and stopped.accountId == tostring(f.player.UserId))
+		socket.OnMessage:Fire(f.http:JSONEncode({ type = "action", version = 1, id = "action-scan", action = "scan-items",
+			args = {}, createdAt = f.now, expiresAt = f.now + 60 }))
+		local inventory, scanned
+		for _, packet in ipairs(f.packets) do
+			if packet.type == "inventory" then inventory = packet end
+			if packet.type == "action-result" and packet.id == "action-scan" then scanned = packet end
+		end
+		assert(inventory and #inventory.inventory == 0 and #inventory.bank == 0 and scanned and scanned.ok)
+		assert(f.picks == 0 and f.joins == 0 and f.menus == 0)
+	end)
+	test("unknown cloud actions close without touching the game", function()
+		local f = boot({ main = true }); f:advance(3)
+		local socket = f.sockets[#f.sockets]
+		socket.OnMessage:Fire(f.http:JSONEncode({ type = "action", version = 1, id = "action-unknown", action = "execute-code",
+			args = {}, createdAt = f.now, expiresAt = f.now + 60 }))
+		assert(socket.closed and f.picks == 0 and f.joins == 0 and f.menus == 0,
+			("closed=%s picks=%s joins=%s menus=%s"):format(tostring(socket.closed), tostring(f.picks), tostring(f.joins), tostring(f.menus)))
 	end)
 	if pairedLauncher then
 		test("bundled first-run entry pairs then connects without module downloads", function()

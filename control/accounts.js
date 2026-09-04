@@ -1,10 +1,24 @@
 import { id, snowflake, reply } from './protocol.js';
 
-const accountCommands = new Set(['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'auto-return', 'nickname', 'retry', 'revoke']);
 const usernamePattern = /^[A-Za-z0-9_]{1,20}$/;
+const accountCommands = new Set(['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'auto-return', 'nickname', 'retry', 'revoke',
+  'team:add', 'team:remove', 'team:main', 'spot:save', 'data:note', 'data:inventory']);
 const unavailable = 'Roblox username lookup is unavailable. No changes made. Please try again in a moment.';
 const invalid = 'Enter the Roblox username, not its display name. Numeric UserIds also work.';
 export const LOOKUP_TIMEOUT_MS = 8000;
+
+function accountFields(options, found = []) {
+  if (!Array.isArray(options)) return found;
+  for (const option of options) {
+    if (option?.name === 'account') found.push(option);
+    else if (Array.isArray(option?.options)) accountFields(option.options, found);
+  }
+  return found;
+}
+function commandName(options) {
+  const root = options?.[0], leaf = root?.type === 2 ? root.options?.[0] : root;
+  return root?.type === 2 ? root.name + ':' + (leaf?.name || '') : root?.name;
+}
 
 export async function resolveAccount(value, fetcher = fetch) {
   if (typeof value !== 'string' || value.length > 64) return { error: invalid };
@@ -64,11 +78,10 @@ export async function resolveAccount(value, fetcher = fetch) {
 export function canDeferAccount(interaction) {
   const options = interaction.data?.options;
   if (!Array.isArray(options) || options.length !== 1) return false;
-  const option = options[0];
-  const accounts = Array.isArray(option?.options) ? option.options.filter(value => value?.name === 'account') : [];
+  const accounts = accountFields(options);
   if (accounts.length !== 1) return false;
   const account = accounts[0].value;
-  return interaction.type === 2 && accountCommands.has(option?.name)
+  return interaction.type === 2
     && typeof account === 'string' && !id(account.trim())
     && snowflake(interaction.application_id) && typeof interaction.token === 'string'
     && /^[A-Za-z0-9._-]{20,2048}$/.test(interaction.token);
@@ -101,14 +114,14 @@ export async function finishAccountReply(interaction, work, fetcher = fetch) {
 
 export async function resolveCommandAccount(interaction, fetcher = fetch) {
   const options = interaction.data?.options;
-  if (!Array.isArray(options) || options.length !== 1 || !accountCommands.has(options[0]?.name)) return { interaction };
-  const values = options[0].options;
-  const accounts = Array.isArray(values) ? values.filter(o => o?.name === 'account') : [];
+  if (!Array.isArray(options) || options.length !== 1) return { interaction };
+  const accounts = accountFields(options);
+  if (!accounts.length) return accountCommands.has(commandName(options)) ? { error: invalid } : { interaction };
   if (accounts.length !== 1) return { error: invalid };
   const resolved = await resolveAccount(accounts[0].value, fetcher);
   if (resolved.error) return resolved;
   const normalized = structuredClone(interaction);
-  normalized.data.options[0].options.find(o => o.name === 'account').value = resolved.accountId;
+  accountFields(normalized.data.options)[0].value = resolved.accountId;
   if (resolved.username) normalized.accountUsername = resolved.username;
   return { ...resolved, interaction: normalized };
 }

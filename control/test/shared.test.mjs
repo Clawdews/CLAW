@@ -32,7 +32,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
   const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
   const options = { workers: [{ name: 'shared-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js', 'features.js', 'actions.js', 'alerts.js', 'feature-commands.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey,
       // Even if mistakenly left in a shared deployment, legacy seed data cannot enter a user's room.

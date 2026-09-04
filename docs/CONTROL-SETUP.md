@@ -44,6 +44,18 @@ The same autoexec loader reconnects on later sessions. Pairings, character permi
 
 An alt already in-world waits for the menu. Enable normal menu return with `/claw auto-return account:<username> enabled:true` if wanted.
 
+## 5. Make a team
+
+1. Use `/claw team create`.
+2. Add the main and alts with `/claw team add`.
+3. Choose the team main with `/claw team main`.
+4. Turn on team recovery with `/claw settings recovery` if wanted.
+5. Use `/claw deploy`, then `/claw ready`.
+
+The public loader handles later sessions. Movement and alerts remain off until requested from Discord.
+
+For Discord alerts, a server owner must [add the CLAW bot](https://discord.com/oauth2/authorize?client_id=1545435882784559124&permissions=2048&scope=bot%20applications.commands). Then use `/claw settings alerts` in the channel you want.
+
 ## If an alt waits
 
 | Status | Fix |

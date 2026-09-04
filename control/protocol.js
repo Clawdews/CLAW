@@ -20,9 +20,15 @@ export function sameHash(a, b) {
 }
 export function cleanPresence(value) {
   if (!value || !positive(value.gameId) || !positive(value.placeId) || !identifier(value.jobId)) return null;
-  return { gameId: value.gameId, placeId: value.placeId, jobId: value.jobId,
+  const position = value.position && [value.position.x, value.position.y, value.position.z].every(Number.isFinite)
+    && [value.position.x, value.position.y, value.position.z].every(number => Math.abs(number) <= 1e7)
+    ? { x: value.position.x, y: value.position.y, z: value.position.z } : null;
+  const result = { gameId: value.gameId, placeId: value.placeId, jobId: value.jobId,
     slot: slotId(value.slot) ? value.slot : null,
     state: typeof value.state === 'string' ? value.state.replace(/[\x00-\x1f]/g, '').slice(0, 60) : 'ONLINE' };
+  if (position) result.position = position;
+  if (typeof value.movement === 'string') result.movement = value.movement.replace(/[\x00-\x1f]/g, '').slice(0, 80);
+  return result;
 }
 export function ticketFor(mainId, presence, revision, at = now()) {
   return { version: 1, controllerId: Number(mainId), gameId: presence.gameId,

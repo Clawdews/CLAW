@@ -1,5 +1,5 @@
 -- Account-follow lifecycle. No network or game services in this module.
-local Auto = { VERSION = "0.2.0-beta.6", LOBBY = 4111023553 }
+local Auto = { VERSION = "0.3.0-beta.1", LOBBY = 4111023553 }
 Auto.__index = Auto
 local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
 local phases = { RETURN_MENU = true, WAIT_SLOT = true, JOINING = true, DONE = true, HOLD = true }
@@ -34,7 +34,7 @@ function Auto:hold(reason)
 end
 function Auto:canAct()
 	local p, t = self.profile, self.target
-	return p and p.role == "alt" and p.follow == true and t and t.expiresAt > self.adapter.now()
+	return p and p.role == "alt" and p.follow == true and p.enabled ~= false and p.halted ~= true and t and t.expiresAt > self.adapter.now()
 		and tostring(p.mainId) == tostring(t.ticket.controllerId) and self.attempt and self.attempt.key == t.key
 end
 function Auto:setProfile(profile)
@@ -98,6 +98,8 @@ function Auto:tick()
 	local profile, target, current = self.profile, self.target, self.adapter.current()
 	if not profile then return self:statusAs("CONNECTING") end
 	if profile.role == "main" then return self:statusAs("MAIN") end
+	if profile.halted == true then return self:statusAs("EMERGENCY_STOP") end
+	if profile.enabled == false then return self:statusAs("STANDBY") end
 	if profile.follow ~= true then return self:statusAs("PAUSED") end
 	if not target or target.expiresAt <= self.adapter.now() or tostring(target.ticket.controllerId) ~= tostring(profile.mainId) then
 		return self:statusAs("WAITING_MAIN")

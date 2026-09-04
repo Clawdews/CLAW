@@ -9,7 +9,7 @@ test('signed Discord panels and batch approval work through real Worker endpoint
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
   let lookups = 0;
   const options = { workers: [{ name: 'panel-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js']
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js', 'features.js', 'actions.js', 'alerts.js', 'feature-commands.js']
       .map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     ratelimits: { ENTRY_LIMITER: { namespace_id: '153104', simple: { limit: 60, period: 60 } } },

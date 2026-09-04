@@ -216,7 +216,7 @@ end
 return Core
 ]=],
  ["control/auto.lua"] = [=[-- Account-follow lifecycle. No network or game services in this module.
-local Auto = { VERSION = "0.2.0-beta.6", LOBBY = 4111023553 }
+local Auto = { VERSION = "0.3.0-beta.1", LOBBY = 4111023553 }
 Auto.__index = Auto
 local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
 local phases = { RETURN_MENU = true, WAIT_SLOT = true, JOINING = true, DONE = true, HOLD = true }
@@ -251,7 +251,7 @@ function Auto:hold(reason)
 end
 function Auto:canAct()
 	local p, t = self.profile, self.target
-	return p and p.role == "alt" and p.follow == true and t and t.expiresAt > self.adapter.now()
+	return p and p.role == "alt" and p.follow == true and p.enabled ~= false and p.halted ~= true and t and t.expiresAt > self.adapter.now()
 		and tostring(p.mainId) == tostring(t.ticket.controllerId) and self.attempt and self.attempt.key == t.key
 end
 function Auto:setProfile(profile)
@@ -315,6 +315,8 @@ function Auto:tick()
 	local profile, target, current = self.profile, self.target, self.adapter.current()
 	if not profile then return self:statusAs("CONNECTING") end
 	if profile.role == "main" then return self:statusAs("MAIN") end
+	if profile.halted == true then return self:statusAs("EMERGENCY_STOP") end
+	if profile.enabled == false then return self:statusAs("STANDBY") end
 	if profile.follow ~= true then return self:statusAs("PAUSED") end
 	if not target or target.expiresAt <= self.adapter.now() or tostring(target.ticket.controllerId) ~= tostring(profile.mainId) then
 		return self:statusAs("WAITING_MAIN")
@@ -641,10 +643,188 @@ function Catalog.signature(packet)
 end
 return Catalog
 ]=],
+ ["control/movement.lua"] = [=[-- Short-lived movement used only by authenticated CLAW actions.
+local Movement = {}
+Movement.__index = Movement
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local function finite(value)
+	return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+local function vector(value)
+	if type(value) ~= "table" or not finite(value.x) or not finite(value.y) or not finite(value.z) then return nil end
+	if math.abs(value.x) > 1e7 or math.abs(value.y) > 1e7 or math.abs(value.z) > 1e7 then return nil end
+	return Vector3.new(value.x, value.y, value.z)
+end
+local function character(player)
+	local model = player and player.Character
+	local root = model and model:FindFirstChild("HumanoidRootPart")
+	local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+	if not model or not root or not humanoid or humanoid.Health <= 0 then return nil end
+	return model, root, humanoid
+end
+local function braking(distance, limit, acceleration, dt)
+	local step = acceleration * dt
+	return math.min(limit, math.sqrt(step * step + 2 * acceleration * math.max(0, distance - 0.25)) - step)
+end
+local function property(active, object, key, value)
+	active.properties[object] = active.properties[object] or {}
+	if active.properties[object][key] == nil then active.properties[object][key] = object[key] end
+	object[key] = value
+end
+
+function Movement.new(changed)
+	return setmetatable({ running = true, active = nil, generation = 0, state = "idle", changed = changed }, Movement)
+end
+function Movement:_state(value)
+	if self.state == value then return end
+	self.state = value
+	if self.changed then pcall(self.changed, value) end
+end
+function Movement:_restore(active)
+	for part, canCollide in pairs(active and active.collisions or {}) do
+		if part and part.Parent then pcall(function() part.CanCollide = canCollide end) end
+	end
+	for object, properties in pairs(active and active.properties or {}) do
+		for key, value in pairs(properties) do
+			if object and object.Parent then pcall(function() object[key] = value end) end
+		end
+	end
+	if active and active.root and active.root.Parent then
+		pcall(function() active.root.AssemblyLinearVelocity = Vector3.zero end)
+	end
+end
+function Movement:stop(reason)
+	self.generation += 1
+	local active = self.active
+	self.active = nil
+	if active then
+		if active.connection then active.connection:Disconnect() end
+		if active.descendantConnection then active.descendantConnection:Disconnect() end
+		if active.mover then active.mover:Destroy() end
+		self:_restore(active)
+	end
+	self:_state(reason or "idle")
+	return true
+end
+function Movement:_noclip(active)
+	for _, item in ipairs(active.model:GetDescendants()) do
+		if item:IsA("BasePart") then
+			if active.collisions[item] == nil then active.collisions[item] = item.CanCollide end
+			item.CanCollide = false
+		end
+	end
+end
+function Movement:_flight(active)
+	property(active, active.manager, "ActiveController", active.air)
+	for _, parent in ipairs({ active.root, active.manager }) do
+		local sensor = parent:FindFirstChild("GroundSensor")
+		if sensor and sensor:IsA("ControllerPartSensor") then property(active, sensor, "SearchDistance", 0) end
+	end
+	local helio = active.root:FindFirstChild("HelioFlight")
+	if helio and helio:IsA("BodyVelocity") then property(active, helio, "MaxForce", Vector3.zero) end
+	self:_noclip(active)
+	local head = active.model:FindFirstChild("Head")
+	local pin = head and head:FindFirstChild("BodyPosition")
+	if pin and pin:IsA("BodyPosition") then property(active, pin, "MaxForce", Vector3.zero) end
+end
+function Movement:_start(provider, label)
+	local model, root, humanoid = character(LocalPlayer)
+	if not model then return false, "local character unavailable" end
+	local manager = model:FindFirstChild("ControllerManager")
+	local air = manager and manager:FindFirstChild("AirController")
+	if not air then return false, "air controller unavailable" end
+	if root.Anchored then return false, "character is anchored" end
+	local goal, failure = provider()
+	if not goal then return false, failure or "destination unavailable" end
+	self:stop()
+	local generation = self.generation
+	local active = { model = model, root = root, humanoid = humanoid, manager = manager, air = air,
+		provider = provider, label = label, velocity = Vector3.zero, started = os.clock(), progress = os.clock(),
+		best = (goal - root.Position).Magnitude, collisions = {}, properties = {} }
+	local mover = Instance.new("BodyVelocity")
+	active.mover = mover
+	mover.Name = "ClawCloudMovement"
+	pcall(function() mover:AddTag("AllowedBM") end)
+	mover:SetAttribute("ClawOwned", true)
+	mover.P = 20000
+	mover.MaxForce = Vector3.new(1e10, 1e10, 1e10)
+	mover.Velocity = Vector3.zero
+	mover.Parent = root
+	local ok = pcall(self._flight, self, active)
+	if not ok then mover:Destroy(); self:_restore(active); return false, "movement setup failed" end
+	if model.DescendantAdded then
+		active.descendantConnection = model.DescendantAdded:Connect(function(item)
+			if self.active == active and item:IsA("BasePart") then
+				if active.collisions[item] == nil then active.collisions[item] = item.CanCollide end
+				item.CanCollide = false
+			end
+		end)
+	end
+	self.active = active
+	self:_state("moving " .. label)
+	active.connection = RunService.PreSimulation:Connect(function(dt)
+		if not self.running or generation ~= self.generation or self.active ~= active then return end
+		local success = pcall(function()
+			if LocalPlayer.Character ~= model or humanoid.Health <= 0 or not root.Parent or root.Anchored then
+				return self:stop("movement interrupted")
+			end
+			if os.clock() - active.started > 300 then return self:stop("movement timed out") end
+			local target, reason = provider()
+			if not target then return self:stop(reason or "destination lost") end
+			local delta, distance = target - root.Position, (target - root.Position).Magnitude
+			if distance <= 1.2 and active.velocity.Magnitude <= 4 then return self:stop("arrived " .. label) end
+			if distance < active.best - 0.25 then active.best, active.progress = distance, os.clock()
+			elseif os.clock() - active.progress > 6 then return self:stop("movement made no progress") end
+			manager.ActiveController = air
+			dt = math.clamp(tonumber(dt) or 0, 0, 0.1)
+			local acceleration, horizontalLimit, verticalLimit = 80, 200, 24
+			local horizontal = Vector3.new(delta.X, 0, delta.Z)
+			local speed = braking(horizontal.Magnitude, horizontalLimit, acceleration, dt)
+			local wanted = horizontal.Magnitude > 0.001 and horizontal.Unit * speed or Vector3.zero
+			local current = Vector3.new(active.velocity.X, 0, active.velocity.Z)
+			local change, maximum = wanted - current, acceleration * dt
+			if change.Magnitude > maximum then change = change.Unit * maximum end
+			current += change
+			local wantedY = math.sign(delta.Y) * braking(math.abs(delta.Y), verticalLimit, acceleration, dt)
+			local nextY = active.velocity.Y + math.clamp(wantedY - active.velocity.Y, -maximum, maximum)
+			active.velocity = Vector3.new(current.X, nextY, current.Z)
+			mover.Velocity = active.velocity
+			root.AssemblyLinearVelocity = active.velocity
+		end)
+		if not success then self:stop("movement error") end
+	end)
+	return true, "movement started"
+end
+function Movement:bring(mainId, offset)
+	mainId = tonumber(mainId)
+	offset = vector(offset or { x = 0, y = 0, z = 0 })
+	if not mainId or not offset then return false, "invalid bring target" end
+	return self:_start(function()
+		local target = Players:GetPlayerByUserId(mainId)
+		local _, root = character(target)
+		if not root then return nil, "main character unavailable" end
+		return (root.CFrame * CFrame.new(offset)).Position
+	end, "to main")
+end
+function Movement:park(position, placeId, jobId)
+	local goal = vector(position)
+	if not goal or placeId ~= game.PlaceId or jobId ~= game.JobId then return false, "saved spot is in another server" end
+	return self:_start(function() return goal end, "to park")
+end
+function Movement:destroy()
+	self.running = false
+	self:stop("stopped")
+end
+return Movement
+]=],
 }
--- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
+-- One client for joining, account status, item scans and owner-approved movement.
 local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/"
-local BUILD_ID = "8b40815004ef"
+local BUILD_ID = "e1b2bcbafe95"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
@@ -674,7 +854,8 @@ local function module(path)
 end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.6", "Module version mismatch")
+local Movement = module("control/movement.lua")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.3.0-beta.1", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
@@ -684,6 +865,8 @@ local core, auto, coreSaved, selectedSlot, saved
 local stopped, busy, socket, socketGeneration = false, false, nil, 0
 local reconnectAt, backoff, presenceAt, packetAt = 0, 2, 0, 0
 local networkProblem
+local movement, movementState = nil, "idle"
+local actionResults, inventoryAt, lastInventory = {}, 0, nil
 local menuCatalog, scanBusy, scanAt, catalogSentAt, catalogPending = nil, false, 0, 0, false
 local menuSignature, sentSignature
 local api = {}
@@ -708,10 +891,22 @@ end
 saved = readSaved()
 coreSaved = saved and saved.core
 local storageRevision = saved and saved.revision or 0
+if saved and type(saved.actions) == "table" then
+	local restored = 0
+	for id, result in pairs(saved.actions) do
+		if type(id) == "string" and #id <= 160 and id:match("^[%w%-]+$") and type(result) == "table"
+			and type(result.ok) == "boolean" and type(result.message) == "string" and #result.message <= 160 then
+			actionResults[id] = { ok = result.ok, message = result.message }
+			restored += 1
+			if restored >= 30 then break end
+		end
+	end
+end
 local function save()
 	storageRevision += 1
 	local encoded, raw = pcall(Http.JSONEncode, Http, { version = 1, accountId = accountId, endpoint = endpoint, revision = storageRevision,
-		ownerId = ownerId, updatedAt = os.time(), status = auto and auto.status, core = coreSaved, auto = auto and auto:serialize() or nil })
+		ownerId = ownerId, updatedAt = os.time(), status = auto and auto.status, core = coreSaved,
+		auto = auto and auto:serialize() or nil, actions = actionResults })
 	-- A failed encoder may include private state in its error. Never write or expose it.
 	if not encoded or type(raw) ~= "string" or #raw == 0 or #raw > 32768 then return false end
 	local memoryOK = pcall(function()
@@ -730,7 +925,12 @@ end
 local function current()
 	local slot = player:GetAttribute("DataSlot")
 	if game.PlaceId == Core.LOBBY_PLACE_ID and selectedSlot then slot = selectedSlot end
-	return { userId = player.UserId, gameId = game.GameId, placeId = game.PlaceId, jobId = game.JobId, slot = slot }
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local position = root and root.Position
+	return { userId = player.UserId, gameId = game.GameId, placeId = game.PlaceId, jobId = game.JobId, slot = slot,
+		position = position and { x = position.X, y = position.Y, z = position.Z } or nil,
+		movement = movementState }
 end
 local function remote(name, menu)
 	local parent = Replicated:FindFirstChild("Requests")
@@ -750,6 +950,7 @@ core = Core.new({ now = os.time, current = current, nonce = function() return Ht
 	join = function(id) assert(fire("PickServer", true, id), "PickServer unavailable") end,
 	hasPlayer = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
 })
+movement = Movement.new(function(state) movementState = state end)
 auto = Auto.new({ now = os.time, current = current, save = save,
 	requireRegionCheck = true,
 	chooseSlot = function(profile, placeId)
@@ -850,6 +1051,100 @@ local function send(value)
 	if not ok then disconnect() end
 	return ok
 end
+local function itemName(value)
+	if type(value) ~= "string" then return nil end
+	value = value:match("^%s*(.-)%s*$")
+	if value == "" or #value > 80 or value:find("[%c]") then return nil end
+	return value
+end
+local function addItem(counts, name, amount)
+	name = itemName(name)
+	if not name then return end
+	counts[name] = math.clamp((counts[name] or 0) + (amount or 1), 1, 9999)
+end
+local function sortedItems(counts)
+	local items = {}
+	for name, count in pairs(counts) do items[#items + 1] = { name = name, count = count } end
+	table.sort(items, function(a, b) return a.name < b.name end)
+	while #items > 200 do table.remove(items) end
+	return items
+end
+local function scanItems()
+	local inventory = {}
+	for _, parent in ipairs({ player:FindFirstChildOfClass("Backpack"), player.Character }) do
+		for _, child in ipairs(parent and parent:GetChildren() or {}) do
+			if child:IsA("Tool") then
+				local name = child:GetAttribute("ItemName")
+				if type(name) ~= "string" or name == "" then name = child.Name end
+				if not name:match("^Talent:") and not name:match("^Mantra:") then addItem(inventory, name) end
+			end
+		end
+	end
+	local bank, gui = {}, player:FindFirstChildOfClass("PlayerGui")
+	for _, object in ipairs(gui and gui:GetDescendants() or {}) do
+		local parent, visibleBank = object, false
+		for _ = 1, 8 do
+			parent = parent and parent.Parent
+			local label = parent and tostring(parent.Name):lower() or ""
+			if label:find("bank", 1, true) or label:find("storage", 1, true) then visibleBank = true; break end
+		end
+		if visibleBank then
+			local name = object:GetAttribute("ItemName") or object:GetAttribute("Item") or object:GetAttribute("ToolName")
+			if type(name) == "string" then addItem(bank, name, tonumber(object:GetAttribute("Amount")) or 1) end
+		end
+	end
+	local packet = { type = "inventory", version = 1, accountId = accountId,
+		inventory = sortedItems(inventory), bank = sortedItems(bank) }
+	if lastInventory then
+		local gained = {}
+		for name, count in pairs(inventory) do
+			local difference = count - (lastInventory[name] or 0)
+			if difference > 0 then gained[#gained + 1] = { name = name, count = difference } end
+		end
+		if #gained > 0 then send({ type = "loot", version = 1, accountId = accountId, items = gained }) end
+	end
+	lastInventory = inventory
+	return send(packet)
+end
+local function actionReply(id, ok, message)
+	message = tostring(message or (ok and "completed" or "failed")):gsub("[%c]", " "):sub(1, 160)
+	actionResults[id] = { ok = ok == true, message = message }
+	local count = 0
+	for _ in pairs(actionResults) do count += 1 end
+	if count > 30 then actionResults = { [id] = actionResults[id] } end
+	save() -- Prevent an acknowledged command from running again after a teleport or restart.
+	return send({ type = "action-result", accountId = accountId, id = id, ok = ok == true, message = message })
+end
+local function handleAction(data)
+	if type(data.id) ~= "string" or #data.id > 160 or type(data.expiresAt) ~= "number" or data.expiresAt <= os.time()
+		or data.expiresAt > os.time() + 300 or type(data.args) ~= "table" then return disconnect() end
+	if data.action ~= "stop" and data.action ~= "scan-items" and data.action ~= "bring" and data.action ~= "park" then
+		return disconnect()
+	end
+	local previous = actionResults[data.id]
+	if previous then return actionReply(data.id, previous.ok, previous.message) end
+	if data.action == "stop" then
+		movement:stop("stopped by owner")
+		return actionReply(data.id, true, "movement stopped")
+	end
+	if data.action == "scan-items" then
+		local ok = scanItems()
+		return actionReply(data.id, ok, ok and "item scan sent" or "item scan could not be sent")
+	end
+	if not auto.profile or auto.profile.role ~= "alt" or auto.profile.halted == true then
+		return actionReply(data.id, false, "account is not available for movement")
+	end
+	if data.action == "bring" then
+		if tostring(data.args.mainId) ~= tostring(auto.profile.mainId) then return actionReply(data.id, false, "main changed") end
+		local ok, reason = movement:bring(data.args.mainId, data.args.offset)
+		return actionReply(data.id, ok, reason)
+	end
+	if data.action == "park" then
+		local ok, reason = movement:park(data.args.position, data.args.placeId, data.args.jobId)
+		return actionReply(data.id, ok, reason)
+	end
+	return disconnect()
+end
 local function connectRelay()
 	if stopped or busy then return end
 	busy = true
@@ -882,15 +1177,19 @@ local function connectRelay()
 		if not data then disconnect(); return end
 		packetAt = os.clock(); backoff = 2
 		if data.type == "profile" then
-			if (ownerId and data.ownerId ~= ownerId) or not auto:setProfile(data) then disconnect() else networkProblem = nil end
+			if (ownerId and data.ownerId ~= ownerId) or not auto:setProfile(data) then disconnect() else
+				networkProblem = nil
+				if data.halted == true or data.enabled == false then movement:stop(data.halted and "emergency stop" or "standby") end
+			end
 		elseif data.type == "target" then auto:setTarget(data)
+		elseif data.type == "action" and data.version == 1 then handleAction(data)
 		else disconnect() end
 	end)
 	socketConnections[#socketConnections + 1] = connected.OnClose:Connect(function()
 		if socket == connected then disconnect() end
 	end)
 	send({ type = "hello", username = player.Name })
-	catalogPending = menuCatalog ~= nil; catalogSentAt = 0; sentSignature = nil
+	catalogPending = menuCatalog ~= nil; catalogSentAt = 0; sentSignature = nil; inventoryAt = 0
 end
 local function refreshMenu()
 	if stopped or scanBusy then return end
@@ -932,12 +1231,17 @@ connect(Run.Heartbeat, function(dt)
 		local snapshot = current(); snapshot.state = auto.status
 		send({ type = "presence", current = snapshot })
 	elseif not socket and not busy and os.clock() >= reconnectAt then task.spawn(connectRelay) end
+	if socket and game.PlaceId ~= Core.LOBBY_PLACE_ID and os.clock() >= inventoryAt then
+		inventoryAt = os.clock() + 60
+		task.spawn(scanItems)
+	end
 end)
 function api:destroy()
 	if stopped then return end
 	stopped = true
 	for _, connection in ipairs(connections) do connection:Disconnect() end
 	if showConnection then showConnection:Disconnect() end
+	if movement then movement:destroy() end
 	disconnect()
 	if env.CLAW_CONTROL == self then env.CLAW_CONTROL = nil end
 end

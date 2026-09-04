@@ -1,11 +1,11 @@
 # CLAW Control changelog
 
-## 0.2.0-beta.6
+## 0.3.0-beta.1
 
-- Public Discord installs with separate account groups.
-- One private setup snippet per shared executor workspace.
-- Roblox usernames accepted in account commands.
-- Character cards, slot approval and exact-server following.
-- Saved join recovery, private errors and a short support report.
+- Teams, deployment, ready checks and formations.
+- Cloud bring, stop, parking spots and emergency stop.
+- Recovery settings, presets and the Enmity team flow.
+- Item scans, loot history, sessions and character notes.
+- Optional Discord alerts.
 
-Automatic menu return starts off. Eastern and Etrean are supported.
+Movement, recovery and alerts stay off until requested.
