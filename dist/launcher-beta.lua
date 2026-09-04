@@ -15,7 +15,8 @@ local exists, oldRaw = pcall(readfile, path)
 local previous
 if exists then
     assert(type(oldRaw) == "string" and #oldRaw <= 4096, "Existing pairing file is invalid; inspect it before replacing it")
-    previous = Http:JSONDecode(oldRaw)
+    local decoded, value = pcall(Http.JSONDecode, Http, oldRaw)
+    previous = decoded and value or nil
     assert(type(previous) == "table" and previous.Version == 1 and previous.AccountId == input.AccountId,
         "Existing pairing file is invalid; inspect it before replacing it")
     assert(previous.OwnerId == input.OwnerId and previous.Endpoint == input.Endpoint,
@@ -23,13 +24,22 @@ if exists then
 end
 local request = request or http_request
 assert(type(request) == "function", "Executor HTTP support required")
-local response = request({ Url = input.Endpoint .. "/session?owner=" .. input.OwnerId, Method = "POST",
-    Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = input.AccountId, key = input.Key }) })
-assert(type(response) == "table" and response.StatusCode == 200, "Pairing rejected or relay unavailable; nothing saved")
-local raw = Http:JSONEncode({ Version = 1, Endpoint = input.Endpoint, OwnerId = input.OwnerId,
-    AccountId = input.AccountId, Key = input.Key, AllowMenuReturn = previous and previous.AllowMenuReturn == true or false })
-if not isfolder("CLAW_PAIRINGS") then makefolder("CLAW_PAIRINGS") end
-writefile(path, raw); assert(readfile(path) == raw, "Pairing file verification failed")
+-- Never forward adapter errors: they may contain the private request or file.
+local encoded, body, raw = pcall(function()
+    return Http:JSONEncode({ accountId = input.AccountId, key = input.Key }),
+        Http:JSONEncode({ Version = 1, Endpoint = input.Endpoint, OwnerId = input.OwnerId,
+            AccountId = input.AccountId, Key = input.Key, AllowMenuReturn = previous and previous.AllowMenuReturn == true or false })
+end)
+assert(encoded and type(body) == "string" and type(raw) == "string" and #raw <= 4096,
+    "Could not prepare pairing; nothing saved. Check executor JSON support.")
+local sent, response = pcall(request, { Url = input.Endpoint .. "/session?owner=" .. input.OwnerId, Method = "POST",
+    Headers = { ["Content-Type"] = "application/json" }, Body = body })
+assert(sent and type(response) == "table" and response.StatusCode == 200, "Pairing rejected or relay unavailable; nothing saved")
+local stored = pcall(function()
+    if not isfolder("CLAW_PAIRINGS") then makefolder("CLAW_PAIRINGS") end
+    writefile(path, raw); assert(readfile(path) == raw)
+end)
+assert(stored, "Could not save and verify pairing. Check executor file access, then rerun this account's private snippet.")
 print("[CLAW] Paired this account privately. Put the public launcher-beta.lua loader in autoexec; /claw setup has it.")
 return true
 ]=], "@CLAW/pair.lua"))()
@@ -44,7 +54,8 @@ if not ok then
     return
 end
 assert(type(raw) == "string" and #raw <= 4096, "Invalid local pairing file")
-local config = Http:JSONDecode(raw)
+local decoded, config = pcall(Http.JSONDecode, Http, raw)
+assert(decoded, "Invalid local pairing file; keep it private and follow Recover pairing in the setup guide")
 assert(type(config) == "table" and config.Version == 1 and config.AccountId == tostring(player.UserId), "Pairing belongs to another account")
 assert(type(config.OwnerId) == "string" and config.OwnerId:match("^%d+$") and #config.OwnerId >= 17 and #config.OwnerId <= 20, "Invalid pairing owner")
 assert(type(config.Endpoint) == "string" and config.Endpoint:match("^https://[%w%.%-]+$"), "Invalid pairing endpoint")
@@ -887,8 +898,10 @@ local function connectRelay()
 	if stopped or busy then return end
 	busy = true
 	local generation = socketGeneration
-	local ok, response = pcall(http, { Url = endpoint .. "/session" .. ownerQuery, Method = "POST",
-		Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = accountId, key = key }) })
+	local ok, response = pcall(function()
+		return http({ Url = endpoint .. "/session" .. ownerQuery, Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = accountId, key = key }) })
+	end)
 	if stopped or generation ~= socketGeneration then busy = false; return end
 	if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
 		busy = false; disconnect()

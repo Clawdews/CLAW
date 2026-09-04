@@ -29,12 +29,15 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		options = options or {}
 		if pairedLauncher then options.owner = options.owner or "123456789012345678" end
 		local f = { now = 2000000000, clock = 0, files = {}, memory = {}, values = {}, encoded = 0,
-			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, hasMain = false, authRequests = 0 }
+			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, hasMain = false, authRequests = 0, encodeFailures = 0 }
 		f.cloudMenu = options.cloudMenu
 		f.env = { CLAW_CONTROL_CONFIG = { Endpoint = "https://claw-test.example", Key = string.rep("a", 64),
 			AllowMenuReturn = options.menu == true, OwnerId = options.owner } }
 		local http = {}
-		function http:JSONEncode(value) f.encoded += 1; local key = "json-" .. f.encoded; f.values[key] = clone(value); return key end
+		function http:JSONEncode(value)
+			if options.requestEncodeFail and value.key then f.encodeFailures += 1; error("encoder included " .. value.key) end
+			f.encoded += 1; local key = "json-" .. f.encoded; f.values[key] = clone(value); return key
+		end
 		function http:JSONDecode(key) return clone(assert(f.values[key], "invalid JSON")) end
 		function http:GenerateGUID() return "nonce-1" end
 		f.http = http
@@ -139,6 +142,16 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 	end
 	local passed = 0
 	local function test(name, fn) fn(); passed += 1; print("PASS runtime " .. name) end
+	test("session encode errors remain private and reconnect can recover", function()
+		local options = { requestEncodeFail = true }
+		local ok, f = pcall(boot, options)
+		assert(ok, "Session setup leaked an unhandled encoder error")
+		assert(f.authRequests == 0 and f.encodeFailures == 1 and not f.api:report().connected)
+		f:advance(10); assert(f.encodeFailures > 1 and f.authRequests == 0)
+		options.requestEncodeFail = false
+		f:advance(60); assert(f.authRequests == 1 and f.api:report().connected)
+		f.api:destroy()
+	end)
 	test("autoexec selects saved slot and joins without clipboard or GUI", function()
 		local f = boot(); f:advance(2); assert(f.picks == 1 and f.joins == 1)
 		f:advance(10); assert(f.joins == 1)

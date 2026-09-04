@@ -87,6 +87,15 @@ Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.js
 
 There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
 
+## Recover pairing
+
+- **Key rejected or lost:** use `/claw rotate account:...`, then run the new private snippet on that same Roblox account. A valid existing pairing file is updated for you.
+- **Invalid local pairing file:** stop the loader on that account. Get a new private snippet with `/claw rotate`, move only its damaged `CLAW_PAIRINGS/<RobloxUserId>.json` file aside privately, then run the snippet. Leave other accounts' files alone. Never upload the damaged file; it may still contain a key.
+- **Could not save and verify pairing:** check executor file access, then rerun the same private snippet. A write may have happened even though verification failed. If it now reports an invalid file, use the recovery step above.
+- **Relay unavailable:** wait and retry. Do not rotate keys just because the network is down.
+
+Setup errors intentionally hide raw file and request contents. Send the short error message when asking for help, not the pairing snippet.
+
 ## Optional menu report
 
 Only use this for troubleshooting; normal cloud sync does not need it.

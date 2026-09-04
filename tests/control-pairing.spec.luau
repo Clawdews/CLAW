@@ -1,4 +1,4 @@
-return function(pairSource, launcherSource)
+return function(pairSource, launcherSource, bundledSource)
     local function copy(t)
         if type(t) ~= "table" then return t end
         local c = {}; for k, v in pairs(t) do c[k] = copy(v) end; return c
@@ -48,6 +48,59 @@ return function(pairSource, launcherSource)
     end
     local passed = 0
     local function test(name, fn) fn(); passed += 1; print("PASS pairing " .. name) end
+    local function privateFailure(f, source, expected)
+        local ok, failure = f:run(source)
+        assert(not ok and type(failure) == "string", "Expected a controlled setup failure")
+        assert(not failure:find(f.input.Key, 1, true), "A private key escaped through a setup error")
+        assert(failure:find(expected, 1, true), "Missing useful setup instruction")
+        for _, message in ipairs(f.logs) do assert(not message:find(f.input.Key, 1, true), "A private key escaped through a log") end
+    end
+    test("pairing decode errors cannot echo the saved key", function()
+        local f = fixture(); f:existing()
+        function f.http:JSONDecode() error("decoder included " .. f.input.Key) end
+        privateFailure(f, pairSource, "Existing pairing file is invalid")
+        assert(f.requests == 0 and f.writes == 0 and f.env.CLAW_PAIR == nil)
+    end)
+    test("launcher decode errors cannot echo the saved key", function()
+        local f = fixture(); f.env.CLAW_PAIR = nil; f:existing()
+        function f.http:JSONDecode() error("decoder included " .. f.input.Key) end
+        privateFailure(f, launcherSource, "Invalid local pairing file")
+        assert(f.downloads == 0 and not f.env.CLAW_CONTROL_CONFIG)
+    end)
+    test("published launcher hides pairing and startup decoder errors", function()
+        for _, firstRun in ipairs({ true, false }) do
+            local f = fixture(); f:existing(); if not firstRun then f.env.CLAW_PAIR = nil end
+            function f.http:JSONDecode() error("decoder included " .. f.input.Key) end
+            privateFailure(f, bundledSource, firstRun and "Existing pairing file is invalid" or "Invalid local pairing file")
+            assert(f.requests == 0 and f.writes == 0 and f.downloads == 0)
+        end
+    end)
+    test("pairing transport errors cannot echo a request body", function()
+        local f = fixture(); f:existing(); local before = f.files["CLAW_PAIRINGS/22.json"]
+        f.runtime.request = function() error("request body included " .. f.input.Key) end
+        privateFailure(f, pairSource, "Pairing rejected or relay unavailable")
+        assert(f.writes == 0 and f.files["CLAW_PAIRINGS/22.json"] == before)
+    end)
+    test("pairing encode errors cannot echo the supplied key", function()
+        local f = fixture()
+        function f.http:JSONEncode() error("encoder included " .. f.input.Key) end
+        privateFailure(f, pairSource, "Could not prepare pairing")
+        assert(f.requests == 0 and f.writes == 0)
+    end)
+    test("pairing write and verification errors never print file contents", function()
+        for _, stage in ipairs({ "write", "verify" }) do
+            local f = fixture()
+            if stage == "write" then f.runtime.writefile = function() error("write included " .. f.input.Key) end
+            else
+                local read = f.runtime.readfile
+                f.runtime.readfile = function(path)
+                    if f.writes > 0 then error("verification included " .. f.input.Key) end
+                    return read(path)
+                end
+            end
+            privateFailure(f, pairSource, "Could not save and verify pairing")
+        end
+    end)
     test("pair authenticates and saves just the local account, with automatic exits off", function()
         local f = fixture(); assert(f:run(pairSource)); assert(f.env.CLAW_PAIR == nil and f.requests == 1 and f.downloads == 0)
         local saved = f.http:JSONDecode(f.files["CLAW_PAIRINGS/22.json"])

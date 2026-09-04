@@ -15,7 +15,8 @@ if not ok then
     return
 end
 assert(type(raw) == "string" and #raw <= 4096, "Invalid local pairing file")
-local config = Http:JSONDecode(raw)
+local decoded, config = pcall(Http.JSONDecode, Http, raw)
+assert(decoded, "Invalid local pairing file; keep it private and follow Recover pairing in the setup guide")
 assert(type(config) == "table" and config.Version == 1 and config.AccountId == tostring(player.UserId), "Pairing belongs to another account")
 assert(type(config.OwnerId) == "string" and config.OwnerId:match("^%d+$") and #config.OwnerId >= 17 and #config.OwnerId <= 20, "Invalid pairing owner")
 assert(type(config.Endpoint) == "string" and config.Endpoint:match("^https://[%w%.%-]+$"), "Invalid pairing endpoint")

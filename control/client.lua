@@ -195,8 +195,10 @@ local function connectRelay()
 	if stopped or busy then return end
 	busy = true
 	local generation = socketGeneration
-	local ok, response = pcall(http, { Url = endpoint .. "/session" .. ownerQuery, Method = "POST",
-		Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = accountId, key = key }) })
+	local ok, response = pcall(function()
+		return http({ Url = endpoint .. "/session" .. ownerQuery, Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = accountId, key = key }) })
+	end)
 	if stopped or generation ~= socketGeneration then busy = false; return end
 	if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
 		busy = false; disconnect()

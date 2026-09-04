@@ -1,5 +1,11 @@
 # Control changelog
 
+## Client fixes
+
+- Pairing errors hide private file and request contents.
+- A failed session encoder no longer leaves reconnect stuck.
+- Invalid pairing files stop with a readable next step.
+
 ## 0.2.0-beta.3
 
 - Account nicknames and paginated status.
