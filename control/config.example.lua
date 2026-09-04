@@ -9,4 +9,4 @@ getgenv().CLAW_CONTROL_CONFIG = {
 	-- Opt in only after the menu-to-main test passes. Does not bypass combat/respawn restrictions.
 	AllowMenuReturn = false,
 }
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/discord-control/control-client.lua?t=" .. tostring(os.time())))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/discord-control/control-client.lua?t=" .. tostring(os.time())))()
