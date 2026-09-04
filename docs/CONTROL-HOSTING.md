@@ -1,13 +1,11 @@
-# Hosting Control
+# Hosting CLAW Control
 
-One Cloudflare Worker and one Discord application serve all users. Users pair their clients; they do not need hosting accounts or bot tokens.
-
-Use a separate app and Worker for beta testing.
+One Discord app and one Cloudflare Worker serve all users. Users do not need bot tokens or Cloudflare accounts.
 
 ## Setup
 
-1. Copy `control/wrangler.shared.jsonc` to ignored `control/wrangler.shared.local.jsonc`. Keep `SHARED_MODE=true` and `ACCESS_MODE=closed`. Add tester Discord IDs to `BETA_USERS`.
-2. Create a Discord app with server/user installation and the `applications.commands` scope. No Administrator permission or message-reading intent is required.
+1. Copy `control/wrangler.shared.jsonc` to ignored `control/wrangler.shared.local.jsonc`.
+2. Create a Discord app with user/server installation and `applications.commands`. No Administrator permission or message-reading intent is needed.
 3. Test and deploy:
 
 ```sh
@@ -18,48 +16,21 @@ npx wrangler deploy --config wrangler.shared.local.jsonc
 npx wrangler secret put DISCORD_PUBLIC_KEY --config wrangler.shared.local.jsonc
 ```
 
-4. Set `PUBLIC_ENDPOINT` to the Worker's HTTPS origin and redeploy. Set the app's Interactions Endpoint to `<origin>/discord`; its verification must pass.
-5. Copy `.env.shared.example` to ignored `.env`, fill it privately, then register the commands:
+4. Set `PUBLIC_ENDPOINT` to the Worker origin and the Discord Interactions Endpoint to `<origin>/discord`.
+5. Fill an ignored `.env`, then run `node --env-file=.env register.mjs`.
 
-```sh
-node --env-file=.env register.mjs
-```
+Test in a guild first. For public use, register globally and set `ACCESS_MODE=public`. Public mode requires the rate-limit binding.
 
-Start with a test guild. For public release, register globally with `DISCORD_COMMAND_SCOPE=global`, test user installation, then switch `ACCESS_MODE=public`. Public mode requires the configured rate-limit binding. Stay on the free plan unless a billing change is deliberate.
+## Stored data
 
-Do not mix in the legacy service's `INITIAL_PAIRING`, endpoint or credentials.
+Each Discord user has a separate group containing account IDs, hashed pairing keys, settings, character cards and current connection state. Pairing keys remain in private Discord replies and local `CLAW_PAIRINGS` files. The host can access stored data.
 
-## Data
+Limits: 30 accounts per group, 60 cards per account, 15-minute panels, 10-minute batch setup, 35-second main destinations and single-use 30-second socket tickets.
 
-Each signed Discord user owns a separate stored group. Records contain account IDs, hashed pairing keys, preferences, nicknames, compact character cards and bounded retry metadata. The host can access stored data; other users cannot access your group.
-
-Raw menu reports, chat, friends and editable text are not uploaded. Current card summaries replace earlier snapshots. Unchanged cards refresh every five minutes; changed cards upload at most once per ten seconds.
-
-Pairing keys stay in private Discord replies and `CLAW_PAIRINGS/<UserId>.json` on the device. Anyone with that key or access to the executor can impersonate the client. Pairing is not Roblox account-ownership verification.
-
-`/claw revoke` removes an account's stored enrollment, cards and settings and invalidates its key. Local files are not erased remotely. Owner/replay metadata and hosting backups have separate retention.
-
-## Limits and recovery
-
-- 30 accounts per group; 60 cards per account.
-- 8 KiB client HTTP bodies; 32 KiB signed Discord interactions (including embedded panel messages); 64 KiB catalog/profile messages; 4 KiB other client messages.
-- Up to 40 owner-bound panels per group, expiring after 15 minutes. Each click consumes its controls; confirmations recheck settings and character identity.
-- One 10-minute batch setup window per group, with pending requests included in the 30-account limit. Batch requests require the rate limiter even in closed beta.
-- Main destinations expire after 35 seconds.
-- Socket tickets expire after 30 seconds and are single-use.
-- Network reconnects back off; game joins require a saved, bounded attempt.
-- Rejected credentials wait five minutes before reconnecting.
-
-No arbitrary Lua, Roblox cookies or process-launch commands are accepted. Automatic menu return starts off and uses normal game requests.
-
-Batch setup stores only hashed setup codes and pending keys on the service. Clients generate and persist their own candidate keys before requesting approval. Roblox's public API resolves the submitted username; this verifies the name/ID mapping, not ownership. The owner must match each device's check code before approving it. Existing account keys are never overwritten by batch enrollment. Closing or expiring a window blocks new approvals; approved clients can still finish saving their matching key.
-
-Worker request logging is disabled because socket URLs contain temporary credentials. Do not log full requests, pairing replies or webhook URLs.
+Worker request logging should stay off because socket URLs contain temporary credentials. Never log pairing replies, full requests or webhook URLs.
 
 ## Releases
 
-`node tools/build-control.mjs` builds the self-contained launcher. `node tools/check-control.mjs` checks versions, artifacts, credentials and tests. Nothing in that command deploys or registers the app.
+`node tools/build-control.mjs` builds the launcher. `node tools/check-control.mjs --worker-build` checks the release without deploying it.
 
-Pin a reviewed commit for stable distribution. The moving beta loader receives updates; its manifest hashes are build checks, not an executor-enforced signature.
-
-Before changing a live service, record its Worker version and matching loader. Roll back code to that pair if needed; do not delete its stored groups. Keep only one control loader active per account.
+Keep one control loader active per account. Roll back code without deleting stored groups.

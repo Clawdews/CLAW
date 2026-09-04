@@ -1,33 +1,22 @@
 # CLAW Control
 
-Manage your alts from Discord and have them join your main's server.
+Discord control for pairing alts and following a main's exact Deepwoken server. Each Discord user has a separate account group.
 
-Open to everyone. Each Discord user gets a separate account group automatically. Main-to-alt joining and server hopping have been tested in-game; batch pairing still needs a fresh-alt test.
+[Install CLAW Control](https://discord.com/oauth2/authorize?client_id=1545435882784559124&scope=applications.commands&integration_type=1)
 
-[Add CLAW to your Discord account](https://discord.com/oauth2/authorize?client_id=1545435882784559124&scope=applications.commands&integration_type=1).
+## Setup
 
-## Using it
+1. Open `/claw panel`.
+2. Under **Setup**, start alt setup and run the private snippet once in the shared executor workspace.
+3. Open each account and approve its matching check code.
+4. Leave each alt at character selection and allow a character in the main's region.
+5. Choose the main and enable following.
 
-Open `/claw panel` in Discord. Pick an account, then click **Characters** to see its slots and choose which ones it can use.
+Eastern and Etrean are supported. Automatic menu return starts off. Roblox and the executor must be running.
 
-- Pair each account once. After that, they all use the same loader.
-- Adding several alts? **Setup → Start alt setup** gives you one setup snippet for accounts sharing the same executor workspace.
-- See character names, power, race and region without looking through each Roblox window.
-- Choose your main, turn following on, or pause it from the panel.
-- Your account list is private to your Discord user.
+[Full setup](../docs/CONTROL-SETUP.md) · [Privacy](../docs/PRIVACY.md) · [Hosting](../docs/CONTROL-HOSTING.md) · [Changelog](../docs/CONTROL-RELEASE.md)
 
-Supports Eastern and Etrean. Returning an alt to the menu automatically is off unless you enable it. Roblox and your executor still need to be running.
-
-Using the [older controller](https://github.com/Clawdews/CLAW/tree/discord-control/control)? Keep that setup separate; don't run both loaders together.
-
-## Guides
-
-- [Setup](../docs/CONTROL-SETUP.md)
-- [Hosting and data](../docs/CONTROL-HOSTING.md)
-- [What to keep private](../docs/PRIVACY.md)
-- [Changelog](../docs/CONTROL-RELEASE.md)
-
-## Development
+## Build
 
 ```sh
 npm --prefix control ci
