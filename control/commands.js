@@ -18,6 +18,7 @@ const usernameAccount = { ...account, description: 'Roblox username (not display
 export const sharedCommand = {
   ...command, default_member_permissions: null, integration_types: [0, 1], contexts: [0, 1, 2],
   options: [
+    { type: 1, name: 'panel', description: 'Open your private account and character controls' },
     { type: 1, name: 'setup', description: 'Start your own private account group' },
     ...command.options.filter(option => option.name !== 'slot').map(option => option.name === 'enroll'
       ? { ...option, description: 'Pair a new account and receive private setup instructions' }

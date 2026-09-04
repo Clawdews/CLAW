@@ -6,9 +6,32 @@ You pair each account once, choose which characters it may use, then tell your a
 
 The **public loader** is safe to share. The **pairing snippet** contains your account's private key: treat it like a password. [What to keep private](PRIVACY.md).
 
+## Already paired? Start here
+
+Type **`/claw panel`** in Discord. Only you can see it.
+
+1. Choose an account from the dropdown.
+2. Click **Characters**. Filter by region or use **Next** to see more.
+3. Choose a character to see its details. **Allow character** and **Prefer in this region** both ask you to confirm.
+4. Back on **Accounts**, you can choose your main, enable following, or pause it.
+
+You do not need to pair working accounts again. Keep the same public loader below. The panel shows a snapshot: click **Refresh** for an update. Controls expire after 15 minutes; open `/claw panel` again if needed.
+
+### Adding several alts
+
+1. In `/claw panel`, click **Setup → Start alt setup**.
+2. Run the private snippet **once** on one account in your executor's shared workspace.
+3. Start your other accounts with the same public loader (or run it on accounts already open).
+4. In Discord, click **Refresh**. Choose each request and compare its eight-character check code with that account's Roblox console. Confirm only your own matching requests.
+5. Pairing finishes on the next check, usually within 30 seconds. Then choose which characters each alt may use.
+
+The setup window lasts 10 minutes. It does not change existing pairings, turn following on, or allow every character. Each account gets its own private key. A username alone is not proof that a request came from your device—check the code too. If an unfamiliar request appears, close setup and start a fresh window.
+
+Accounts must use the same executor workspace for one setup snippet to reach them all. Another device or workspace needs the snippet there too. Roblox must be open and the executor running; Discord cannot launch them. If the window expires, open a new one and rerun the same public loader on unfinished accounts. Single-account enrollment below still works.
+
 ## 1. Pair your accounts
 
-1. Install the host's CLAW Discord app, then run `/claw setup`. In closed beta, the host must enable your Discord User ID first.
+1. Install the host's CLAW Discord app, then run `/claw panel`. In closed beta, the host must enable your Discord User ID first.
 2. Run `/claw enroll account:<username>` for your main and each alt. Enter the actual Roblox username, not the display name; do not type the brackets. Numeric UserIds still work. All `account` fields accept either.
 3. On each matching Roblox account, execute its private pairing snippet from Discord once. It checks the local account, verifies the key and saves it to that executor's workspace. Never share this snippet.
 4. Put the following **public** loader in autoexec. It reads only the current account's pairing file. Unlike the enrollment snippet, this line is safe to share:
@@ -27,7 +50,7 @@ Save [control-autoexec.lua](../control-autoexec.lua) in Volt's `autoexec` folder
 
 Every instance using that same Volt installation and workspace uses this one file. You do **not** need one copy per alt. If you use another computer or a separate executor workspace, set it up there too; keys do not download from Discord automatically. Keep existing pairings private rather than posting them with the loader.
 
-For each **new** alt, run `/claw enroll account:<username>` and execute its private reply once on that account. It then uses the existing shared startup file on later joins. Choose the characters it may use in Discord; the loader never approves every character for you.
+For **new** alts, use the setup window above or `/claw enroll account:<username>`. They then use the existing shared startup file on later joins. Choose the characters they may use in Discord; the loader never approves every character for you.
 
 ### What happens next time?
 
@@ -41,7 +64,7 @@ An alt already in another world waits for the menu unless you opted that account
 
 ## 2. Choose which characters the alts may use
 
-Leave the paired alt at character selection for about 15 seconds, then use `/claw slots account:...`. Its character cards appear in Discord automatically. They show the slot letter, name, level, race, oath/origin, location, playtime and last played. Use `page:2` to see more.
+Leave the paired alt at character selection for about 15 seconds, then open **Characters** in `/claw panel`, or use `/claw slots account:...`. Cards show the slot letter, name, power, race, oath/origin, region and permission. Choose a card for playtime, last played and the last scan time. Use **Next** or the region filter to find another character.
 
 Nothing is selected just because it appeared in the list. **Allow** means “this alt may use this character.” **Prefer** means “use this one when more than one allowed character fits.” Choose the region shown by the command's menu.
 
@@ -76,6 +99,7 @@ Automatic exits are off by default. After a successful menu test, opt in from Di
 
 | Command | What it does |
 | --- | --- |
+| `/claw panel` | Private account selector, character cards, permissions and setup |
 | `/claw status` | Show your accounts, main and follow state |
 | `/claw status page:2` | See additional accounts without a truncated report |
 | `/claw nickname account:... label:...` | Give an account a readable label; its numeric identity stays visible |
@@ -106,6 +130,8 @@ Pause/revocation cannot undo a teleport Roblox already accepted. If a key leaks,
 Beta attempt reports are in `CLAW_CONTROL_BETA/<DiscordUserId>-<RobloxUserId>.json`, separate from pairing keys. Share a status report privately, not the contents of `CLAW_PAIRINGS`.
 
 There are two small persistent files per paired account: its pairing and current attempt state. They are overwritten in place. Normal cloud sync creates no menu-report files or recording history. The separate diagnostic scanner below creates one additional report per account only when you explicitly run it.
+
+Batch setup adds one shared `CLAW_PAIRINGS/batch.json` file and, while waiting, one `pending-<RobloxUserId>.json` per account. Both are private. The pending file is removed after a verified pairing save if the executor supports deletion; otherwise it is reused, not multiplied. The shared setup code stops working after its 10-minute window even if the file remains on disk.
 
 **Storage unavailable:** the client could not prepare or save its current attempt. New actions stop. Check executor JSON/file support and storage access, then use `/claw retry account:...` after fixing the problem. Do not delete your pairing or attempt files to force a retry. You can still stop the client while saving is unavailable.
 

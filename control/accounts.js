@@ -61,5 +61,6 @@ export async function resolveCommandAccount(interaction, fetcher = fetch) {
   if (resolved.error) return resolved;
   const normalized = structuredClone(interaction);
   normalized.data.options[0].options.find(o => o.name === 'account').value = resolved.accountId;
+  if (resolved.username) normalized.accountUsername = resolved.username;
   return { ...resolved, interaction: normalized };
 }

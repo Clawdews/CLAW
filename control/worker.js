@@ -6,11 +6,13 @@ import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeS
 import { pairingReply, setupReply } from './onboarding.js';
 import { cleanCatalog, selectable, catalogPage, MAX_SLOTS } from './catalog.js';
 import { cleanNickname, statusPage } from './status.js';
-import { resolveCommandAccount } from './accounts.js';
+import { resolveCommandAccount, resolveAccount } from './accounts.js';
+import { panelCommand } from './panel-controller.js';
+import { batchInput, batchRequest } from './batch.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
-async function bodyText(request) {
-  if (Number(request.headers.get('Content-Length')) > 8192) throw new Error('body too large');
+async function bodyText(request, limit = 8192) {
+  if (Number(request.headers.get('Content-Length')) > limit) throw new Error('body too large');
   const reader = request.body?.getReader();
   if (!reader) return '';
   const decoder = new TextDecoder(); let bytes = 0, text = '';
@@ -18,7 +20,7 @@ async function bodyText(request) {
     const { value, done } = await reader.read();
     if (done) break;
     bytes += value.byteLength;
-    if (bytes > 8192) { await reader.cancel(); throw new Error('body too large'); }
+    if (bytes > limit) { await reader.cancel(); throw new Error('body too large'); }
     text += decoder.decode(value, { stream: true });
   }
   return text + decoder.decode();
@@ -26,10 +28,10 @@ async function bodyText(request) {
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.3', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.4', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
-      try { raw = await bodyText(request); } catch { return json({ error: 'Invalid body' }, 413); }
+      try { raw = await bodyText(request, 32768); } catch { return json({ error: 'Invalid body' }, 413); }
       if (!await discordSignature(raw, request.headers.get('X-Signature-Timestamp'),
         request.headers.get('X-Signature-Ed25519'), env.DISCORD_PUBLIC_KEY)) return json({ error: 'Invalid signature' }, 401);
       let interaction;
@@ -40,17 +42,36 @@ export default {
       if (!user) {
         return json(reply('This control is restricted. Install the app for yourself or ask the beta host for access.'));
       }
-      if (interaction.type !== 2 || interaction.data?.name !== 'claw') return json(reply('Unsupported command.'));
+      if (!(interaction.type === 2 && interaction.data?.name === 'claw') && !(shared(env) && interaction.type === 3)) return json(reply('Unsupported command.'));
       if (!await entryAllowed(env, 'command:' + user)) return json(reply('Control is temporarily rate-limited or unavailable. Try again later.'));
       try {
         // Resolve outside the account room so a slow lookup cannot block its sockets.
-        const resolved = shared(env) ? await resolveCommandAccount(interaction) : { interaction };
+        const resolved = shared(env) && interaction.type === 2 ? await resolveCommandAccount(interaction) : { interaction };
         if (resolved.error) return json(reply(resolved.error));
         const result = await env.ROOM.getByName(roomName(env, user)).command(resolved.interaction, Number(request.headers.get('X-Signature-Timestamp')), user);
-        if (resolved.username && result.type === 4) result.data.content = `Account: @${resolved.username} (${resolved.accountId})\n` + result.data.content;
+        if (resolved.username && result.type === 4 && !result.data.embeds) result.data.content = `Account: @${resolved.username} (${resolved.accountId})\n` + result.data.content;
         return json(result);
       }
       catch { return json(reply('Control service unavailable. No success was confirmed; try status before retrying.')); }
+    }
+    if (shared(env) && path === '/batch' && request.method === 'POST') {
+      const owner = new URL(request.url).searchParams.get('owner');
+      if (!allowedOwner(env, owner)) return json({ state: 'unauthorized' }, 401);
+      // Batch onboarding is rate limited even in the closed beta.
+      try {
+        if (!env.ENTRY_LIMITER || !(await env.ENTRY_LIMITER.limit({ key: 'batch:' + owner })).success) return json({ state: 'try-later' }, 429);
+        const input = JSON.parse(await bodyText(request));
+        if (!batchInput(input)) return json({ state: 'invalid' }, 400);
+        const room = env.ROOM.getByName(roomName(env, owner));
+        let result = await room.batch(input, owner);
+        if (result.state === 'new') {
+          const resolved = await resolveAccount('@' + input.username);
+          if (resolved.error || resolved.accountId !== input.accountId) return json({ state: 'lookup-failed' }, 400);
+          result = await room.batch({ ...input, username: resolved.username }, owner, true);
+        }
+        const { status, ...body } = result;
+        return json(body, status);
+      } catch { return json({ state: 'try-later' }, 503); }
     }
     if ((path === '/session' && request.method === 'POST') || (path === '/socket' && request.method === 'GET')) {
       const owner = new URL(request.url).searchParams.get('owner');
@@ -197,6 +218,15 @@ export class ControlRoom extends DurableObject {
     if (data.type === 'hello') {
       if (now() - a.lastMessage < 1) return;
       a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
+      // Display-only label from an authenticated client; never used for ownership or routing.
+      if (!member.username && typeof data.username === 'string' && /^[A-Za-z0-9_]{1,20}$/.test(data.username)) {
+        await this.ctx.blockConcurrencyWhile(async () => {
+          const latest = this.config.members[a.userId];
+          if (!latest || latest.credential !== a.credential || latest.username) return;
+          const next = structuredClone(this.config); next.members[a.userId].username = data.username;
+          await this.ctx.storage.put('config', next); this.config = next;
+        });
+      }
       this.send(ws, this.profile(a.userId)); this.send(ws, this.target()); return;
     }
     if (data.type !== 'presence') return ws.close(1008, 'Unsupported message');
@@ -229,15 +259,24 @@ export class ControlRoom extends DurableObject {
   }
   webSocketClose(ws, code) { try { ws.close(code === 1006 ? 1000 : code, 'Closed'); } catch {} this.broadcast(); }
   webSocketError(ws) { try { ws.close(1011, 'Connection error'); } catch {} this.broadcast(); }
+  async batch(input, ownerId, register = false) {
+    return this.ctx.blockConcurrencyWhile(() => batchRequest(this, input, ownerId, register));
+  }
   async command(interaction, signedAt, ownerId) {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (shared(this.env) && (!snowflake(ownerId) || interactionOwner(interaction, this.env) !== ownerId
           || (this.config.ownerId && this.config.ownerId !== ownerId))) return reply('Not authorized for this account group.');
+      if (shared(this.env) && interaction.type === 3) return panelCommand(this, interaction, ownerId);
       const config = structuredClone(this.config);
       if (shared(this.env)) config.ownerId = ownerId;
       const option = interaction.data.options?.[0];
       const values = Object.fromEntries((option?.options || []).map(o => [o.name, o.value]));
       const account = values.account;
+      if (shared(this.env) && ['panel', 'setup', 'slots'].includes(option?.name)) {
+        if (option.name === 'slots' && !config.members[account]) return reply('Enroll that account first.');
+        return panelCommand(this, interaction, ownerId, { screen: option.name === 'slots' ? 'slots' : option.name === 'setup' ? 'setup' : 'home',
+          account: account || config.mainId, page: Math.max(0, (values.page || 1) - 1) });
+      }
       if (['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'auto-return', 'nickname', 'retry', 'revoke'].includes(option?.name) && !id(account)) {
         return reply('Account must be a numeric Roblox UserId.');
       }
@@ -263,6 +302,7 @@ export class ControlRoom extends DurableObject {
         if (!config.members[account] && Object.keys(config.members).length >= MAX_MEMBERS) return reply('Member limit reached.');
         const key = nonce().replaceAll('-', '') + nonce().replaceAll('-', '');
         config.members[account] = { ...config.members[account], keyHash: await hash(key), credential: nonce(), slot: config.members[account]?.slot || null };
+        if (interaction.accountUsername) config.members[account].username = interaction.accountUsername;
         content = shared(this.env) ? pairingReply(this.env.PUBLIC_ENDPOINT, ownerId, account, key)
           : `Paired Roblox account ${account}. Save this privately in its autoexec config. Re-enrolling rotates the key.\n\nKey: ||${key}||\nNever put it in GitHub or a public message.`;
         disconnectAccount = account;

@@ -51,5 +51,14 @@ local stored = pcall(function()
     writefile(path, raw); assert(readfile(path) == raw)
 end)
 assert(stored, "Could not save and verify pairing. Check executor file access, then rerun this account's private snippet.")
+-- Remove only this account's matching temporary setup file after the permanent save succeeds.
+if type(delfile) == "function" then
+    pcall(function()
+        local pendingPath = "CLAW_PAIRINGS/pending-" .. input.AccountId .. ".json"
+        if not isfile(pendingPath) then return end
+        local pending = Http:JSONDecode(readfile(pendingPath))
+        if pending.AccountId == input.AccountId and pending.OwnerId == input.OwnerId and pending.Key == input.Key then delfile(pendingPath) end
+    end)
+end
 print("[CLAW] Paired this account privately. Put the public launcher-beta.lua loader in autoexec; /claw setup has it.")
 return true

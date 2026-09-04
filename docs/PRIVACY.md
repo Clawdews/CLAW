@@ -13,12 +13,14 @@ The source code and public loader are safe to share. Your filled-in setup is not
 
 - **GitHub:** code, blank examples and documentation. The push-notification webhook lives in an encrypted repository secret, not in the source.
 - **Your device:** cloud pairing and attempt files stay in the executor workspace. Keep that folder private; do not upload it as a whole.
-- **Shared controller (beta):** the host stores account IDs, hashed pairing keys, character cards, settings and connection/attempt information. Groups are separated by Discord user, but the service owner can access stored data. This is not end-to-end encryption.
+- **Shared controller (beta):** the host stores account IDs/usernames, hashed pairing keys, character cards, settings and connection/attempt information. Temporary setup also stores pending account requests, key hashes and check codes. Groups are separated by Discord user, but the service owner can access stored data. This is not end-to-end encryption.
 - **Roblox username lookup:** when you use a username in a beta command, only that name is sent to Roblox’s public users API. No Discord identity, server destination, pairing key or cookie is sent with the lookup. Numeric IDs skip this request.
 - **Discord:** private pairing/status replies and the notifications you configure. Private replies are not permission to share their contents.
 - **Loot notifications:** your chosen channel receives the username, items and session/server details described in the loot guide. Everyone who can view that channel can read them.
 
 The controller does not need your Roblox password or session cookie. The host needs a bot token for its own Discord app; ordinary users do not.
+
+The batch setup snippet is private too. Its shared setup code expires after 10 minutes, while each approved account keeps its own key. Do not approve a pairing request just because the username looks familiar: match its check code against your own account's console. Starting setup does not prove Roblox account ownership. Saved pairing keys authorize clients, not people who merely know a username.
 
 Private does not mean stored nowhere: pairing needs a saved key, and cloud following needs account and server details. Keep those in the locations above, not in public posts. Never upload your whole executor workspace to get help.
 

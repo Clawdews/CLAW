@@ -32,7 +32,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
   const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
   const options = { workers: [{ name: 'shared-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey,
       // Even if mistakenly left in a shared deployment, legacy seed data cannot enter a user's room.
@@ -50,7 +50,8 @@ test('two users in the same Discord server have isolated commands, credentials, 
     const sig = Buffer.from(await crypto.subtle.sign('Ed25519', keys.privateKey, new TextEncoder().encode(ts + raw))).toString('hex');
     const response = await mf.dispatchFetch('https://claw.test/discord', { method: 'POST', body: raw,
       headers: { 'X-Signature-Timestamp': ts, 'X-Signature-Ed25519': sig } });
-    assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.data.flags, 64); return data.data.content;
+    assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.data.flags, 64);
+    return data.data.content + (data.data.embeds || []).map(e => `${e.title}\n${e.description}`).join('\n');
   }
   async function enroll(owner, account) {
     const text = await command(owner, 'enroll', { account });
@@ -69,7 +70,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
     socket.send(JSON.stringify({ type: 'hello' })); return { socket, messages, ticket };
   }
   async function waitFor(fn) { for (let i = 0; i < 100; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 20)); } assert.fail('Socket message timeout'); }
-  assert.match(await command(alice, 'setup'), /private/);
+  assert.match(await command(alice, 'setup'), /Pair your accounts/);
   const a11 = await enroll(alice, '11'), a22 = await enroll(alice, '22'), b11 = await enroll(bob, '11');
   await command(alice, 'main', { account: '11' }); await command(alice, 'follow', { enabled: true });
   await t.test('same account ID may be paired separately but keys cannot cross users', async () => {
@@ -109,7 +110,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
     assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'X', enabled: true }), /Refresh that character/);
     assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true }), /approved/);
     assert.match(await command(alice, 'prefer-slot', { account: '22', slot: 'L', region: 'EastLuminant' }), /Preferred/);
-    assert.match(await command(alice, 'slots', { account: '22' }), /L: EastLuminant \| approved/);
+    assert.match(await command(alice, 'slots', { account: '22' }), /Slot L[\s\S]*Eastern Luminant[\s\S]*Allowed/);
     assert.match(await command(bob, 'slots', { account: '22' }), /Enroll/);
     await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: false });
     await waitFor(() => alt.messages.at(-2)?.type === 'profile' && !alt.messages.at(-2).approvedSlots.L);
@@ -136,7 +137,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
     assert.equal(profile.catalog[0].characterName, 'Rook Janus'); assert.equal(profile.catalog[0].labels, undefined);
     assert.ok(profile.catalog.every(c => c.source === 'menu-card')); assert.deepEqual(profile.approvedSlots, {});
     const text = await command(alice, 'slots', { account: '22' });
-    assert.match(text, /Rook Janus · Lv. 1 Khan/); assert.match(text, /Alexandra Atamli/);
+    assert.match(text, /Rook Janus[\s\S]*Power 1 · Khan/); assert.match(text, /Alexandra Atamli/);
     assert.match(await command(bob, 'slots', { account: '22' }), /Enroll/);
     assert.ok(!main.messages.some(m => m.catalog?.some(c => c.characterName === 'Rook Janus')));
     assert.match(await command(alice, 'allow-slot', { account: '22', slot: 'L', enabled: true }), /approved/);
@@ -192,6 +193,6 @@ test('two users in the same Discord server have isolated commands, credentials, 
     assert.equal((await session(bob, '11', b11)).status, 401);
     assert.match(await command(alice, 'status'), /Follow: ON \| Main: 11/);
     assert.match(await command(bob, 'status'), /Follow: OFF \| Main: not selected/);
-    assert.match(await command(alice, 'slots', { account: '22' }), /L: EastLuminant \| not approved/);
+    assert.match(await command(alice, 'slots', { account: '22' }), /Slot L[\s\S]*Eastern Luminant[\s\S]*Not allowed/);
   });
 });

@@ -42,13 +42,17 @@ Pairing keys stay in private Discord replies and `CLAW_PAIRINGS/<UserId>.json` o
 ## Limits and recovery
 
 - 30 accounts per group; 60 cards per account.
-- 8 KiB HTTP bodies; 64 KiB catalog/profile messages; 4 KiB other client messages.
+- 8 KiB client HTTP bodies; 32 KiB signed Discord interactions (including embedded panel messages); 64 KiB catalog/profile messages; 4 KiB other client messages.
+- Up to 40 owner-bound panels per group, expiring after 15 minutes. Each click consumes its controls; confirmations recheck settings and character identity.
+- One 10-minute batch setup window per group, with pending requests included in the 30-account limit. Batch requests require the rate limiter even in closed beta.
 - Main destinations expire after 35 seconds.
 - Socket tickets expire after 30 seconds and are single-use.
 - Network reconnects back off; game joins require a saved, bounded attempt.
 - Rejected credentials wait five minutes before reconnecting.
 
 No arbitrary Lua, Roblox cookies or process-launch commands are accepted. Automatic menu return starts off and uses normal game requests.
+
+Batch setup stores only hashed setup codes and pending keys on the service. Clients generate and persist their own candidate keys before requesting approval. Roblox's public API resolves the submitted username; this verifies the name/ID mapping, not ownership. The owner must match each device's check code before approving it. Existing account keys are never overwritten by batch enrollment. Closing or expiring a window blocks new approvals; approved clients can still finish saving their matching key.
 
 Worker request logging is disabled because socket URLs contain temporary credentials. Do not log full requests, pairing replies or webhook URLs.
 

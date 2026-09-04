@@ -2,9 +2,11 @@
 
 Your main reports its server. Your alts join it. Setup and status live in Discord.
 
-**Closed beta.** The shared backend is deployed; the separate Discord app and full in-game rollout are still pending. The [existing controller](https://github.com/Clawdews/CLAW/tree/discord-control/control) stays separate.
+**Closed beta.** The Discord app and shared backend are connected. Exact-server joining has been tested with a main and an alt; the new panel and batch setup still need a live user check. The [existing controller](https://github.com/Clawdews/CLAW/tree/discord-control/control) stays separate.
 
 - One public loader after one-time pairing on each account.
+- `/claw panel`: private account selector, readable character cards and click-to-confirm permissions.
+- A 10-minute setup window for several alts sharing one executor workspace.
 - A private account group for each Discord user.
 - Automatic character cards: slot, name, level, race, oath/origin, location and playtime.
 - Approved slots and a preferred character per region.

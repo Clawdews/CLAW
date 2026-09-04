@@ -11,7 +11,7 @@ test('Cloudflare runtime: private enrollment, exact target delivery, pause, repl
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'claw-test', modules: [
     { type: 'ESModule', path: fileURLToPath(new URL('../worker.js', import.meta.url)) },
     { type: 'ESModule', path: fileURLToPath(new URL('../protocol.js', import.meta.url)) },
-    ...['bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })) ],
+    ...['bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })) ],
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { DISCORD_PUBLIC_KEY: publicKey, DISCORD_OWNER_ID: owner, DISCORD_GUILD_ID: guild } }] }));
   t.after(() => mf.dispose());
@@ -120,7 +120,7 @@ test('deployment pairing works through real session/socket auth, not an admin HT
     mainId: '11', follow: true, members: [
       { accountId: '11', keyHash: await hash(mainKey) }, { accountId: '22', keyHash: await hash(altKey) }] };
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'seed-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js'].map(name => ({ type: 'ESModule',
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js'].map(name => ({ type: 'ESModule',
       path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { DISCORD_OWNER_ID: seed.ownerId, DISCORD_GUILD_ID: seed.guildId, INITIAL_PAIRING: JSON.stringify(seed) } }] }));

@@ -12,6 +12,7 @@ mkdirSync(resolve(root, '.tools/tests'), { recursive: true });
 const generated = '.tools/tests/control-runtime.generated.luau';
 const bundled = '.tools/tests/control-bundle.generated.luau';
 const pairing = '.tools/tests/control-pairing.generated.luau';
+const batch = '.tools/tests/control-batch.generated.luau';
 const autoexec = '.tools/tests/control-autoexec.generated.luau';
 const launcher = '.tools/tests/control-launcher.generated.luau';
 const scanner = '.tools/tests/slot-scan.generated.luau';
@@ -20,12 +21,13 @@ for (const [target, entry, bundledScan] of [[scanner, 'slot-scan.lua', false], [
   writeFileSync(resolve(root, target), `local run = require("../../tests/slot-scan-runtime.spec")\nrun(${quote(readFileSync(resolve(root, entry), 'utf8'))},${quote(readFileSync(resolve(root, 'control/menu-scan.lua'), 'utf8'))},${bundledScan})\n`);
 }
 writeFileSync(resolve(root, pairing), `local run = require("../../tests/control-pairing.spec")\nrun(${['control/pair.lua', 'control-launcher.lua', 'dist/launcher-beta.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8'))).join(',')})\n`);
+writeFileSync(resolve(root, batch), `local run = require("../../tests/control-batch.spec")\nrun(${['control/batch.lua', 'control/pair.lua', 'control-launcher.lua', 'dist/launcher-beta.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8'))).join(',')})\n`);
 writeFileSync(resolve(root, autoexec), `local run = require("../../tests/control-autoexec.spec")\nrun(${quote(readFileSync(resolve(root, 'control-autoexec.lua'), 'utf8'))})\n`);
 const sources = ['control/client.lua', 'control/auto.lua', 'join/core.lua', 'control/regions.lua', 'control/menu-scan.lua', 'control/catalog.lua'].map(file => quote(readFileSync(resolve(root, file), 'utf8')));
 writeFileSync(resolve(root, generated), `local run = require("../../tests/control-runtime.spec")\nrun(${sources.join(',')})\n`);
 writeFileSync(resolve(root, bundled), `local run = require("../../tests/control-runtime.spec")\nrun(${[quote(readFileSync(resolve(root, 'dist/control-beta.lua'), 'utf8')), ...sources.slice(1)].join(',')})\n`);
 writeFileSync(resolve(root, launcher), `local run = require("../../tests/control-runtime.spec")\nrun(${[quote(readFileSync(resolve(root, 'dist/launcher-beta.lua'), 'utf8')), ...sources.slice(1), 'true'].join(',')})\n`);
-for (const file of ['tests/control-auto.spec.luau', 'tests/control-slots.spec.luau', scanner, scannerBundle, generated, bundled, launcher, pairing, autoexec]) {
+for (const file of ['tests/control-auto.spec.luau', 'tests/control-slots.spec.luau', scanner, scannerBundle, generated, bundled, launcher, pairing, batch, autoexec]) {
   const result = spawnSync(luau, [file], { cwd: root, stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);

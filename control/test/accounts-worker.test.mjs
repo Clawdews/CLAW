@@ -9,7 +9,7 @@ test('signed username commands retain enrollment, replay and per-user isolation 
   const alice = '123456789012345678', bob = '234567890123456789', guild = '345678901234567890';
   let lookups = 0, failLookup = false;
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'username-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js']
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js', 'accounts.js', 'panel.js', 'panel-controller.js', 'batch.js']
       .map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey },
@@ -37,7 +37,7 @@ test('signed username commands retain enrollment, replay and per-user isolation 
     const result = await (await send()).json();
     assert.equal(result.data.flags, 64); assert.deepEqual(result.data.allowed_mentions.parse, []);
     assert.ok(result.data.content.length <= 2000);
-    return { text: result.data.content, send };
+    return { text: result.data.content + (result.data.embeds || []).map(e => e.title + '\n' + e.description).join('\n'), send };
   }
   await t.test('unauthorized and account-less commands never call Roblox', async () => {
     assert.equal((await mf.dispatchFetch('https://claw.test/discord', { method: 'POST', body: '{}' })).status, 401);
@@ -63,7 +63,7 @@ test('signed username commands retain enrollment, replay and per-user isolation 
     assert.match(selected.text, /Main set to 11/);
     assert.match((await (await selected.send()).json()).data.content, /already processed/);
     assert.match((await command(alice, 'nickname', { account: 'nova_one', label: 'Main account' })).text, /Saved/);
-    assert.match((await command(alice, 'slots', { account: 'nova_one' })).text, /Characters for 11/);
+    assert.match((await command(alice, 'slots', { account: 'nova_one' })).text, /Main account · Characters/);
   });
   await t.test('another user cannot select or revoke the first user’s account by username', async () => {
     assert.match((await command(bob, 'main', { account: 'nova_one' })).text, /Enroll/);

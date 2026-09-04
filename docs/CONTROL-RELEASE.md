@@ -1,5 +1,13 @@
 # Control changelog
 
+## 0.2.0-beta.4
+
+- Private `/claw panel` with account selection, main/alt labels and readable status.
+- Character cards, region filters, next/previous controls and a separate details view.
+- Confirm before changing main, following, or character permissions. Stale controls cannot change settings.
+- Temporary alt setup: one snippet per workspace, then approve matching account requests in Discord.
+- Same public loader and existing private keys. No changes to joining, auto-return defaults or loot notifications.
+
 ## Client fixes
 
 - Failed state encoding stops new actions without exposing private error text or interrupting shutdown.
@@ -32,8 +40,8 @@ The shared backend is deployed with enrollment closed. Deployment addresses stay
 
 Before public onboarding:
 
-- Connect the separate Discord app.
 - Test setup with two independent users.
+- Verify the new panel and batch setup with real executor instances.
 - Verify menu sync, region mismatch, pause and reconnect in-game.
 
 Tests: `node tools/check-control.mjs`.

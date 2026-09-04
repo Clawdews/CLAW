@@ -5,6 +5,22 @@ for _ = 1, 240 do
     task.wait(0.25)
 end
 assert(Players.LocalPlayer, "CLAW is waiting for Roblox to finish loading. Run the same public loader again when the menu appears.")
+do
+    local useBatch = getgenv().CLAW_BATCH ~= nil
+    if not useBatch and getgenv().CLAW_PAIR == nil and type(isfile) == "function" then
+        local checked, paired = pcall(isfile, "CLAW_PAIRINGS/" .. tostring(Players.LocalPlayer.UserId) .. ".json")
+        if checked and paired == false then
+            local read, exists = pcall(isfile, "CLAW_PAIRINGS/batch.json")
+            useBatch = read and exists == true
+        end
+    end
+    if useBatch then
+        -- BATCH_MODULE_BEGIN
+        local batch = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control/batch.lua")
+        if not assert(loadstring(batch, "@CLAW/batch.lua"))() then return end
+        -- BATCH_MODULE_END
+    end
+end
 -- PAIR_MODULE_BEGIN
 if getgenv().CLAW_PAIR ~= nil then
     local pairing = game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/control-beta/control/pair.lua")
