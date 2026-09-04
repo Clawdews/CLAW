@@ -16,7 +16,8 @@ Read menu metadata without clicking; keep menu candidates unconfirmed. A running
 
 - [x] Existing exact-server arrival verified in-game; repeat test passed.
 - [x] Real menu structure captured; slot entries A–M located in the character list.
-- [ ] Focused card reader validated in-game against names, races and location labels. Source/bundle tests pass; a real v0.2.0 report is still required.
+- [x] Focused v0.2.0 reader captured 13 cards / 115 labels, visiting 337 nodes without truncation.
+- [ ] Visible-label correction validated in-game: slot H's v0.2.0 base race/origin differed from the screenshot and alternate labels matched it. v0.2.1 records visibility to test that explanation and separates displayed values from base metadata. Source/bundle tests cover both modes.
 - [ ] Approved multi-slot region picker tested against a real mismatch.
 - [x] Separate-user authentication, commands, sockets, revocation and restart isolation tested in the local Cloudflare runtime.
 - [x] Private pairing and public launcher covered by mocked-client tests, including wrong account/owner, bad keys and corrupt files.
@@ -30,7 +31,7 @@ Public release is not the same as committing code. Do not change the existing li
 
 ## Next milestones
 
-1. Test the focused v0.2.0 card reader, map any remaining label formats and compare the location observations with the game's selected-region response. Never promote labels to confirmed slot IDs without that check.
+1. Verify v0.2.1 visible race/origin handling, map any remaining label formats and compare the location observations with the game's selected-region response. Never promote labels to confirmed slot IDs without that check.
 2. Run closed beta with two independent Discord users: pairing, approval, correct-region join, mismatch refusal, pause, disconnect, revoke and reconnect. Record actual results, not just screenshots of the UI loading.
 3. Pin a reviewed client release, deploy the shared service separately and publish the install link after the gates pass.
 4. Bring the existing movement/parking controls to Discord only after joining is reliable. Proximity safety/rejoin and closed-process relaunch are separate projects, not promises in this release.

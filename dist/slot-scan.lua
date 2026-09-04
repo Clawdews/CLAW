@@ -7,7 +7,7 @@ assert(player, "Run this in a Roblox client")
 assert(game.PlaceId == 4111023553, "Run the slot scanner at the character-selection menu")
 local Scan = (function()
 -- Passive character-card reader. No input hooks, clicks, remotes or uploads.
-local Scan = { VERSION = "0.2.0", MAX_CARDS = 60, MAX_CARD_NODES = 160,
+local Scan = { VERSION = "0.2.1", MAX_CARDS = 60, MAX_CARD_NODES = 160,
     MAX_CARD_LABELS = 24, MAX_DEPTH = 12, MAX_TEXT_BYTES = 100000 }
 local listPath = { "LoadingGui", "Overlay", "Columns", "MainFrame", "Slots", "SlotScroll" }
 local aliases = {
@@ -17,6 +17,7 @@ local aliases = {
     playtime = "playtime", lastplayed = "lastPlayed", slot = "slotLabel",
     memento = "memento", ironrace = "ironRace",
 }
+local metadataFields = { race = "baseRace", origin = "baseOrigin", ironRace = "ironRace", memento = "memento" }
 local function short(value, limit)
     if type(value) ~= "string" and type(value) ~= "number" then return nil end
     return tostring(value):gsub("[%z\1-\31]", " "):sub(1, limit or 160)
@@ -60,10 +61,15 @@ local function setField(card, key, value, source)
     end
     card[key] = value; card.fieldSources[key] = source
 end
-local function readLabel(card, name, raw, path)
+local function readLabel(card, name, raw, path, shown)
     local text = plain(raw)
     if not text then return end
     local key = aliases[lower(name)]
+    -- Keep alternate metadata separate from the values displayed on the card.
+    if metadataFields[key] then setField(card, metadataFields[key], text, path) end
+    if not shown then return end
+    if key == "ironRace" then key = "race" end
+    if key == "memento" then key = "origin" end
     local level = text:match("^[Ll][Vv]%.?%s*(%d+)%s+")
     local prefix, race = raw:match("^(.-)<font[^>]*>(.-)</font>")
     local coloredRace = prefix and (plain(prefix) == nil
@@ -86,9 +92,10 @@ local function readLabel(card, name, raw, path)
     end
 end
 local function captureCard(object, result, yieldStep)
-    local card = { slot = object.Name, source = "menu-card", confirmed = false,
+    local card = { slot = object.Name, source = "menu-card", confirmed = false, cardVisible = object.Visible ~= false,
         labels = {}, fieldSources = {}, conflicts = {}, missing = {}, warnings = {}, visited = 0, truncated = false }
-    local queue = { { object = object, path = "", depth = 0 } }
+    -- Visibility is relative to the card; clipping/scrolling never discards an offscreen slot.
+    local queue = { { object = object, path = "", depth = 0, shown = true } }
     local head = 1
     while head <= #queue do
         local item = queue[head]; head += 1
@@ -102,11 +109,14 @@ local function captureCard(object, result, yieldStep)
                     local raw = short(value, 512)
                     local cost = #raw + #text + #item.path + 120
                     if #card.labels < Scan.MAX_CARD_LABELS and result.textBytes + cost <= Scan.MAX_TEXT_BYTES then
-                        local label = { name = short(node.Name, 60), path = item.path, text = text }
+                        local transparent = type(node.TextTransparency) == "number" and node.TextTransparency >= 1
+                        local shown = item.shown and not transparent
+                        local label = { name = short(node.Name, 60), path = item.path, text = text,
+                            visibleWithinCard = shown, textTransparency = node.TextTransparency }
                         if raw ~= text then label.rawText = raw end
                         card.labels[#card.labels + 1] = label
                         result.labelCount += 1; result.textBytes += cost
-                        readLabel(card, node.Name, raw, item.path)
+                        readLabel(card, node.Name, raw, item.path, shown)
                     else card.truncated = true end
                 end
             end
@@ -114,7 +124,7 @@ local function captureCard(object, result, yieldStep)
             for _, child in ipairs(children(node)) do
                 if not excluded(child) then
                     if item.depth >= Scan.MAX_DEPTH or #queue >= Scan.MAX_CARD_NODES then card.truncated = true
-                    else queue[#queue + 1] = { object = child,
+                    else queue[#queue + 1] = { object = child, shown = item.shown and child.Visible ~= false,
                         path = (item.path == "" and child.Name or item.path .. "/" .. child.Name):sub(1, 220), depth = item.depth + 1 } end
                 end
             end

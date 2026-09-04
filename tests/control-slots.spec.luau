@@ -114,6 +114,30 @@ test("conflicting labels and slot mismatches cannot be complete cards", function
     local mismatch = Scan.collect(menu({ object("A", "TextButton", "", { label("Slot", "B") }) })).cards[1]
     assert(table.find(mismatch.warnings, "slot-label-mismatch"))
 end)
+test("visible alternate race and memento win over hidden base labels", function()
+    local race = label("Race", "Tiran"); race.Visible = false
+    local origin = label("Origin", "Ironsworn"); origin.Visible = false
+    local c = Scan.collect(menu({ object("H", "TextButton", "", {
+        label("CharacterName", "Example H"), label("Level", '<font transparency="0.5" size="18">Lv.</font> 1'),
+        race, origin, label("IronRace", "Celtor"), label("Memento", "Rogue Assassin"), label("Realm", "Fragments of Else"),
+    }) })).cards[1]
+    assert(c.race == "Celtor" and c.origin == "Rogue Assassin" and c.complete)
+    assert(c.baseRace == "Tiran" and c.baseOrigin == "Ironsworn" and c.ironRace == "Celtor")
+    assert(c.labels[3].visibleWithinCard == false and c.labels[5].visibleWithinCard == true)
+end)
+test("hidden alternate labels do not override normal visible race or origin", function()
+    local iron = label("IronRace", "Canor"); iron.Visible = false
+    local memento = label("Memento", "Rogue Assassin"); memento.Visible = false
+    local c = Scan.collect(menu({ card("L", { iron, memento }) })).cards[1]
+    assert(c.race == "Khan" and c.origin == "Authority Ensign" and c.ironRace == "Canor" and c.complete)
+end)
+test("hidden ancestor and fully transparent labels do not become display fields", function()
+    local hidden = object("Alternate", nil, nil, { label("Race", "Etrean") }); hidden.Visible = false
+    local transparent = label("Realm", "Wrong location"); transparent.TextTransparency = 1
+    local c = Scan.collect(menu({ card("L", { hidden, transparent }) })).cards[1]
+    assert(c.race == "Khan" and c.location == "Eastern Luminant")
+    assert(c.labels[#c.labels].visibleWithinCard == false)
+end)
 test("duplicate slot entries stay ambiguous instead of silently overwriting", function()
     local result = Scan.collect(menu({ card("A"), card("A") }))
     assert(result.completeCards == 0 and #result.cards == 2)

@@ -80,7 +80,9 @@ At the character menu, run:
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/dist/slot-scan.lua"))()
 ```
 
-Use the single-file build above, not the old scanner pasted into Volt. It prints its version (`0.2.0`) and one summary per card, then saves `CLAW_CONTROL/menu-<UserId>.json`.
+Use the single-file build above, not the old scanner pasted into Volt. It prints its version (`0.2.1`) and one summary per card, then saves `CLAW_CONTROL/menu-<UserId>.json`.
+
+Displayed race/origin values use visible labels within each card, including visible `IronRace` / `Memento` alternatives. Hidden base labels are retained separately as `baseRace` and `baseOrigin`. Each captured label records `visibleWithinCard`; a hidden ancestor or fully transparent text prevents it from becoming a display field. Card visibility is recorded separately so scrolling/filtering does not discard loaded slots.
 
 The reader targets only `LoadingGui/Overlay/Columns/MainFrame/Slots/SlotScroll`. It records each slot letter, character name, level, race, oath/origin, location, playtime and last played when those labelled fields are available. Unrecognized labels are retained in that card's `labels`; missing or conflicting fields remain unset and are flagged. A combined race/oath line is retained as `summary` without guessing which trailing words are an oath or an origin. It skips the friends list, shops, credits, editable text and avatar-preview models. Loaded offscreen cards are included; the script does not scroll to force additional cards to load.
 
