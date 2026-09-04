@@ -2,6 +2,10 @@
 
 Alt control and loot notifications for Deepwoken. Two separate scripts; use whichever you need.
 
+## Discord control beta
+
+This branch also contains [CLAW Control](control/README.md): a Discord app and paired client for exact-server following, with a separate account group for each Discord user. See the [setup guide](docs/CONTROL-SETUP.md) and [release checklist](docs/CONTROL-RELEASE.md). It is not a public hosted release yet; the existing live setup remains separate. The stable scripts below are unchanged.
+
 ## Alt manager
 
 Run this on each alt. Replace the username with your main's exact username, not its display name. All accounts need to be in the same server.

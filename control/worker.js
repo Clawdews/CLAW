@@ -2,6 +2,8 @@ import { LOBBY, FRESH_SECONDS, MAX_MEMBERS, id, snowflake, slotId, now, nonce, h
   cleanPresence, ticketFor, targetKey, discordSignature, reply } from './protocol.js';
 import { DurableObject } from 'cloudflare:workers';
 import { loadConfig } from './bootstrap.js';
+import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeSlot, entryAllowed } from './tenancy.js';
+import { pairingReply, setupReply } from './onboarding.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request) {
@@ -21,7 +23,7 @@ async function bodyText(request) {
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.1.0' });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.1', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -31,28 +33,33 @@ export default {
       try { interaction = JSON.parse(raw); } catch { return json({ error: 'Invalid JSON' }, 400); }
       if (!interaction || typeof interaction !== 'object') return json({ error: 'Invalid interaction' }, 400);
       if (interaction.type === 1) return json({ type: 1 });
-      const user = interaction.member?.user?.id || interaction.user?.id;
-      if (!snowflake(env.DISCORD_OWNER_ID) || !snowflake(env.DISCORD_GUILD_ID) || !snowflake(interaction.id)
-          || user !== env.DISCORD_OWNER_ID || interaction.guild_id !== env.DISCORD_GUILD_ID) {
-        return json(reply('This control is restricted to its owner in the configured server.'));
+      const user = interactionOwner(interaction, env);
+      if (!user) {
+        return json(reply('This control is restricted. Install the app for yourself or ask the beta host for access.'));
       }
       if (interaction.type !== 2 || interaction.data?.name !== 'claw') return json(reply('Unsupported command.'));
-      try { return json(await env.ROOM.getByName('claw').command(interaction, Number(request.headers.get('X-Signature-Timestamp')))); }
+      if (!await entryAllowed(env, 'command:' + user)) return json(reply('Control is temporarily rate-limited or unavailable. Try again later.'));
+      try { return json(await env.ROOM.getByName(roomName(env, user)).command(interaction, Number(request.headers.get('X-Signature-Timestamp')), user)); }
       catch { return json(reply('Control service unavailable. No success was confirmed; try status before retrying.')); }
     }
     if ((path === '/session' && request.method === 'POST') || (path === '/socket' && request.method === 'GET')) {
-      return env.ROOM.getByName('claw').fetch(request);
+      const owner = new URL(request.url).searchParams.get('owner');
+      if (shared(env) && !allowedOwner(env, owner)) return json({ error: 'Unauthorized' }, 401);
+      if (!await entryAllowed(env, 'client:' + await hash(request.headers.get('CF-Connecting-IP') || 'unknown'))) {
+        return json({ error: 'Try later' }, 429);
+      }
+      return env.ROOM.getByName(roomName(env, owner)).fetch(request);
     }
     return json({ error: 'Not found' }, 404);
   },
 };
 
-// One room per deployment. Hibernatable sockets avoid an always-running process.
+// Shared mode uses one room per Discord user; legacy mode keeps its existing room.
 export class ControlRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx.blockConcurrencyWhile(async () => {
-      this.config = await loadConfig(this.ctx.storage, this.env);
+      this.config = await loadConfig(this.ctx.storage, shared(this.env) ? {} : this.env);
     });
   }
   sockets() { return this.ctx.getWebSockets(); }
@@ -67,6 +74,8 @@ export class ControlRoom extends DurableObject {
     const member = this.config.members[userId];
     return { type: 'profile', accountId: userId, mainId: this.config.mainId,
       role: userId === this.config.mainId ? 'main' : 'alt', slot: member?.slot || null,
+      ownerId: this.config.ownerId || null, approvedSlots: member?.approvedSlots || {},
+      preferredSlots: member?.preferredSlots || {}, catalog: Object.values(member?.slots || {}),
       follow: this.config.follow, revision: this.config.revision, retry: member?.retry || null };
   }
   target() {
@@ -92,6 +101,7 @@ export class ControlRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/session' && request.method === 'POST') {
+      if (shared(this.env) && url.searchParams.get('owner') !== this.config.ownerId) return json({ error: 'Unauthorized' }, 401);
       let input;
       try { input = JSON.parse(await bodyText(request)); } catch { return json({ error: 'Invalid input' }, 400); }
       if (!input || !id(input.accountId) || typeof input.key !== 'string' || input.key.length !== 64) return json({ error: 'Unauthorized' }, 401);
@@ -104,6 +114,7 @@ export class ControlRoom extends DurableObject {
       return json({ ticket: input.accountId + '.' + token, expiresIn: 30 });
     }
     if (url.pathname !== '/socket' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'Upgrade required' }, 426);
+    if (shared(this.env) && url.searchParams.get('owner') !== this.config.ownerId) return json({ error: 'Unauthorized' }, 401);
     const [userId, token, extra] = (url.searchParams.get('ticket') || '').split('.');
     if (!id(userId) || typeof token !== 'string' || token.length !== 36 || extra) return json({ error: 'Unauthorized' }, 401);
     return this.ctx.blockConcurrencyWhile(async () => {
@@ -140,12 +151,22 @@ export class ControlRoom extends DurableObject {
     const presence = cleanPresence(data.current);
     if (!presence) return ws.close(1008, 'Invalid presence');
     a.presence = presence; a.seen = now(); a.lastMessage = now(); ws.serializeAttachment(a);
-    // Learn a real DataSlot once from a running character. Never guess a slot number.
-    if (!member.slot && presence.slot && presence.placeId !== LOBBY) {
+    // Observations are not permission: newly learned characters stay unapproved.
+    const observedRegion = regionForPlace(presence.placeId);
+    const previousSlot = safeSlot(presence.slot) && member.slots?.[presence.slot];
+    if (presence.placeId !== LOBBY && safeSlot(presence.slot) && (!member.slot || !previousSlot
+        || previousSlot.region !== observedRegion || now() - previousSlot.observedAt >= 300)) {
       await this.ctx.blockConcurrencyWhile(async () => {
         const latest = this.config.members[a.userId];
-        if (latest && latest.credential === a.credential && !latest.slot) {
-          latest.slot = presence.slot; await this.ctx.storage.put('config', this.config);
+        if (latest && latest.credential === a.credential) {
+          const next = structuredClone(this.config), updated = next.members[a.userId];
+          if (!updated.slot) updated.slot = presence.slot;
+          updated.slots ||= {};
+          if (Object.hasOwn(updated.slots, presence.slot) || Object.keys(updated.slots).length < 30) {
+            updated.slots[presence.slot] = { slot: presence.slot, region: observedRegion,
+              observedAt: now(), confirmed: true, source: 'character-place' };
+          }
+          await this.ctx.storage.put('config', next); this.config = next;
         }
       });
       this.send(ws, this.profile(a.userId));
@@ -155,16 +176,27 @@ export class ControlRoom extends DurableObject {
   }
   webSocketClose(ws, code) { try { ws.close(code === 1006 ? 1000 : code, 'Closed'); } catch {} this.broadcast(); }
   webSocketError(ws) { try { ws.close(1011, 'Connection error'); } catch {} this.broadcast(); }
-  async command(interaction, signedAt) {
+  async command(interaction, signedAt, ownerId) {
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (shared(this.env) && (!snowflake(ownerId) || interactionOwner(interaction, this.env) !== ownerId
+          || (this.config.ownerId && this.config.ownerId !== ownerId))) return reply('Not authorized for this account group.');
+      const config = structuredClone(this.config);
+      if (shared(this.env)) config.ownerId = ownerId;
       const option = interaction.data.options?.[0];
       const values = Object.fromEntries((option?.options || []).map(o => [o.name, o.value]));
       const account = values.account;
-      if (['enroll', 'main', 'slot', 'retry', 'revoke'].includes(option?.name) && !id(account)) {
+      if (['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'retry', 'revoke'].includes(option?.name) && !id(account)) {
         return reply('Account must be a numeric Roblox UserId.');
       }
       const replay = (await this.ctx.storage.get('replay') || []).filter(item => item.expires >= now());
       if (replay.some(item => item.id === interaction.id)) return reply('This command was already processed. Use /claw status to check the current state.');
+      if (option?.name === 'setup') return reply(setupReply);
+      if (option?.name === 'slots') {
+        const member = config.members[account];
+        if (!member) return reply('Enroll that account first.');
+        const rows = Object.values(member.slots || {}).map(s => `${s.slot}: ${s.region || 'unsupported region'} | ${member.approvedSlots?.[s.slot] ? 'approved' : 'not approved'} | ${now() - s.observedAt > 86400 ? 'stale' : 'observed'}`);
+        return reply((`Characters for ${account}\n` + (rows.join('\n') || 'None observed. Load the intended character once.')).slice(0, 1900));
+      }
       if (option?.name === 'status') {
         const lines = [`Follow: ${this.config.follow ? 'ON' : 'OFF'} | Main: ${this.config.mainId || 'not selected'}`];
         for (const [userId, member] of Object.entries(this.config.members)) {
@@ -174,45 +206,68 @@ export class ControlRoom extends DurableObject {
         lines.push('Verified statuses are reported by your paired client, not independently observed by Discord.');
         return reply(lines.join('\n').slice(0, 1900));
       }
-      let content;
+      let content, disconnectAccount;
       if (replay.length >= 1000) return reply('Too many recent commands. Wait a few minutes.');
-      if (option?.name === 'enroll') {
+      if (option?.name === 'enroll' || option?.name === 'rotate') {
+        if (shared(this.env) && option.name === 'enroll' && config.members[account]) return reply('Already paired. Use /claw rotate only if you need a replacement key.');
+        if (option.name === 'rotate' && !config.members[account]) return reply('Enroll that account first.');
         if (!id(account)) return reply('Account must be a numeric Roblox UserId, not a display name.');
-        if (!this.config.members[account] && Object.keys(this.config.members).length >= MAX_MEMBERS) return reply('Member limit reached.');
+        if (!config.members[account] && Object.keys(config.members).length >= MAX_MEMBERS) return reply('Member limit reached.');
         const key = nonce().replaceAll('-', '') + nonce().replaceAll('-', '');
-        this.config.members[account] = { keyHash: await hash(key), credential: nonce(), slot: this.config.members[account]?.slot || null };
-        content = `Paired Roblox account ${account}. Save this privately in its autoexec config. Re-enrolling rotates the key.\n\nKey: ||${key}||\nNever put it in GitHub or a public message.`;
-        for (const ws of this.sockets()) if (this.attachment(ws)?.userId === account) { try { ws.close(4003, 'Key rotated'); } catch {} }
+        config.members[account] = { ...config.members[account], keyHash: await hash(key), credential: nonce(), slot: config.members[account]?.slot || null };
+        content = shared(this.env) ? pairingReply(this.env.PUBLIC_ENDPOINT, ownerId, account, key)
+          : `Paired Roblox account ${account}. Save this privately in its autoexec config. Re-enrolling rotates the key.\n\nKey: ||${key}||\nNever put it in GitHub or a public message.`;
+        disconnectAccount = account;
       } else if (option?.name === 'main') {
-        if (!this.config.members[account]) return reply('Enroll that numeric Roblox UserId first.');
-        this.config.mainId = account; this.config.follow = false;
+        if (!config.members[account]) return reply('Enroll that numeric Roblox UserId first.');
+        config.mainId = account; config.follow = false;
         content = `Main set to ${account}. Follow is paused; enable it when the accounts are ready.`;
       } else if (option?.name === 'follow') {
         if (typeof values.enabled !== 'boolean') return reply('Specify enabled true or false.');
-        if (values.enabled && !this.config.mainId) return reply('Choose an enrolled main first.');
-        this.config.follow = values.enabled;
+        if (values.enabled && !config.mainId) return reply('Choose an enrolled main first.');
+        config.follow = values.enabled;
         content = values.enabled ? 'Auto-follow enabled. Fresh main destinations will be delivered to paired alts.'
           : 'Auto-follow paused. A teleport already accepted by Roblox cannot be undone.';
       } else if (option?.name === 'slot') {
-        if (!this.config.members[account] || !slotId(values.value)) return reply('Provide an enrolled account and its actual DataSlot string.');
-        this.config.members[account].slot = values.value;
+        if (shared(this.env)) return reply('Use /claw slots and /claw allow-slot to approve observed characters.');
+        if (!config.members[account] || !slotId(values.value)) return reply('Provide an enrolled account and its actual DataSlot string.');
+        config.members[account].slot = values.value;
         content = `Saved the character slot for ${account}.`;
+      } else if (option?.name === 'allow-slot') {
+        const member = config.members[account], slot = values.slot;
+        if (!member || !safeSlot(slot) || typeof values.enabled !== 'boolean') return reply('Provide an enrolled account, actual slot and enabled true/false.');
+        if (values.enabled && !member.slots?.[slot]?.confirmed) return reply('Load that character once before approving it; menu candidates are not confirmed slots.');
+        member.approvedSlots ||= {};
+        if (values.enabled) member.approvedSlots[slot] = true;
+        else {
+          delete member.approvedSlots[slot];
+          for (const [region, preferred] of Object.entries(member.preferredSlots || {})) if (preferred === slot) delete member.preferredSlots[region];
+        }
+        content = `Slot ${slot} ${values.enabled ? 'approved' : 'disabled'} for ${account}.`;
+      } else if (option?.name === 'prefer-slot') {
+        const member = config.members[account], slot = values.slot, region = values.region;
+        if (!member || !safeSlot(slot) || !['EastLuminant', 'EtreanLuminant'].includes(region)
+            || member.approvedSlots?.[slot] !== true || member.slots?.[slot]?.region !== region) return reply('Choose an approved, observed slot in that region.');
+        member.preferredSlots ||= {}; member.preferredSlots[region] = slot;
+        content = `Preferred ${region} character for ${account}: ${slot}.`;
       } else if (option?.name === 'revoke') {
-        if (!this.config.members[account]) return reply('Account is not enrolled.');
-        delete this.config.members[account]; await this.ctx.storage.delete('ticket:' + account);
-        if (this.config.mainId === account) { this.config.mainId = null; this.config.follow = false; }
-        for (const ws of this.sockets()) if (this.attachment(ws)?.userId === account) { try { ws.close(4003, 'Revoked'); } catch {} }
+        if (!config.members[account]) return reply('Account is not enrolled.');
+        delete config.members[account]; await this.ctx.storage.delete('ticket:' + account);
+        if (config.mainId === account) { config.mainId = null; config.follow = false; }
+        disconnectAccount = account;
         content = `Revoked ${account}.`;
       } else if (option?.name === 'retry') {
-        if (!this.config.members[account]) return reply('Specify one enrolled account to retry.');
+        if (!config.members[account]) return reply('Specify one enrolled account to retry.');
         const retry = nonce();
-        this.config.members[account].retry = retry;
+        config.members[account].retry = retry;
         content = `One retry authorized for ${account}; it still needs a fresh main destination.`;
       } else return reply('Unknown command.');
-      this.config.revision = nonce();
+      config.revision = nonce();
       // Keep the complete accepted-signature replay window, capped by a command limit.
       replay.push({ id: interaction.id, expires: signedAt + 301 });
-      await this.ctx.storage.put({ config: this.config, replay });
+      await this.ctx.storage.put({ config, replay });
+      this.config = config;
+      if (disconnectAccount) for (const ws of this.sockets()) if (this.attachment(ws)?.userId === disconnectAccount) { try { ws.close(4003, 'Pairing changed'); } catch {} }
       this.broadcast(true);
       return reply(content);
     });

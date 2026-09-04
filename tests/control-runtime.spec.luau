@@ -1,4 +1,4 @@
-return function(clientSource, autoSource, coreSource)
+return function(clientSource, autoSource, coreSource, regionSource, pairedLauncher)
 	local function clone(value)
 		if type(value) ~= "table" then return value end
 		local copy = {}; for k, v in pairs(value) do copy[k] = clone(v) end; return copy
@@ -24,10 +24,11 @@ return function(clientSource, autoSource, coreSource)
 	end
 	local function boot(options)
 		options = options or {}
+		if pairedLauncher then options.owner = options.owner or "123456789012345678" end
 		local f = { now = 2000000000, clock = 0, files = {}, memory = {}, values = {}, encoded = 0,
 			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, hasMain = false, authRequests = 0 }
 		f.env = { CLAW_CONTROL_CONFIG = { Endpoint = "https://claw-test.example", Key = string.rep("a", 64),
-			AllowMenuReturn = options.menu == true } }
+			AllowMenuReturn = options.menu == true, OwnerId = options.owner } }
 		local http = {}
 		function http:JSONEncode(value) f.encoded += 1; local key = "json-" .. f.encoded; f.values[key] = clone(value); return key end
 		function http:JSONDecode(key) return clone(assert(f.values[key], "invalid JSON")) end
@@ -36,6 +37,10 @@ return function(clientSource, autoSource, coreSource)
 		local player = object("Player"); player.UserId = options.main and 11 or 22; player.OnTeleport = signal()
 		player.DataSlot = options.slot
 		f.player = player
+		if pairedLauncher then
+			local pairing = clone(f.env.CLAW_CONTROL_CONFIG); pairing.Version = 1; pairing.AccountId = tostring(player.UserId)
+			f.files["CLAW_PAIRINGS/" .. pairing.AccountId .. ".json"] = http:JSONEncode(pairing)
+		end
 		local gui = object("PlayerGui"); player.children.PlayerGui = gui
 		f.prompt = object("Frame"); f.prompt.Title = "Some unrelated choice"; gui.children.ChoicePrompt = f.prompt
 		local choice = object("RemoteEvent"); f.prompt.children.Choice = choice
@@ -47,7 +52,7 @@ return function(clientSource, autoSource, coreSource)
 		local show, pick, join, ret = object("RemoteEvent"), object("RemoteEvent"), object("RemoteEvent"), object("RemoteEvent")
 		requests.children.ShowServers = show; requests.children.ReturnToMenu = ret
 		menu.children.PickSlot = pick; menu.children.PickServer = join
-		function pick:FireServer(slot) assert(slot == "chosen-slot"); f.picks += 1; show.OnClientEvent:Fire("Etrean") end
+		function pick:FireServer(slot) assert(slot == "chosen-slot"); f.picks += 1; show.OnClientEvent:Fire(options.wrongRegion and "EastLuminant" or "EtreanLuminant") end
 		function join:FireServer(id) assert(id == "main-job"); f.joins += 1 end
 		function ret:FireServer() f.menus += 1 end
 		local teleport = { TeleportInitFailed = signal() }
@@ -57,22 +62,28 @@ return function(clientSource, autoSource, coreSource)
 		local services = { HttpService = http, Players = players, ReplicatedStorage = rep, TeleportService = teleport, RunService = run }
 		f.game = { GameId = 99, PlaceId = options.world and 456 or 4111023553, JobId = "origin-job" }
 		function f.game:GetService(name) return assert(services[name], name) end
-		function f.game:HttpGet(url) return url:find("join/core.lua", 1, true) and coreSource or autoSource end
+		function f.game:HttpGet(url)
+			if url:find("join/core.lua", 1, true) then return coreSource end
+			if url:find("control/regions.lua", 1, true) then return regionSource end
+			return autoSource
+		end
 		local function target()
-			return { type = "target", enabled = true, key = "99.123.main-job", expiresAt = f.now + 35,
-				ticket = { version = 1, controllerId = 11, gameId = 99, placeId = 123, jobId = "main-job", joinId = "main-job",
+			return { type = "target", enabled = true, key = "99.6032399813.main-job", expiresAt = f.now + 35,
+				ticket = { version = 1, controllerId = 11, gameId = 99, placeId = 6032399813, jobId = "main-job", joinId = "main-job",
 					createdAt = f.now, nonce = "revision-1" } }
 		end
 		local wsLibrary = {}
 		function wsLibrary.connect(url)
-			assert(url:match("^wss://claw%-test%.example/socket%?ticket="))
+			assert(url:find("wss://claw-test.example/socket" .. (options.owner and ("?owner=" .. options.owner .. "&") or "?") .. "ticket=", 1, true) == 1)
 			local ws = { OnMessage = signal(), OnClose = signal(), closed = false }
 			function ws:Close() self.closed = true; self.OnClose:Fire() end
 			function ws:Send(raw)
 				assert(not self.closed)
 				local value = http:JSONDecode(raw)
 				if value.type == "hello" then self.OnMessage:Fire(http:JSONEncode({ type = "profile", accountId = tostring(player.UserId),
-					mainId = "11", role = options.main and "main" or "alt", slot = "chosen-slot", follow = true })) end
+					mainId = "11", ownerId = options.wrongOwner and "999999999999999999" or options.owner,
+					role = options.main and "main" or "alt", slot = "chosen-slot", follow = true,
+					approvedSlots = { ["chosen-slot"] = true }, catalog = { { slot = "chosen-slot", region = "EtreanLuminant", observedAt = f.now, confirmed = true } } })) end
 				self.OnMessage:Fire(http:JSONEncode(target()))
 			end
 			f.sockets[#f.sockets + 1] = ws
@@ -83,7 +94,7 @@ return function(clientSource, autoSource, coreSource)
 			task = { spawn = function(fn) fn() end }, WebSocket = wsLibrary,
 			Enum = { TeleportState = { Started = 1, InProgress = 2 } },
 			request = function(request)
-				assert(request.Url == "https://claw-test.example/session")
+				assert(request.Url == "https://claw-test.example/session" .. (options.owner and ("?owner=" .. options.owner) or ""))
 				local data = http:JSONDecode(request.Body); assert(data.accountId == tostring(player.UserId)); assert(#data.key == 64)
 				f.authRequests += 1
 				return { StatusCode = options.badAuth and 401 or 200,
@@ -94,6 +105,11 @@ return function(clientSource, autoSource, coreSource)
 			readfile = function(path) return assert(f.files[path]) end,
 			warn = function() end,
 		}, { __index = getfenv() })
+		runtime.loadstring = function(source, name)
+			local chunk, failure = loadstring(source, name)
+			if chunk then setfenv(chunk, runtime) end
+			return chunk, failure
+		end
 		function f:reload()
 			local chunk = assert(loadstring(clientSource, "control-client")); setfenv(chunk, runtime); self.api = chunk()
 		end
@@ -109,7 +125,7 @@ return function(clientSource, autoSource, coreSource)
 		f:advance(10); assert(f.joins == 1)
 	end)
 	test("post-teleport reload verifies and never resends", function()
-		local f = boot(); f:advance(2); f.game.PlaceId = 123; f.game.JobId = "main-job"; f.player.DataSlot = "chosen-slot"; f.hasMain = true
+		local f = boot(); f:advance(2); f.game.PlaceId = 6032399813; f.game.JobId = "main-job"; f.player.DataSlot = "chosen-slot"; f.hasMain = true
 		f:reload(); f:advance(2); assert(f.joins == 1 and f.api:report().status == "VERIFIED")
 	end)
 	test("reload while join is pending retains core persistence", function()
@@ -132,6 +148,25 @@ return function(clientSource, autoSource, coreSource)
 	test("stopping disconnects owned callbacks and the socket", function()
 		local f = boot(); f.api:destroy(); f:advance(10)
 		assert(f.sockets[1].closed and f.picks == 0 and f.env.CLAW_CONTROL == nil)
+	end)
+	test("wrong selected region never reaches PickServer", function()
+		local f = boot({ wrongRegion = true }); f:advance(15)
+		assert(f.picks == 1 and f.joins == 0 and f.api:report().status:find("ATTENTION"))
+	end)
+	test("owner-scoped client authenticates, joins and persists only in its namespace", function()
+		local owner = "123456789012345678"
+		local f = boot({ owner = owner }); f:advance(3)
+		assert(f.picks == 1 and f.joins == 1)
+		for path, raw in pairs(f.files) do
+			if not path:find("CLAW_PAIRINGS/", 1, true) then
+				assert(path == "CLAW_CONTROL_BETA/" .. owner .. "-22.json")
+				local state = f.http:JSONDecode(raw); assert(state.ownerId == owner and state.key == nil)
+			end
+		end
+	end)
+	test("another owner's profile closes the connection without game actions", function()
+		local f = boot({ owner = "123456789012345678", wrongOwner = true }); f:advance(3)
+		assert(f.picks == 0 and f.joins == 0 and f.sockets[1].closed)
 	end)
 	print(tostring(passed) .. " control-client smoke tests passed")
 end

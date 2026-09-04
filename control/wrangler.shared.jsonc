@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "claw-control-beta",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-04",
+  "workers_dev": true,
+  // Socket URLs have short-lived credentials: do not turn on request URL logging.
+  "observability": { "enabled": false },
+  "vars": {
+    "SHARED_MODE": "true",
+    "ACCESS_MODE": "closed",
+    "BETA_USERS": "",
+    "PUBLIC_ENDPOINT": ""
+  },
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "ControlRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ControlRoom"] }],
+  "ratelimits": [{ "name": "ENTRY_LIMITER", "namespace_id": "153104", "simple": { "limit": 60, "period": 60 } }]
+}

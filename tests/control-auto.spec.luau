@@ -82,7 +82,36 @@ test("non-finite target expiry is rejected", function()
 end)
 test("return to menu is explicit local opt-in", function()
 	local f = fixture(); f.current.placeId = 456; f.adapter.allowMenuReturn = false; f.auto:tick()
-	assert(f.menus == 0 and f.auto.attempt.phase == "HOLD")
+	assert(f.menus == 0 and f.auto.attempt == nil and f.auto.status:find("WAITING_MENU"))
+	f.current.placeId = Auto.LOBBY; f.auto:tick(); assert(f.picks == 1)
+end)
+
+test("legacy menu-disabled hold recovers after manual menu return without retry", function()
+	local f = fixture({ attempt = { key = "99.123.main-job", phase = "HOLD", deadline = 2000000001,
+		startedAt = 2000000000, reason = "return to menu disabled in local config" } })
+	f.adapter.allowMenuReturn = false; f.auto:tick(); assert(f.picks == 1 and f.menus == 0)
+end)
+
+test("region mismatch blocks PickServer even after a slot-ready event", function()
+	local f = fixture(); f.adapter.requireRegionCheck = true
+	f.adapter.chooseSlot = function() return "chosen-slot" end
+	f.adapter.regionMatches = function() return false, "REGION_MISMATCH" end
+	f.auto:tick(); f.ready = true; f.auto:tick()
+	assert(f.picks == 1 and f.joins == 0 and f.auto.attempt.phase == "HOLD")
+	for _ = 1, 50 do f.auto:tick() end; assert(f.picks == 1)
+end)
+
+test("approved slot change during selection stops before joining", function()
+	local f = fixture(); f.adapter.requireRegionCheck = true
+	local chosen = "chosen-slot"; f.adapter.chooseSlot = function() return chosen end
+	f.adapter.regionMatches = function() return true end
+	f.auto:tick(); chosen = "new-slot"; f.ready = true; f.auto:tick(); assert(f.joins == 0)
+end)
+
+test("missing compatible slot does not select a character or leave the world", function()
+	local f = fixture(); f.adapter.requireRegionCheck = true
+	f.adapter.chooseSlot = function() return nil, "NO_COMPATIBLE_SLOT" end
+	f.auto:tick(); assert(f.picks == 0 and f.menus == 0 and f.joins == 0)
 end)
 test("menu request issued once and confirmation issued once", function()
 	local f = fixture(); f.current.placeId = 456; f.auto:tick(); f.auto:tick(); assert(f.menus == 1)

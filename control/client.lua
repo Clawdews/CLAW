@@ -1,10 +1,13 @@
 -- No GUI, input hooks or movement. Discord config + the tested exact-ID join route.
-local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/codex/discord-control/"
+local BASE = "https://raw.githubusercontent.com/Clawdews/CLAW/codex/control-beta/"
 local env = getgenv()
 local config = env.CLAW_CONTROL_CONFIG
 assert(type(config) == "table", "Set private CLAW_CONTROL_CONFIG before loading")
 local endpoint = tostring(config.Endpoint or ""):gsub("/+$", "")
 assert(endpoint:match("^https://[%w%.%-]+$"), "Endpoint must be your HTTPS relay origin, with no path or query")
+local ownerId = config.OwnerId
+assert(ownerId == nil or (type(ownerId) == "string" and ownerId:match("^%d+$") and #ownerId >= 17 and #ownerId <= 20), "Invalid Discord owner ID")
+local ownerQuery = ownerId and ("?owner=" .. ownerId) or ""
 local Players = game:GetService("Players")
 local Http = game:GetService("HttpService")
 local Replicated = game:GetService("ReplicatedStorage")
@@ -24,12 +27,12 @@ local function module(path)
 	assert(chunk, failure)
 	return chunk()
 end
-local Core, Auto = module("join/core.lua"), module("control/auto.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.1.0", "Module version mismatch")
+local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.1", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
-local file = "CLAW_CONTROL/" .. accountId .. ".json"
-local setting = "CLAW_CONTROL_" .. accountId
+local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
+local setting = "CLAW_CONTROL_BETA_" .. (ownerId or "single") .. "_" .. accountId
 local connections, socketConnections = {}, {}
 local core, auto, coreSaved, selectedSlot, saved
 local stopped, busy, socket, socketGeneration = false, false, nil, 0
@@ -45,7 +48,7 @@ local function readSaved()
 	local newest
 	local function consider(raw)
 		local value = decode(raw)
-		if not value or value.version ~= 1 or value.accountId ~= accountId or value.endpoint ~= endpoint
+		if not value or value.version ~= 1 or value.accountId ~= accountId or value.endpoint ~= endpoint or value.ownerId ~= ownerId
 			or type(value.revision) ~= "number" then return end
 		if not newest or value.revision > newest.revision then newest = value end
 	end
@@ -60,7 +63,7 @@ local storageRevision = saved and saved.revision or 0
 local function save()
 	storageRevision += 1
 	local raw = Http:JSONEncode({ version = 1, accountId = accountId, endpoint = endpoint, revision = storageRevision,
-		core = coreSaved, auto = auto and auto:serialize() or nil })
+		ownerId = ownerId, updatedAt = os.time(), status = auto and auto.status, core = coreSaved, auto = auto and auto:serialize() or nil })
 	local memoryOK = pcall(function()
 		Teleport:SetTeleportSetting(setting, raw)
 		assert(Teleport:GetTeleportSetting(setting) == raw)
@@ -68,7 +71,7 @@ local function save()
 	local fileOK = false
 	if type(writefile) == "function" and type(readfile) == "function" and type(makefolder) == "function" and type(isfolder) == "function" then
 		fileOK = pcall(function()
-			if not isfolder("CLAW_CONTROL") then makefolder("CLAW_CONTROL") end
+			if not isfolder("CLAW_CONTROL_BETA") then makefolder("CLAW_CONTROL_BETA") end
 			writefile(file, raw); assert(readfile(file) == raw)
 		end)
 	end
@@ -98,6 +101,12 @@ core = Core.new({ now = os.time, current = current, nonce = function() return Ht
 	hasPlayer = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
 })
 auto = Auto.new({ now = os.time, current = current, save = save,
+	requireRegionCheck = true,
+	chooseSlot = function(profile, placeId) return Regions.choose(profile, placeId, profile.catalog, os.time()) end,
+	regionMatches = function(placeId)
+		local expected, actual = Regions.forPlace(placeId), Regions.normalize(core.realm)
+		return expected ~= nil and actual == expected, "REGION_MISMATCH: selected " .. tostring(core.realm) .. "; main requires " .. tostring(expected)
+	end,
 	validTicket = function(ticket) return Core.validateTicket(ticket, os.time()) end,
 	joinState = function() return core.state end,
 	hasMain = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
@@ -115,9 +124,9 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 		selectedSlot = slot; core.realm = nil
 		return fire("PickSlot", true, slot)
 	end,
-	slotReady = function() return selectedSlot ~= nil and auto.profile and selectedSlot == auto.profile.slot and core.realm ~= nil end,
+	slotReady = function() return selectedSlot ~= nil and auto.attempt and selectedSlot == auto.attempt.slot and core.realm ~= nil end,
 	beginJoin = function(ticket) return core:begin(ticket) end,
-	changed = function(status) print("[CLAW CONTROL] " .. status) end,
+	changed = function(status) print("[CLAW CONTROL] " .. status); if auto then save() end end,
 }, saved and saved.auto)
 if saved and saved.core then core:resume(saved.core) end
 
@@ -159,7 +168,7 @@ local function connectRelay()
 	if stopped or busy then return end
 	busy = true
 	local generation = socketGeneration
-	local ok, response = pcall(http, { Url = endpoint .. "/session", Method = "POST",
+	local ok, response = pcall(http, { Url = endpoint .. "/session" .. ownerQuery, Method = "POST",
 		Headers = { ["Content-Type"] = "application/json" }, Body = Http:JSONEncode({ accountId = accountId, key = key }) })
 	if stopped or generation ~= socketGeneration then busy = false; return end
 	if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
@@ -174,18 +183,18 @@ local function connectRelay()
 	if not payload or type(payload.ticket) ~= "string" or not payload.ticket:match("^" .. accountId .. "%.[a-fA-F0-9%-]+$") then
 		busy = false; disconnect(); return
 	end
-	local success, connected = pcall(wsLibrary.connect, endpoint:gsub("^https:", "wss:") .. "/socket?ticket=" .. payload.ticket)
+	local success, connected = pcall(wsLibrary.connect, endpoint:gsub("^https:", "wss:") .. "/socket" .. (ownerId and (ownerQuery .. "&") or "?") .. "ticket=" .. payload.ticket)
 	busy = false
 	if not success then disconnect(); return end
 	if stopped or generation ~= socketGeneration then pcall(function() connected:Close() end); return end
 	socket = connected; packetAt = os.clock(); presenceAt = os.clock() + 2.2
 	socketConnections[#socketConnections + 1] = connected.OnMessage:Connect(function(raw)
 		if stopped or socket ~= connected then return end
-		local data = decode(raw, 8192)
+		local data = decode(raw, 32768) -- A full 30-character catalog plus approvals can exceed 8 KiB.
 		if not data then disconnect(); return end
 		packetAt = os.clock(); backoff = 2
 		if data.type == "profile" then
-			if not auto:setProfile(data) then disconnect() else networkProblem = nil end
+			if (ownerId and data.ownerId ~= ownerId) or not auto:setProfile(data) then disconnect() else networkProblem = nil end
 		elseif data.type == "target" then auto:setTarget(data)
 		else disconnect() end
 	end)

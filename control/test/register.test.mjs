@@ -40,3 +40,17 @@ test('missing configuration stops before any request', () => {
   assert.match(result.stderr, /Set DISCORD_BOT_TOKEN/);
   assert.doesNotMatch(result.stderr, /Unexpected network request/);
 });
+
+test('shared global registration supports individual users without admin-only permissions', () => {
+  const result = run(`globalThis.fetch = async (url, options) => {
+    if (url !== 'https://discord.com/api/v10/applications/123456789012345678/commands') throw Error('Not global');
+    const body = JSON.parse(options.body);
+    if (body.default_member_permissions !== null || body.integration_types.join() !== '0,1' || !body.options.some(o=>o.name==='setup')) throw Error('Wrong shared command');
+    return new Response('{}', { status: 200 });
+  }`, { SHARED_MODE: 'true', DISCORD_COMMAND_SCOPE: 'global', DISCORD_GUILD_ID: '' });
+  assert.equal(result.status, 0, result.stderr);
+});
+test('global registration requires explicit shared mode', () => {
+  const result = run(`globalThis.fetch = () => { throw Error('Unexpected network request'); }`, { DISCORD_COMMAND_SCOPE: 'global', SHARED_MODE: '' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Global registration requires/);
+});

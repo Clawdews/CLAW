@@ -14,3 +14,20 @@ export const command = {
     { type: 1, name: 'revoke', description: 'Disconnect an account and invalidate its key', options: [account] },
   ],
 };
+export const sharedCommand = {
+  ...command, default_member_permissions: null, integration_types: [0, 1], contexts: [0, 1, 2],
+  options: [
+    { type: 1, name: 'setup', description: 'Start your own private account group' },
+    ...command.options.filter(option => option.name !== 'slot').map(option => option.name === 'enroll'
+      ? { ...option, description: 'Pair a new account and receive private setup instructions' } : option),
+    { type: 1, name: 'rotate', description: 'Replace a lost pairing key; disconnects the previous client', options: [account] },
+    { type: 1, name: 'slots', description: 'List your observed characters and their regions', options: [account] },
+    { type: 1, name: 'allow-slot', description: 'Approve or disable one character for automatic selection', options: [account,
+      { type: 3, name: 'slot', description: 'Actual observed DataSlot', required: true },
+      { type: 5, name: 'enabled', description: 'Allow this character', required: true }] },
+    { type: 1, name: 'prefer-slot', description: 'Choose your preferred approved character for a region', options: [account,
+      { type: 3, name: 'region', description: 'Destination region', required: true, choices: [
+        { name: 'Eastern Luminant', value: 'EastLuminant' }, { name: 'Etrean Luminant', value: 'EtreanLuminant' }] },
+      { type: 3, name: 'slot', description: 'Approved DataSlot in that region', required: true }] },
+  ],
+};

@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0-beta.1",
+  "modules": [
+    "join/core.lua",
+    "control/auto.lua",
+    "control/regions.lua"
+  ],
+  "artifacts": [
+    {
+      "file": "control-beta.lua",
+      "bytes": 32299,
+      "sha256": "757740874ea0ed4f69e5fd12de27e99489519e5f3f2ab279ac31ffa835ff6009"
+    },
+    {
+      "file": "launcher-beta.lua",
+      "bytes": 33651,
+      "sha256": "1c0b11eff21f4c32cd992c8cb99a0254e3643db7f2bd9f0e446ea4fc407c7b21"
+    }
+  ]
+}
