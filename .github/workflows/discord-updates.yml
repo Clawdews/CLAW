@@ -1,0 +1,24 @@
+name: Discord updates
+
+on:
+  push:
+    branches: [main, control-beta, discord-control, server-join, animation-transport]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: github.repository == 'Clawdews/CLAW' && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check notifier
+        run: node --test tests/discord-push.test.mjs
+      - name: Post one-line update
+        env:
+          DISCORD_UPDATES_WEBHOOK: ${{ secrets.DISCORD_UPDATES_WEBHOOK }}
+        run: node tools/discord-push.mjs
