@@ -32,7 +32,7 @@ test('two users in the same Discord server have isolated commands, credentials, 
   const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
   const publicKey = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
   const options = { workers: [{ name: 'shared-test',
-    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
+    modules: ['worker.js', 'protocol.js', 'bootstrap.js', 'tenancy.js', 'onboarding.js', 'catalog.js', 'status.js'].map(name => ({ type: 'ESModule', path: fileURLToPath(new URL('../' + name, import.meta.url)) })),
     compatibilityDate: '2026-09-04', durableObjects: { ROOM: { className: 'ControlRoom', useSQLite: true } },
     bindings: { SHARED_MODE: 'true', BETA_USERS: alice + ',' + bob, PUBLIC_ENDPOINT: 'https://claw.test', DISCORD_PUBLIC_KEY: publicKey,
       // Even if mistakenly left in a shared deployment, legacy seed data cannot enter a user's room.
@@ -165,6 +165,19 @@ test('two users in the same Discord server have isolated commands, credentials, 
     assert.equal(await upload([card('L', 'Injected Name')], true, { accountId: '11' }), undefined);
     assert.match(await command(alice, 'slots', { account: '22' }), /Rook Janus/);
     assert.ok(!(await command(alice, 'slots', { account: '22' })).includes('Injected Name'));
+  });
+  await t.test('nicknames and automatic menu return remain owner-scoped and appear in profiles', async () => {
+    const client = await connect(alice, '22', a22); await waitFor(() => client.messages.length >= 2);
+    assert.equal(client.messages[0].allowMenuReturn, null);
+    assert.match(await command(bob, 'auto-return', { account: '22', enabled: true }), /enrolled/);
+    assert.match(await command(alice, 'nickname', { account: '22', label: 'Farming alt' }), /Saved/);
+    assert.match(await command(alice, 'nickname', { account: '22', label: 'bad\nlabel' }), /without control/);
+    await command(alice, 'auto-return', { account: '22', enabled: true });
+    await waitFor(() => client.messages.some(m => m.type === 'profile' && m.allowMenuReturn === true));
+    assert.match(await command(alice, 'status'), /Farming alt \(22\)/);
+    await command(alice, 'auto-return', { account: '22', enabled: false });
+    await waitFor(() => client.messages.some(m => m.type === 'profile' && m.allowMenuReturn === false));
+    assert.match(await command(alice, 'status'), /auto-return OFF/);
   });
   await t.test('status and slots never echo pairing keys', async () => {
     const text = await command(alice, 'status') + await command(alice, 'slots', { account: '22' });

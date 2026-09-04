@@ -269,7 +269,7 @@ end
 return Core
 ]=],
  ["control/auto.lua"] = [=[-- Account-follow lifecycle. No network or game services in this module.
-local Auto = { VERSION = "0.2.0-beta.2", LOBBY = 4111023553 }
+local Auto = { VERSION = "0.2.0-beta.3", LOBBY = 4111023553 }
 Auto.__index = Auto
 local pending = { REQUESTED = true, TRAVELLING = true, WAITING_MAIN = true }
 local phases = { RETURN_MENU = true, WAIT_SLOT = true, JOINING = true, DONE = true, HOLD = true }
@@ -350,6 +350,11 @@ function Auto:chooseSlot()
 	if not self.adapter.requireRegionCheck then return self.profile.slot end
 	return self.adapter.chooseSlot(self.profile, self.target.ticket.placeId)
 end
+function Auto:mayReturnMenu()
+	if type(self.adapter.allowMenuReturn) ~= "function" then return self.adapter.allowMenuReturn == true end
+	local ok, allowed = pcall(self.adapter.allowMenuReturn)
+	return ok and allowed == true
+end
 function Auto:tick()
 	if self.storageBlocked then return self:statusAs("ATTENTION: storage unavailable; use /claw retry after fixing it") end
 	local joinState = self.adapter.joinState()
@@ -393,6 +398,7 @@ function Auto:tick()
 		if self.adapter.now() >= a.deadline then return self:hold(a.phase .. " timed out") end
 		if a.phase == "RETURN_MENU" then
 			if current.placeId == Auto.LOBBY then return self:selectSlot() end
+			if not self:mayReturnMenu() then return self:statusAs("WAITING_MENU: automatic menu confirmation is disabled") end
 			if not a.confirmed then
 				-- The adapter confirms only the game's exact Return to Main Menu prompt.
 				if self.adapter.confirmMenu() then a.confirmed = true; self:save() end
@@ -416,14 +422,14 @@ function Auto:tick()
 		end
 	end
 	-- One attempt per destination, persisted before any remote. Repeated target packets do not retry.
-	if current.placeId ~= Auto.LOBBY and self.adapter.allowMenuReturn ~= true then
+	if current.placeId ~= Auto.LOBBY and not self:mayReturnMenu() then
 		return self:statusAs("WAITING_MENU: return this alt to the character menu; automatic exits are off")
 	end
 	if self.attempt and self.adapter.now() - (self.attempt.startedAt or 0) < 10 then return self:statusAs("WAITING_TARGET_SETTLE") end
 	self.attempt = { key = target.key, slot = slot, phase = "RETURN_MENU", deadline = self.adapter.now() + 60, startedAt = self.adapter.now() }
 	if current.placeId == Auto.LOBBY then return self:selectSlot() end
 	if not self:save() then return end
-	if not self:canAct() then return self:hold("destination changed before menu request") end
+	if not self:canAct() or not self:mayReturnMenu() then return self:hold("destination or menu permission changed before request") end
 	local ok, result = pcall(self.adapter.returnMenu)
 	if not ok or result ~= true then return self:hold("return-to-menu request unavailable") end
 	self:statusAs("RETURN_MENU")
@@ -715,7 +721,7 @@ local function module(path)
 end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.2", "Module version mismatch")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.3", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
@@ -819,7 +825,11 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	validTicket = function(ticket) return Core.validateTicket(ticket, os.time()) end,
 	joinState = function() return core.state end,
 	hasMain = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
-	allowMenuReturn = config.AllowMenuReturn == true,
+	allowMenuReturn = function()
+		local cloud = auto and auto.profile and auto.profile.allowMenuReturn
+		if type(cloud) == "boolean" then return cloud end
+		return config.AllowMenuReturn == true -- Older pairings retain their explicit local opt-in until overridden.
+	end,
 	returnMenu = function() return fire("ReturnToMenu", false) end,
 	confirmMenu = function()
 		local gui = player:FindFirstChild("PlayerGui")

@@ -5,6 +5,7 @@ import { loadConfig } from './bootstrap.js';
 import { shared, allowedOwner, interactionOwner, roomName, regionForPlace, safeSlot, entryAllowed } from './tenancy.js';
 import { pairingReply, setupReply } from './onboarding.js';
 import { cleanCatalog, selectable, catalogPage, MAX_SLOTS } from './catalog.js';
+import { cleanNickname, statusPage } from './status.js';
 
 const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function bodyText(request) {
@@ -24,7 +25,7 @@ async function bodyText(request) {
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.2', shared: shared(env) });
+    if (path === '/health' && request.method === 'GET') return json({ service: 'CLAW control', version: '0.2.0-beta.3', shared: shared(env) });
     if (path === '/discord' && request.method === 'POST') {
       let raw;
       try { raw = await bodyText(request); } catch { return json({ error: 'Invalid body' }, 413); }
@@ -76,6 +77,7 @@ export class ControlRoom extends DurableObject {
     return { type: 'profile', accountId: userId, mainId: this.config.mainId,
       role: userId === this.config.mainId ? 'main' : 'alt', slot: member?.slot || null,
       ownerId: this.config.ownerId || null, approvedSlots: member?.approvedSlots || {},
+      allowMenuReturn: typeof member?.allowMenuReturn === 'boolean' ? member.allowMenuReturn : null,
       preferredSlots: member?.preferredSlots || {}, catalog: Object.values(member?.slots || {}),
       follow: this.config.follow, revision: this.config.revision, retry: member?.retry || null };
   }
@@ -228,7 +230,7 @@ export class ControlRoom extends DurableObject {
       const option = interaction.data.options?.[0];
       const values = Object.fromEntries((option?.options || []).map(o => [o.name, o.value]));
       const account = values.account;
-      if (['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'retry', 'revoke'].includes(option?.name) && !id(account)) {
+      if (['enroll', 'rotate', 'main', 'slot', 'slots', 'allow-slot', 'prefer-slot', 'auto-return', 'nickname', 'retry', 'revoke'].includes(option?.name) && !id(account)) {
         return reply('Account must be a numeric Roblox UserId.');
       }
       const replay = (await this.ctx.storage.get('replay') || []).filter(item => item.expires >= now());
@@ -240,13 +242,9 @@ export class ControlRoom extends DurableObject {
         return reply((`Characters for ${account}\n` + catalogPage(member, now(), values.page ?? 1)).slice(0, 1950));
       }
       if (option?.name === 'status') {
-        const lines = [`Follow: ${this.config.follow ? 'ON' : 'OFF'} | Main: ${this.config.mainId || 'not selected'}`];
-        for (const [userId, member] of Object.entries(this.config.members)) {
-          const live = this.sockets().map(ws => this.live(ws)).find(a => a?.userId === userId);
-          lines.push(`${userId}: ${live?.presence?.state || (live ? 'CONNECTING' : 'OFFLINE')} | slot ${member.slot ? 'saved' : 'not learned'}`);
-        }
-        lines.push('Verified statuses are reported by your paired client, not independently observed by Discord.');
-        return reply(lines.join('\n').slice(0, 1900));
+        const connections = {};
+        for (const ws of this.sockets()) { const live = this.live(ws); if (live) connections[live.userId] = live; }
+        return reply(statusPage(this.config, connections, now(), values.page ?? 1));
       }
       let content, disconnectAccount;
       if (replay.length >= 1000) return reply('Too many recent commands. Wait a few minutes.');
@@ -293,6 +291,16 @@ export class ControlRoom extends DurableObject {
             || !selectable(member.slots?.[slot], now())) return reply('Choose an approved, observed slot in that region.');
         member.preferredSlots ||= {}; member.preferredSlots[region] = slot;
         content = `Preferred ${region} character for ${account}: ${slot}.`;
+      } else if (option?.name === 'auto-return') {
+        if (!config.members[account] || typeof values.enabled !== 'boolean') return reply('Choose an enrolled account and enabled true/false.');
+        config.members[account].allowMenuReturn = values.enabled;
+        content = values.enabled ? `Automatic menu return enabled for ${account}. It uses the normal game menu flow, not forced respawn or combat bypass. A valid main and approved character are still required.`
+          : `Automatic menu return disabled for ${account}. Pending menu confirmations stop when the client receives this update. A teleport already accepted by Roblox cannot be undone.`;
+      } else if (option?.name === 'nickname') {
+        const nickname = cleanNickname(values.label);
+        if (!config.members[account] || !nickname) return reply('Choose an enrolled account and a nickname of 1–32 UTF-8 bytes, without control characters.');
+        config.members[account].nickname = nickname;
+        content = `Saved the display nickname for ${account}. Account identity and permissions are unchanged.`;
       } else if (option?.name === 'revoke') {
         if (!config.members[account]) return reply('Account is not enrolled.');
         delete config.members[account]; await this.ctx.storage.delete('ticket:' + account);

@@ -29,7 +29,7 @@ local function module(path)
 end
 local Core, Auto, Regions = module("join/core.lua"), module("control/auto.lua"), module("control/regions.lua")
 local MenuScan, Catalog = module("control/menu-scan.lua"), module("control/catalog.lua")
-assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.2", "Module version mismatch")
+assert(Core.VERSION == "0.1.0" and Auto.VERSION == "0.2.0-beta.3", "Module version mismatch")
 if env.CLAW_CONTROL and type(env.CLAW_CONTROL.destroy) == "function" then env.CLAW_CONTROL:destroy() end
 
 local file = "CLAW_CONTROL_BETA/" .. (ownerId or "single") .. "-" .. accountId .. ".json"
@@ -133,7 +133,11 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	validTicket = function(ticket) return Core.validateTicket(ticket, os.time()) end,
 	joinState = function() return core.state end,
 	hasMain = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
-	allowMenuReturn = config.AllowMenuReturn == true,
+	allowMenuReturn = function()
+		local cloud = auto and auto.profile and auto.profile.allowMenuReturn
+		if type(cloud) == "boolean" then return cloud end
+		return config.AllowMenuReturn == true -- Older pairings retain their explicit local opt-in until overridden.
+	end,
 	returnMenu = function() return fire("ReturnToMenu", false) end,
 	confirmMenu = function()
 		local gui = player:FindFirstChild("PlayerGui")

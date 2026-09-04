@@ -158,4 +158,26 @@ test("reload with a saved join never resends it", function()
 	local g = fixture(f.auto:serialize()); g.joinState = "REQUESTED"; g.auto:tick()
 	assert(g.picks == 0 and g.joins == 0 and g.auto.status == "REQUESTED")
 end)
+test("dynamic menu permission can enable return without changing a local file", function()
+	local f = fixture(); f.current.placeId = 456
+	local enabled = false; f.adapter.allowMenuReturn = function() return enabled end
+	f.auto:tick(); assert(f.menus == 0 and f.auto.status:find("WAITING_MENU"))
+	enabled = true; f.auto:tick(); assert(f.menus == 1)
+end)
+test("disabling menu return after the request suppresses its pending confirmation", function()
+	local f = fixture(); f.current.placeId = 456; f.auto:tick(); assert(f.menus == 1)
+	f.adapter.allowMenuReturn = false; f.prompt = true; f.auto:tick()
+	assert(f.confirms == 0 and f.auto.status:find("WAITING_MENU"))
+	f.current.placeId = Auto.LOBBY; f.auto:tick(); assert(f.picks == 1)
+end)
+test("permission lost during save stops the menu request", function()
+	local f = fixture(); f.current.placeId = 456
+	f.adapter.save = function() f.adapter.allowMenuReturn = false; return true end
+	f.auto:tick(); assert(f.menus == 0 and f.auto.attempt.phase == "HOLD")
+end)
+test("a failing permission provider cannot authorize automatic return", function()
+	local f = fixture(); f.current.placeId = 456
+	f.adapter.allowMenuReturn = function() error("unavailable") end
+	f.auto:tick(); assert(f.menus == 0 and f.auto.attempt == nil)
+end)
 print(tostring(passed) .. " auto-follow tests passed")

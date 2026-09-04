@@ -19,7 +19,12 @@ export const sharedCommand = {
   options: [
     { type: 1, name: 'setup', description: 'Start your own private account group' },
     ...command.options.filter(option => option.name !== 'slot').map(option => option.name === 'enroll'
-      ? { ...option, description: 'Pair a new account and receive private setup instructions' } : option),
+      ? { ...option, description: 'Pair a new account and receive private setup instructions' }
+      : option.name === 'status' ? { ...option, options: [{ type: 4, name: 'page', description: 'Account status page', min_value: 1, max_value: 30 }] } : option),
+    { type: 1, name: 'nickname', description: 'Give one account an easy-to-read label in Discord', options: [account,
+      { type: 3, name: 'label', description: 'Short account label (up to 32 UTF-8 bytes)', required: true, max_length: 32 }] },
+    { type: 1, name: 'auto-return', description: 'Opt an account in or out of normal automatic menu return', options: [account,
+      { type: 5, name: 'enabled', description: 'Permit normal menu return; does not bypass combat restrictions', required: true }] },
     { type: 1, name: 'rotate', description: 'Replace a lost pairing key; disconnects the previous client', options: [account] },
     { type: 1, name: 'slots', description: 'List your character cards, regions and approvals', options: [account,
       { type: 4, name: 'page', description: 'Character-list page', min_value: 1, max_value: 60 }] },

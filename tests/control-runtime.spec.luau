@@ -30,6 +30,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 		if pairedLauncher then options.owner = options.owner or "123456789012345678" end
 		local f = { now = 2000000000, clock = 0, files = {}, memory = {}, values = {}, encoded = 0,
 			picks = 0, joins = 0, menus = 0, confirms = 0, sockets = {}, packets = {}, hasMain = false, authRequests = 0 }
+		f.cloudMenu = options.cloudMenu
 		f.env = { CLAW_CONTROL_CONFIG = { Endpoint = "https://claw-test.example", Key = string.rep("a", 64),
 			AllowMenuReturn = options.menu == true, OwnerId = options.owner } }
 		local http = {}
@@ -99,6 +100,7 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 				if value.type == "hello" then self.OnMessage:Fire(http:JSONEncode({ type = "profile", accountId = tostring(player.UserId),
 					mainId = "11", ownerId = options.wrongOwner and "999999999999999999" or options.owner,
 					role = options.main and "main" or "alt", slot = "L", follow = true,
+					allowMenuReturn = f.cloudMenu,
 					approvedSlots = { ["L"] = true }, catalog = { { slot = "L", region = "EtreanLuminant", observedAt = f.now, confirmed = true,
 						characterName = options.oldCharacter and "Previous Character" or "Test Character", level = 1 } } })) end
 				self.OnMessage:Fire(http:JSONEncode(target()))
@@ -199,6 +201,16 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 	test("a different character reusing an approved letter waits for permission sync", function()
 		local f = boot({ oldCharacter = true }); f:advance(20)
 		assert(f.picks == 0 and f.joins == 0 and f.api:report().status:find("WAITING_SLOT_SYNC", 1, true))
+	end)
+	test("cloud menu opt-in works without local configuration edits", function()
+		local f = boot({ world = true, cloudMenu = true }); f:advance(3)
+		assert(f.menus == 1 and f.confirms == 0)
+	end)
+	test("cloud OFF overrides old local opt-in and suppresses a pending confirmation", function()
+		local f = boot({ world = true, menu = true, cloudMenu = false }); f:advance(3); assert(f.menus == 0)
+		f.cloudMenu = true; f.sockets[1]:Send(f.http:JSONEncode({ type = "hello" })); f:advance(1); assert(f.menus == 1)
+		f.cloudMenu = false; f.sockets[1]:Send(f.http:JSONEncode({ type = "hello" })); f.prompt.Title = "Return to Main Menu"
+		f:advance(3); assert(f.confirms == 0)
 	end)
 	if pairedLauncher then
 		test("bundled first-run entry pairs then connects without module downloads", function()

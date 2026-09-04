@@ -17,6 +17,7 @@ One Discord app plus one public autoexec loader. Each Discord user gets a separa
 - Signed Discord commands, private replies and per-user storage/socket isolation.
 - One-time pairing on each Roblox account; a key cannot authenticate another account or another Discord user's group.
 - Separate enrollment and key replacement, plus account revocation.
+- Account nicknames, paginated status with practical next steps, and an explicit per-account Discord switch for normal menu return. No private-file editing needed for that switch.
 - Approved character selection for Eastern and Etrean Luminant, with a preferred character per region.
 - Unknown regions, conflicting choices, observations older than 24 hours and selection-response mismatches stop before joining.
 - Explicit waiting for a manual menu return when automatic exits are off. No sticky failure just because the alt is still in the world.

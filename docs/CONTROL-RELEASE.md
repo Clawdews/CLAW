@@ -38,6 +38,14 @@ Local checks: 56 Worker/Node tests, 117 Luau control/scanner/pairing checks, and
 
 The live service still returned `0.1.0`. Its deployment, Discord endpoint, credentials, autoexec and PR/loot scripts were not changed.
 
+## 0.2.0-beta.3 checkpoint — September 4
+
+Added account nicknames, bounded/paginated account status with concrete next steps, and `/claw auto-return` so users do not edit pairing files to change that setting. Cloud OFF overrides an older local opt-in; a pending menu confirmation is suppressed after permission is withdrawn. This uses normal game menu requests, not forced respawn.
+
+Checks passed: 62 Worker/Node tests and 127 control/scanner/pairing checks. Shared Worker dry run passed. Cloud version `285d89e9-03c4-4904-a4a1-211267c46159` returned beta.3 health, rejected unapproved enrollment with HTTP 401, and left live v0.1.0 unchanged. GitHub beta.2's immutable launcher was also verified against its Git blob.
+
+Still waiting for the separate beta Discord application and real-client validation. Computer Use requires an action-time confirmation to create new persistent app access; this setup step is parked while the user is asleep. Do not reuse or reset the working bot's token to get around that dependency.
+
 ## Next milestones
 
 1. Validate integrated menu-to-Discord sync and compare location observations with the game's selected-region response. Never present an observed menu card as a verified arrival.

@@ -42,13 +42,16 @@ Changing the main pauses following until you enable it again. A fresh main desti
 
 `VERIFIED` means the paired client checked the expected account, character, experience, place, exact server and main's presence after joining. `WITH_MAIN` means it was already there. Discord relays those client reports; it does not independently observe Roblox.
 
-Automatic exits are off by default. To opt in after a successful menu test, change only `AllowMenuReturn` to `true` in that account's private `CLAW_PAIRINGS/<UserId>.json` and reload. Treat the rest of that file as a password. This requests the normal return-to-menu flow; it does not bypass combat restrictions or force a respawn.
+Automatic exits are off by default. After a successful menu test, opt in from Discord with `/claw auto-return account:<alt UserId> enabled:true`. Use `enabled:false` to switch it off, including pending menu confirmations once the client receives the update. It requests the normal return-to-menu flow; it does not bypass combat restrictions or force a respawn. Older explicit local settings remain effective only until a cloud setting overrides them. You no longer need to edit the private pairing file for this option.
 
 ## Everyday controls
 
 | Command | What it does |
 | --- | --- |
 | `/claw status` | Show your accounts, main and follow state |
+| `/claw status page:2` | See additional accounts without a truncated report |
+| `/claw nickname account:... label:...` | Give an account a readable label; its numeric identity stays visible |
+| `/claw auto-return account:... enabled:true` | Opt an account into normal menu return; default off |
 | `/claw follow enabled:false` | Stop new follow requests once received |
 | `/claw retry account:...` | Allow one new attempt after a stopped attempt |
 | `/claw allow-slot ... enabled:false` | Remove permission to use a character |
