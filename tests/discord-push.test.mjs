@@ -61,6 +61,28 @@ test('titles cannot inject mentions, Markdown, links or extra lines', () => {
   assert.equal(Array.from(shortTitle('😀'.repeat(70))).length, 56);
   assert.equal(shortTitle('x'.repeat(70)), 'x'.repeat(55) + '…');
 });
+test('updates refuse credential patterns and personal details in commit messages', () => {
+  const messages = [webhook, 'gh' + 'p_' + 'x'.repeat(36), 'Pairing ' + 'c'.repeat(64),
+    'Contact ' + 'person' + '@example.com', ['C:', 'Users', 'ExamplePerson', 'private.txt'].join('\\'),
+    'Fixed setup\n\nAccountKey = "' + 'q'.repeat(32) + '"'];
+  for (const message of messages) {
+    assert.throws(() => pushPayload(event({ head_commit: { id: sha, message } }), 'Clawdews/CLAW'),
+      error => error.message === 'Update withheld: review the commit message for private data.');
+  }
+});
+test('title shortening and invisible characters cannot hide a credential', () => {
+  const token = 'gh' + 'p_' + 'x'.repeat(36);
+  for (const message of ['Release notes '.repeat(10) + token, token.replace('_', '\u200B_')]) {
+    assert.throws(() => pushPayload(event({ head_commit: { id: sha, message } }), 'Clawdews/CLAW'), /Update withheld/);
+  }
+});
+test('blocked previews never print the message or webhook configuration', () => {
+  const message = 'Private pairing ' + 'c'.repeat(64);
+  const result = runCLI(['--dry-run'], event({ head_commit: { id: sha, message } }), { DISCORD_UPDATES_WEBHOOK: webhook });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr.trim(), 'Update withheld: review the commit message for private data.');
+});
 test('deletions, tags and compatibility refs are silent', () => {
   for (const overrides of [{ deleted: true }, { ref: 'refs/tags/v1' }, { ref: 'refs/heads/legacy' }])
     assert.equal(pushPayload(event(overrides), 'Clawdews/CLAW'), null);
@@ -105,6 +127,9 @@ test('workflow pins checkout, keeps credentials out of commands and uses the sam
   const source = readFileSync(new URL('../.github/workflows/discord-updates.yml', import.meta.url), 'utf8');
   assert.match(source, /actions\/checkout@[a-f0-9]{40}/);
   assert.match(source, /persist-credentials: false/);
+  assert.match(source, /fetch-depth: 0/);
+  assert.ok(source.indexOf('node tools/check-public.mjs --history') > 0);
+  assert.ok(source.indexOf('node tools/check-public.mjs --history') < source.indexOf('- name: Post one-line update'));
   assert.ok(!source.includes('head_commit.message'));
   const names = source.match(/branches: \[([^\]]+)\]/)[1].split(',').map(value => value.trim());
   assert.deepEqual(new Set(names), branches);

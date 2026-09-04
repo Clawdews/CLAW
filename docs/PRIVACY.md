@@ -6,7 +6,7 @@ The source code and public loader are safe to share. Your filled-in setup is not
 | --- | --- |
 | The public GitHub loader | Your Discord pairing snippet |
 | Source code and blank examples | Files inside `CLAW_PAIRINGS` |
-| A command name or error message | Webhook URLs, bot tokens, cookies and passwords |
+| A command name or the short support report | Webhook URLs, bot tokens, cookies and passwords |
 | A screenshot with personal details covered | Account lists, character reports and exact server details |
 
 ## Where your information goes
@@ -19,13 +19,15 @@ The source code and public loader are safe to share. Your filled-in setup is not
 
 The controller does not need your Roblox password or session cookie. The host needs a bot token for its own Discord app; ordinary users do not.
 
+Private does not mean stored nowhere: pairing needs a saved key, and cloud following needs account and server details. Keep those in the locations above, not in public posts. Never upload your whole executor workspace to get help.
+
 ## Before sharing a screenshot or report
 
 For the shared beta, prefer the [short support report](CONTROL-SETUP.md#a-report-you-can-share). It leaves out identities, keys and raw errors without uploading anything.
 
 1. Hide keys, webhook URLs and pairing snippets completely.
 2. Remove account IDs, character names and server details you do not want others to see.
-3. Share the error and what you were doing, not your entire workspace or configuration.
+3. Share the short support report and what you were doing, not full console logs or configuration. Other scripts' errors may contain private details.
 
 If a pairing key leaks, use `/claw rotate` or `/claw revoke`. Replace a leaked webhook or bot token in Discord. Deleting a post or file alone does not make the old credential safe.
 

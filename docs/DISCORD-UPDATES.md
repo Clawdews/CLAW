@@ -15,3 +15,5 @@ The workflow runs on `main`, `control-beta`, `discord-control`, `server-join` an
 If the secret is missing, the job reports that updates are not connected. A send counts as confirmed only when Discord returns a message ID. Ambiguous failures are not automatically retried, to avoid duplicate posts. Rerunning a successful workflow will post again.
 
 Keep commit titles brief. Notifications use only the final commit's first line, shortened to 56 characters, plus a link to that commit. Remove the repository secret to disconnect updates.
+
+Before posting, the workflow checks public files and Git history for known credential patterns. The notifier also refuses commit messages containing those patterns, email addresses or 64-character hexadecimal keys. It prints a fixed warning, not the matching text. A blocked update needs review; it does not remove anything already pushed to GitHub. Keep account names, server details and all other private information out of commits yourself—pattern checks cannot identify everything.

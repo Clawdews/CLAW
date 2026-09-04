@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { credentialIssue } from './check-public.mjs';
 
 export const branches = new Set(['main', 'control-beta', 'discord-control', 'server-join', 'animation-transport']);
 
@@ -21,7 +22,15 @@ export function pushPayload(event, repository) {
   const branch = event.ref.slice('refs/heads/'.length);
   if (!branches.has(branch)) return null;
   if (!/^[a-f0-9]{40}$/.test(event.after || '') || /^0+$/.test(event.after)) throw new Error('Missing push commit.');
-  const title = shortTitle(event.head_commit?.id === event.after ? event.head_commit.message : 'Updated');
+  const message = String(event.head_commit?.id === event.after ? event.head_commit.message || '' : 'Updated');
+  // Check before shortening or removing punctuation; neither makes private text safe.
+  for (const text of [message, message.replace(/[\p{Cc}\p{Cf}]/gu, '')]) {
+    if (credentialIssue('commit-message', text) || /\b[a-f0-9]{64}\b/i.test(text)
+        || /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text)) {
+      throw new Error('Update withheld: review the commit message for private data.');
+    }
+  }
+  const title = shortTitle(message);
   const label = branch === 'main' ? 'CLAW' : `CLAW ${branch}`;
   return {
     content: `${label}: ${title} · [view](https://github.com/${repository}/commit/${event.after})`,
