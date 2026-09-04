@@ -30,4 +30,6 @@ node tools/check-control.mjs
 
 Pass `--luau /path/to/luau` if needed. Add `--worker-build` to compile the shared Worker without deploying it. Tests cover local Worker execution and mocked game services; they do not replace an in-game test.
 
+GitHub runs the same checks on beta pushes and pull requests, including Luau compilation and bundle consistency. The test workflow has no deployment credentials and does not publish to Cloudflare.
+
 Edit the source modules, then rebuild `dist`. Pairing keys, bot tokens and local account files must stay out of Git.

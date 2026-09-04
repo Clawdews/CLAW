@@ -1,0 +1,45 @@
+name: Control checks
+
+on:
+  push:
+    branches: [control-beta]
+  pull_request:
+    branches: [control-beta]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install locked test dependencies
+        run: npm ci --prefix control --no-audit --no-fund
+      - name: Install pinned Luau 0.736
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error --max-time 60 --retry 2 \
+            --proto '=https' --proto-redir '=https' \
+            https://github.com/luau-lang/luau/releases/download/0.736/luau-ubuntu.zip \
+            --output "$RUNNER_TEMP/claw-luau.zip"
+          printf '%s  %s\n' '4e3d1660b044c0b7ed8b9ef3d97cbc4a1690cad98c3e71e37d86d5eb91975a61' "$RUNNER_TEMP/claw-luau.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/claw-luau.zip" -d "$RUNNER_TEMP/claw-luau"
+          chmod +x "$RUNNER_TEMP/claw-luau/luau" "$RUNNER_TEMP/claw-luau/luau-compile"
+      - name: Compile client scripts and published bundles
+        run: '"$RUNNER_TEMP/claw-luau/luau-compile" --null dist/control-beta.lua dist/launcher-beta.lua dist/slot-scan.lua control/*.lua join/*.lua control-client.lua control-launcher.lua join-test.lua slot-scan.lua'
+      - name: Test release, clients and cloud service
+        run: node tools/check-control.mjs --luau "$RUNNER_TEMP/claw-luau/luau" --worker-build
