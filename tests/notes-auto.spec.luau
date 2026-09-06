@@ -1,87 +1,106 @@
 return function(newLoop, valid)
     local passed = 0
-    local function test(name, fn) fn(); passed += 1; print("PASS notes auto " .. name) end
+    local function test(name, fn) fn(); passed += 1; print("PASS notes batch " .. name) end
     local function fixture()
-        local f = { time = 1000, count = 4335, identity = {}, drops = 0, joins = 0, cleared = 0 }
-        f.context = { accountId = 12, gameId = 34, placeId = 6473861193, jobId = "exact-server", slot = "A" }
-        f.record = { version = 1, phase = "world", token = "test-token-123456789", accountId = 12, gameId = 34,
-            worldPlaceId = 6473861193, jobId = "exact-server", slot = "A", cycles = 0, expires = 2800 }
-        f.adapter = { now = function() return f.time end, context = function() return f.context end,
-            cancel = function() f.cancelled = true end, clear = function() f.cleared += 1 end,
+        local f = { time = 0, count = 3500, identity = {}, amounts = {}, confirms = 0 }
+        f.context = { accountId = 12, gameId = 34, placeId = 6473861193, jobId = "server", slot = "A", actor = {} }
+        f.adapter = { now = function() return f.time end, context = function() return table.clone(f.context) end,
+            cancel = function() f.cancelled = true end, uncertain = function() f.locked = true end,
             status = function(s) f.state = s; if f.onStatus then f.onStatus(s) end end,
-            uncertain = function() f.locked = true end,
             sleep = function(s) f.time += s; if f.onSleep then f.onSleep() end end,
-            preflight = function() return true end,
+            preflight = function() return true end, ready = function() return true end,
             balance = function() return f.count, f.identity end,
-            drop = function() f.drops += 1; local n = math.min(1000, f.count); f.count -= n; return true, "sent", n end,
-            depart = function(r, live) assert(live()); f.next = r; f.joins += 1; return true end }
+            confirmed = function() f.confirms += 1 end,
+            drop = function(limit)
+                local amount = math.min(limit, f.count); table.insert(f.amounts, amount)
+                f.count -= amount; return true, "sent", amount
+            end }
         f.loop = newLoop(f.adapter); return f
     end
-    test("4335 drops 1000 then saves the same server and remaining balance", function()
-        local f = fixture(); assert(f.loop:run(f.record)); assert(f.drops == 1 and f.joins == 1 and f.time >= 1003)
-        assert(f.next.expectedBalance == 3335 and f.next.jobId == "exact-server" and f.next.slot == "A" and f.next.phase == "menu")
+    test("MAX 3500 drains 1000 1000 1000 500 without any travel adapter", function()
+        local f = fixture(); local ok, why = f.loop:run()
+        assert(ok and why == "empty" and f.count == 0 and f.confirms == 4 and f.time >= 3)
+        assert(table.concat(f.amounts, ",") == "1000,1000,1000,500" and not f.loop.active)
     end)
-    test("553 drops 553 then stops without another rejoin", function()
-        local f = fixture(); f.count = 553; local ok, s = f.loop:run(f.record)
-        assert(ok and s == "empty" and f.count == 0 and f.joins == 0 and not f.loop.active)
+    test("5000 with 3500 clips the total to the actual balance", function()
+        local f = fixture(); assert(f.loop:run(5000)); assert(table.concat(f.amounts, ",") == "1000,1000,1000,500")
     end)
-    test("zero balance sends nothing", function() local f = fixture(); f.count = 0; f.loop:run(f.record); assert(f.drops == 0 and f.joins == 0) end)
-    test("unreadable and invalid balances fail closed", function()
-        for _, n in ipairs({ -1, 1.2, math.huge, "553" }) do
-            local f = fixture(); f.count = n; assert(not f.loop:run(f.record)); assert(f.drops == 0)
+    test("requested 2500 leaves the remaining 1000 untouched", function()
+        local f = fixture(); local ok, why = f.loop:run(2500)
+        assert(ok and why == "complete" and f.count == 1000 and table.concat(f.amounts, ",") == "1000,1000,500")
+    end)
+    test("553 and zero are exact without extra submissions", function()
+        local f = fixture(); f.count = 553; assert(f.loop:run()); assert(#f.amounts == 1 and f.amounts[1] == 553)
+        f = fixture(); f.count = 0; assert(f.loop:run()); assert(#f.amounts == 0)
+    end)
+    test("invalid totals and balances send nothing", function()
+        for _, n in ipairs({ -1, 0, 1.2, math.huge, "553", 1000000001 }) do
+            local f = fixture(); assert(not f.loop:run(n)); assert(#f.amounts == 0)
         end
-        local f = fixture(); f.count = nil; assert(not f.loop:run(f.record)); assert(f.drops == 0)
+        for _, n in ipairs({ -1, 1.2, math.huge, "553" }) do
+            local f = fixture(); f.count = n; assert(not f.loop:run()); assert(#f.amounts == 0)
+        end
+        local f = fixture(); f.count = nil; assert(not f.loop:run()); assert(#f.amounts == 0)
     end)
-    test("returning balance must match the previously confirmed remainder", function()
-        local f = fixture(); f.record.expectedBalance = 5000; assert(not f.loop:run(f.record)); assert(f.drops == 0)
+    test("no observed decrement stops after exactly one submission", function()
+        local f = fixture(); f.adapter.drop = function() table.insert(f.amounts, 1000); return true, "sent", 1000 end
+        assert(not f.loop:run()); assert(#f.amounts == 1 and f.locked and f.time >= 10)
     end)
-    test("no observed decrement means no rejoin and locks another attempt", function()
-        local f = fixture(); f.adapter.drop = function() f.drops += 1; return true, "sent", 1000 end
-        assert(not f.loop:run(f.record)); assert(f.joins == 0 and f.drops == 1 and f.locked and f.time >= 1010)
-    end)
-    test("a different display object or an unexpected decrement is not confirmation", function()
-        for _, mode in ipairs({ "source", "amount" }) do
+    test("another source or unexpected balance is not confirmation", function()
+        for _, mode in ipairs({ "source", "amount", "missing-source" }) do
             local f = fixture(); f.adapter.drop = function()
-                if mode == "source" then f.identity = {} else f.count -= 999 end
+                f.count -= mode == "amount" and 999 or 1000
+                if mode == "source" then f.identity = {} elseif mode == "missing-source" then f.identity = nil end
                 return true, "sent", 1000
             end
-            assert(not f.loop:run(f.record)); assert(f.joins == 0 and f.locked)
+            assert(not f.loop:run()); assert(f.locked)
         end
     end)
-    test("Stop during confirmation prevents a later rejoin", function()
-        local f = fixture(); f.adapter.drop = function() return true, "sent", 1000 end
-        f.onSleep = function() f.loop:stop() end; assert(not f.loop:run(f.record)); assert(f.joins == 0 and f.locked)
+    test("Stop during confirmation prevents another batch and locks the unknown outcome", function()
+        local f = fixture(); f.adapter.drop = function() table.insert(f.amounts, 1000); return true, "sent", 1000 end
+        f.onSleep = function() f.loop:stop() end
+        assert(not f.loop:run()); assert(#f.amounts == 1 and f.locked)
     end)
-    test("Stop during countdown prevents rejoining without locking a confirmed drop", function()
+    test("Stop between confirmed batches prevents the second without locking", function()
         local f = fixture(); f.onSleep = function() f.loop:stop() end
-        assert(not f.loop:run(f.record)); assert(f.joins == 0 and not f.locked)
+        assert(not f.loop:run()); assert(#f.amounts == 1 and not f.locked)
     end)
-    test("balance change during countdown stops", function()
+    test("balance changes between batches stop", function()
         local f = fixture(); f.onSleep = function() f.count = 4000 end
-        assert(not f.loop:run(f.record)); assert(f.joins == 0)
+        assert(not f.loop:run()); assert(#f.amounts == 1 and not f.locked)
     end)
-    test("wrong account, slot, game, server or expired run sends nothing", function()
-        for k, v in pairs({ accountId = 99, slot = "B", gameId = 99, jobId = "another", expires = 1000, phase = "menu", cycles = 100, worldPlaceId = 10 }) do
-            local f = fixture(); f.record[k] = v; assert(not f.loop:run(f.record)); assert(f.drops == 0)
+    test("already-used dialog must close before the next batch", function()
+        local f = fixture(); f.adapter.ready = function() return #f.amounts == 0 end
+        assert(not f.loop:run()); assert(#f.amounts == 1 and f.state == "prompt-not-closed")
+    end)
+    test("fresh dialogs can arrive after a delay", function()
+        local f = fixture(); f.count = 1500
+        f.adapter.ready = function() return #f.amounts == 0 or f.time > 2 end
+        assert(f.loop:run()); assert(#f.amounts == 2 and f.count == 0)
+    end)
+    test("changed account game place slot server or character cancels", function()
+        for _, field in ipairs({ "accountId", "gameId", "placeId", "jobId", "slot", "actor" }) do
+            local f = fixture()
+            f.onSleep = function() f.context[field] = field == "actor" and {} or "changed" end
+            assert(not f.loop:run()); assert(#f.amounts == 1)
         end
     end)
-    test("teleport failure and preflight failure are not retried", function()
-        local f = fixture(); f.adapter.depart = function() f.joins += 1; return false end
-        assert(not f.loop:run(f.record)); assert(f.joins == 1 and not f.loop.active)
-        f = fixture(); f.adapter.preflight = function() return false, "queue unavailable" end
-        assert(not f.loop:run(f.record)); assert(f.drops == 0)
+    test("preflight failure sends nothing", function()
+        local f = fixture(); f.adapter.preflight = function() return false, "blocked" end
+        assert(not f.loop:run()); assert(#f.amounts == 0)
     end)
-    test("cycle ceiling stops after the confirmed hundredth drop", function()
-        local f = fixture(); f.record.cycles = 99; local ok, s = f.loop:run(f.record)
-        assert(ok and s == "cycle-limit" and f.joins == 0)
+    test("valid saved setting is per account and game with no expiry", function()
+        local c = { accountId = 12, gameId = 34 }
+        local r = { version = 2, enabled = true, pending = false, token = "unique-token-123456789", accountId = 12, gameId = 34 }
+        assert(valid(r, c)); r.accountId = 13; assert(not valid(r, c)); r.accountId = 12
+        r.gameId = 35; assert(not valid(r, c)); r.gameId = 34
+        r.pending = nil; assert(not valid(r, c)); r.pending = false; r.version = 1; assert(not valid(r, c))
     end)
-    test("same-account menu resume is accepted only in the menu", function()
-        local f = fixture(); f.record.phase = "menu"; assert(not valid(f.record, f.time, f.context, "menu"))
-        f.context.placeId = 4111023553; assert(valid(f.record, f.time, f.context, "menu"))
+    test("lower live prompt cap progresses toward the same requested total", function()
+        local f = fixture(); f.adapter.drop = function(limit)
+            local n = math.min(400, limit); f.count -= n; table.insert(f.amounts, n); return true, "sent", n
+        end
+        assert(f.loop:run(1000)); assert(table.concat(f.amounts, ",") == "400,400,200" and f.count == 2500)
     end)
-    test("live context loss before submit cancels", function()
-        local f = fixture(); f.adapter.preflight = function() f.context.slot = "B"; return true end
-        assert(not f.loop:run(f.record)); assert(f.drops == 0)
-    end)
-    print(passed .. " notes auto tests passed")
+    print(passed .. " notes batch tests passed")
 end

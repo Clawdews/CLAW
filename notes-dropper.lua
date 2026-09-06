@@ -1,4 +1,4 @@
--- CLAW notes dropper. Starts idle; automatic mode requires an explicit Start.
+-- CLAW notes dropper. Auto is OFF until chosen; the saved choice survives joins.
 -- Learns the opener from a manual Notes click in this session; no remote-name guessing.
 -- Does not use KeyHandler internals, fixed screen coordinates, or automatic retries.
 
@@ -9,10 +9,11 @@ local function newDropper(adapter)
         return type(value) == "number" and value == value and value >= 1 and value <= 1000000000 and value % 1 == 0
     end
     function core:cancel() self.generation += 1 end
-    function core:run(raw)
+    function core:run(raw, cap)
         if self.busy then return false, "busy" end
         if self.uncertain then return false, "uncertain" end
         local maximumMode = raw == "MAX"
+        if cap ~= nil and not integer(cap) then return false, "amount" end
         if not maximumMode and (type(raw) ~= "string" or #raw > 12 or not raw:match("^%s*%d+%s*$")) then return false, "amount" end
         local amount = maximumMode and nil or tonumber(raw)
         if not maximumMode and not integer(amount) then return false, "amount" end
@@ -44,9 +45,14 @@ local function newDropper(adapter)
             if not fresh or fresh.kind ~= "notes" or fresh.identity ~= prompt.identity or fresh.choice ~= prompt.choice then return "changed" end
             if maximumMode and fresh.maximum == 0 then return "empty" end
             if not integer(fresh.minimum) or not integer(fresh.maximum) or fresh.minimum > fresh.maximum then return "bounds" end
-            if maximumMode then amount = math.min(1000, fresh.maximum) end
+            if maximumMode then amount = math.min(1000, fresh.maximum, cap or 1000) end
             if amount < fresh.minimum or amount > fresh.maximum then return "range" end
             if self.used[fresh.identity] then return "already-sent" end
+            if self.beforeSubmit then self.beforeSubmit() end
+            if generation ~= self.generation or adapter.actor() ~= actor then return "cancelled" end
+            local verified = adapter.inspect()
+            if not verified or verified.kind ~= "notes" or verified.identity ~= fresh.identity or verified.choice ~= fresh.choice
+                or verified.minimum ~= fresh.minimum or verified.maximum ~= fresh.maximum then return "changed" end
             self.used[fresh.identity] = true -- Mark before yielding; an error is not permission to resend.
             self.phase = "submitting"
             self.lastAmount = amount
@@ -63,75 +69,86 @@ end
 -- DROPPER_CORE_END
 
 -- DROPPER_AUTO_BEGIN
-local function validNotesRun(r, now, context, phase)
-    return type(r) == "table" and r.version == 1 and r.phase == phase
+local function validNotesRun(r, context)
+    return type(r) == "table" and r.version == 2
+        and type(r.enabled) == "boolean" and type(r.pending) == "boolean"
         and type(r.token) == "string" and #r.token >= 16 and #r.token <= 80
-        and type(r.jobId) == "string" and #r.jobId > 0 and #r.jobId <= 160
-        and type(r.slot) == "string" and #r.slot > 0 and #r.slot <= 32 and r.slot:match("^[%w_-]+$") ~= nil
-        and type(r.cycles) == "number" and r.cycles >= 0 and r.cycles < 100 and r.cycles % 1 == 0
-        and type(r.expires) == "number" and r.expires > now and r.expires <= now + 1800
         and r.accountId == context.accountId and r.gameId == context.gameId
-        and (r.worldPlaceId == 6473861193 or r.worldPlaceId == 6032399813)
-        and (phase == "menu" and context.placeId == 4111023553
-            or phase == "world" and context.placeId == r.worldPlaceId and context.jobId == r.jobId and context.slot == r.slot)
-        and (r.expectedBalance == nil or type(r.expectedBalance) == "number" and r.expectedBalance >= 0
-            and r.expectedBalance <= 1000000000 and r.expectedBalance % 1 == 0)
 end
 local function newNotesLoop(adapter)
-    local loop = { active = false, generation = 0, state = "idle" }
+    local loop = { active = false, generation = 0, state = "idle", unconfirmed = false }
     function loop:stop(reason)
         self.active = false; self.generation += 1; self.state = reason or "stopped"
-        if self.unconfirmed then adapter.uncertain(); self.unconfirmed = false end
-        adapter.cancel(); adapter.clear(); adapter.status(self.state)
+        if self.unconfirmed then adapter.uncertain() end
+        adapter.cancel(); adapter.status(self.state)
     end
-    function loop:run(record)
+    function loop:run(target)
         if self.active then return false, "busy" end
-        if not validNotesRun(record, adapter.now(), adapter.context(), "world") then return false, "wrong-session" end
-        self.active = true; self.generation += 1
+        if target ~= nil and (type(target) ~= "number" or target < 1 or target > 1000000000 or target % 1 ~= 0) then return false, "amount" end
+        local session = adapter.context()
+        self.active = true; self.generation += 1; self.unconfirmed = false
+        self.total, self.batches = 0, 0
         local generation = self.generation
         local function live()
-            return self.active and self.generation == generation
-                and validNotesRun(record, adapter.now(), adapter.context(), "world")
+            if not self.active or self.generation ~= generation then return false end
+            local c = adapter.context()
+            return session.actor ~= nil and c.actor == session.actor and c.accountId == session.accountId
+                and c.gameId == session.gameId and c.placeId == session.placeId and c.jobId == session.jobId and c.slot == session.slot
         end
+        self.live = live
         local function hold(reason) self:stop(reason); return false, reason end
+        local function countOK(n) return type(n) == "number" and n >= 0 and n <= 1000000000 and n % 1 == 0 end
         local ok, success, reason = pcall(function()
             local ready, problem = adapter.preflight()
             if not ready then return hold(problem or "not-ready") end
             local before, identity = adapter.balance()
-            if type(before) ~= "number" or before < 0 or before > 1000000000 or before % 1 ~= 0 or not identity then return hold("balance-unavailable") end
-            if record.expectedBalance ~= nil and before ~= record.expectedBalance then return hold("balance-changed-on-rejoin") end
-            if before == 0 then return hold("empty") end
+            if not countOK(before) or not identity then return hold("balance-unavailable") end
+            local remaining = math.min(target or before, before)
             if not live() then return hold("cancelled") end
-            self.state = "dropping"; adapter.status(self.state)
-            local sent, result, amount = adapter.drop()
-            if not sent then return hold(result or "drop-failed") end
-            self.unconfirmed = true
-            if type(amount) ~= "number" or amount < 1 or amount > math.min(1000, before) or amount % 1 ~= 0 then return hold("outcome-unknown") end
-            self.state = "confirming"; adapter.status(self.state)
-            local deadline, after = adapter.now() + 10, nil
-            repeat
+            while remaining > 0 do
+                local deadline = adapter.now() + 5
+                while not adapter.ready() do
+                    if not live() then return hold("cancelled") end
+                    if adapter.now() >= deadline then return hold("prompt-not-closed") end
+                    adapter.sleep(0.1)
+                end
                 if not live() then return hold("cancelled") end
                 local count, source = adapter.balance()
-                if source ~= nil and source ~= identity then return hold("balance-source-changed") end
-                if count == before - amount then after = count; break end
-                if count ~= nil and count ~= before then return hold("outcome-unknown") end
-                if adapter.now() >= deadline then return hold("outcome-unknown") end
-                adapter.sleep(0.1)
-            until false
-            self.unconfirmed = false
-            record.cycles += 1
-            if after == 0 then self:stop("empty"); return true, "empty" end
-            if record.cycles >= 100 then self:stop("cycle-limit"); return true, "cycle-limit" end
-            self.state = "countdown"; adapter.status(self.state)
-            local rejoinAt = adapter.now() + 3
-            while adapter.now() < rejoinAt do if not live() then return hold("cancelled") end; adapter.sleep(0.1) end
-            if not live() then return hold("cancelled") end
-            local currentBalance, source = adapter.balance()
-            if source ~= identity or currentBalance ~= after then return hold("balance-changed") end
-            local nextRun = table.clone(record); nextRun.expectedBalance, nextRun.phase = after, "menu"
-            self.state = "rejoining"; adapter.status(self.state)
-            if not adapter.depart(nextRun, live) then return hold("rejoin-failed") end
-            return true, "rejoining"
+                if count ~= before or source ~= identity then return hold("balance-changed") end
+                self.state = "dropping"; adapter.status(self.state)
+                if not live() then return hold("cancelled") end
+                local sent, result, amount = adapter.drop(math.min(1000, remaining))
+                if not sent then return hold(result or "drop-failed") end
+                self.unconfirmed = true
+                if not countOK(amount) or amount < 1 or amount > math.min(1000, remaining) then return hold("outcome-unknown") end
+                self.state = "confirming"; adapter.status(self.state)
+                deadline = adapter.now() + 10
+                repeat
+                    if not live() then return hold("cancelled") end
+                    count, source = adapter.balance()
+                    if source ~= nil and source ~= identity then return hold("balance-source-changed") end
+                    if count == before - amount and source == identity then break end
+                    if count ~= nil and count ~= before then return hold("outcome-unknown") end
+                    if adapter.now() >= deadline then return hold("outcome-unknown") end
+                    adapter.sleep(0.1)
+                until false
+                self.unconfirmed = false
+                adapter.confirmed()
+                self.total += amount; self.batches += 1
+                remaining -= amount; before = count
+                if remaining > 0 then
+                    self.state = "between-batches"; adapter.status(self.state)
+                    local nextAt = adapter.now() + 1
+                    while adapter.now() < nextAt do
+                        if not live() then return hold("cancelled") end
+                        adapter.sleep(0.1)
+                    end
+                end
+            end
+            self.active = false
+            self.state = before == 0 and "empty" or "complete"
+            adapter.status(self.state)
+            return true, self.state
         end)
         if not ok then return hold("automation-error") end
         return success, reason
@@ -143,52 +160,109 @@ end
 -- DROPPER_RUNTIME_BEGIN
 local function newNotesRuntime(env, core, ui, player, playerGui, child, visible)
     local Http, Teleport = game:GetService("HttpService"), game:GetService("TeleportService")
-    local Replicated = game:GetService("ReplicatedStorage")
-    local setting = "CLAW_NOTES_AUTO_" .. tostring(player.UserId)
+    local accountId, gameId = player.UserId, game.GameId
+    local setting = "CLAW_NOTES_AUTO_" .. tostring(accountId)
+    local path = "CLAW/notes-auto-v2-" .. tostring(gameId) .. "-" .. tostring(accountId) .. ".json"
     local loader = "https://api.luarmor.net/files/v4/loaders/8c5cec745c34ac98ebbfca1ee3bad27f.lua"
     local queue = queue_on_teleport or queueonteleport or queueteleport
     local key = env.CLAW_NOTES_EXECUTION_KEY or env.script_key or script_key
-    local runtime = { loop = nil, menuActive = false, message = nil, closed = false }
+    local runtime = { enabled = false, waiting = false, closed = false, generation = 0, pending = false, message = nil }
     local texts = {
-        dropping = "Dropping the allowed maximum...", confirming = "Checking the balance change...",
-        countdown = "Rejoining in 3s. STOP cancels.", rejoining = "Returning through the game menu...",
-        empty = "No notes left. Auto stopped.", ["cycle-limit"] = "100 drops reached. Auto stopped.",
-        ["balance-unavailable"] = "Cannot read your notes balance. Auto stopped.",
-        ["outcome-unknown"] = "Balance did not confirm the drop. Auto stopped.",
-        ["balance-source-changed"] = "Notes display changed. Auto stopped.",
-        ["balance-changed-on-rejoin"] = "Balance differs after rejoin. Auto stopped.",
-        ["balance-changed"] = "Balance changed before leaving. Auto stopped.",
-        ["rejoin-failed"] = "Rejoin failed. Auto stopped; no retry.",
-        cancelled = "Auto stopped.", stopped = "Auto stopped.",
-        ["automation-error"] = "Auto error. No automatic retry.",
+        dropping = "Dropping the next batch...", confirming = "Checking the balance change...",
+        ["between-batches"] = "Next batch in 1s. Click STOP to cancel.",
+        ["balance-unavailable"] = "Cannot read your Notes balance. Nothing more sent.",
+        ["outcome-unknown"] = "Drop unconfirmed. Check your notes; no repeat sent.",
+        ["balance-source-changed"] = "Notes display changed. Nothing more sent.",
+        ["balance-changed"] = "Balance changed unexpectedly. Nothing more sent.",
+        ["prompt-not-closed"] = "Previous dialog did not close. Nothing more sent.",
+        ["automation-error"] = "Dropper error. Nothing more sent.",
+        ["other-prompt"] = "Close the other dialog before dropping.",
+        ["open-timeout"] = "Notes dialog did not open. Nothing dropped.",
+        learn = "Notes handler unavailable. Open Notes once, then start again.",
+        travelling = "You are leaving. Auto will wait for your next join.",
+        waiting = "Auto ON. Waiting for your character and Notes display.",
+        stopped = "Auto OFF. Saved for future joins.", cancelled = "Dropping stopped.",
+        uncertain = "Check the pending drop and rejoin before starting again.",
     }
     local function context()
-        local slot = player:GetAttribute("DataSlot")
         return { accountId = player.UserId, gameId = game.GameId, placeId = game.PlaceId,
-            jobId = game.JobId, slot = slot ~= nil and tostring(slot) or nil }
+            jobId = game.JobId, slot = player:GetAttribute("DataSlot"), actor = player.Character }
     end
-    local function clear()
-        local ok = pcall(function()
-            Teleport:SetTeleportSetting(setting, "")
-            assert(Teleport:GetTeleportSetting(setting) == "")
-        end)
-        if not ok then warn("[CLAW] Could not verify clearing resume state. Close this game client to cancel any queued continuation.") end
-    end
+    local function world() return game.PlaceId == 6473861193 or game.PlaceId == 6032399813 end
     local function status(code)
-        runtime.message = texts[code] or code
-        ui:setAuto(runtime.menuActive or runtime.loop and runtime.loop.active, runtime.message)
-        if code ~= "dropping" and code ~= "confirming" and code ~= "countdown" and code ~= "rejoining" then
-            ui:setNotice((code == "empty" or code == "stopped" or code == "cancelled") and "ready" or code, runtime.message)
+        if code == "empty" then
+            runtime.message = runtime.enabled and "Empty. Auto ON for your next join." or "All notes dropped. Staying here."
+        elseif code == "complete" then runtime.message = "Requested total dropped. Staying here."
+        else runtime.message = texts[code] or code end
+        ui:setAuto(runtime.enabled, runtime.message)
+        if code ~= "dropping" and code ~= "confirming" and code ~= "between-batches" and code ~= "waiting" and code ~= "travelling" then
+            local normal = code == "empty" or code == "complete" or code == "stopped" or code == "cancelled"
+            ui:setNotice(normal and "ready" or code, runtime.message)
         end
     end
-    local function remote(name, menu)
-        local root = Replicated:FindFirstChild("Requests")
-        if menu then root = root and root:FindFirstChild("StartMenu") end
-        local r = root and root:FindFirstChild(name)
-        return r and r:IsA("RemoteEvent") and r or nil
+    local function storage()
+        return type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
+    end
+    local function read()
+        assert(storage(), "Local settings unavailable")
+        if not isfile(path) then return nil end
+        local raw = readfile(path)
+        assert(type(raw) == "string" and #raw <= 4096, "Invalid notes setting")
+        local r = Http:JSONDecode(raw)
+        assert(validNotesRun(r, { accountId = accountId, gameId = gameId }), "Wrong notes setting")
+        return r
+    end
+    local function save()
+        assert(storage(), "Cannot save Auto")
+        if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder("CLAW") then makefolder("CLAW") end
+        local r = { version = 2, accountId = accountId, gameId = gameId, token = runtime.token or Http:GenerateGUID(false),
+            enabled = runtime.enabled, pending = runtime.pending }
+        local raw = Http:JSONEncode(r)
+        writefile(path, raw)
+        assert(readfile(path) == raw, "Cannot verify Auto setting")
+        runtime.token = r.token
+    end
+    local function clearQueueTicket()
+        pcall(function() Teleport:SetTeleportSetting(setting, "") end)
+    end
+    local function arm()
+        assert(type(queue) == "function", "Teleport continuation unavailable")
+        assert(type(key) == "string" and #key == 32 and key:match("^[%w]+$"), "Use the notes loadstring")
+        local ticket = Http:GenerateGUID(false)
+        Teleport:SetTeleportSetting(setting, ticket)
+        assert(Teleport:GetTeleportSetting(setting) == ticket, "Cannot verify continuation")
+        -- This only reloads on a USER-initiated teleport. It never requests a teleport.
+        -- Stop invalidates both the disk setting and this one-use ticket.
+        local code = string.format([[
+local ok = pcall(function()
+    local t, h, p = game:GetService("TeleportService"), game:GetService("HttpService"), game:GetService("Players")
+    local deadline = os.clock() + 120
+    repeat task.wait(0.1) until p.LocalPlayer or os.clock() >= deadline
+    if not p.LocalPlayer or p.LocalPlayer.UserId ~= %d or game.GameId ~= %d then return end
+    if game.PlaceId ~= 4111023553 and game.PlaceId ~= 6473861193 and game.PlaceId ~= 6032399813 then return end
+    if t:GetTeleportSetting(%q) ~= %q then return end
+    t:SetTeleportSetting(%q, "")
+    if type(isfile) ~= "function" or type(readfile) ~= "function" or not isfile(%q) then return end
+    local raw = readfile(%q)
+    if type(raw) ~= "string" or #raw > 4096 then return end
+    local r = h:JSONDecode(raw)
+    if type(r) ~= "table" or r.version ~= 2 or r.enabled ~= true or type(r.pending) ~= "boolean" or r.token ~= %q
+        or r.accountId ~= p.LocalPlayer.UserId or r.gameId ~= game.GameId then return end
+    local e = getgenv()
+    if e.CLAW_NOTES_LOADING or e.CLAW_NOTES_DROPPER and not e.CLAW_NOTES_DROPPER.closed then return end
+    e.CLAW_NOTES_LOADING = true
+    e.CLAW_NOTES_EXECUTION_KEY = %q
+    script_key = e.CLAW_NOTES_EXECUTION_KEY
+    local loaded = pcall(function() loadstring(game:HttpGet(%q))() end)
+    e.CLAW_NOTES_LOADING = nil
+    if not loaded then warn("[CLAW] Notes continuation stopped; check your key and connection.") end
+end)
+if not ok then warn("[CLAW] Notes continuation stopped; no automatic retry.") end
+]], accountId, gameId, setting, ticket, setting, path, path, runtime.token, key, loader)
+        queue(code)
     end
     local function balance()
-        -- Read only the Notes button's own numeric display; never confuse Knowledge/other currencies.
+        -- Only the Notes button's own numeric display; never another currency/stat.
         local notes = child(playerGui, "CurrencyGui", "CurrencyFrame", "Notes")
         if not notes then return nil end
         local found, identity
@@ -203,10 +277,9 @@ local function newNotesRuntime(env, core, ui, player, playerGui, child, visible)
                     grouped = tail ~= nil and tail:gsub("%d%d%d,", ""):match("^%d%d%d$") ~= nil
                 end
                 if #raw <= 16 and (plain or grouped) then
-                    local normalized = raw:gsub(",", "")
-                    local n = tonumber(normalized)
+                    local n = tonumber((raw:gsub(",", "")))
                     if n and n >= 0 and n <= 1000000000 and n % 1 == 0 then
-                        if identity and (found ~= n or identity ~= item) then return nil end
+                        if identity then return nil end
                         found, identity = n, item
                     end
                 end
@@ -214,141 +287,128 @@ local function newNotesRuntime(env, core, ui, player, playerGui, child, visible)
         end
         return found, identity
     end
-    local function arm(record)
-        assert(type(queue) == "function", "Teleport queue unavailable")
-        assert(type(key) == "string" and #key == 32 and key:match("^[%w]+$"), "Use the notes auto-ready loader")
-        local nextRun = table.clone(record); nextRun.token = Http:GenerateGUID(false)
-        local raw = Http:JSONEncode(nextRun)
-        Teleport:SetTeleportSetting(setting, raw)
-        assert(Teleport:GetTeleportSetting(setting) == raw, "Cannot verify resume state")
-        -- A stale queued entry is harmless after Stop: it must match the current one-use token.
-        local code = string.format([[
-local ok = pcall(function()
-    local t, h, p = game:GetService("TeleportService"), game:GetService("HttpService"), game:GetService("Players")
-    local deadline = os.clock() + 120
-    repeat task.wait(0.1) until p.LocalPlayer or os.clock() >= deadline
-    if not p.LocalPlayer then return end
-    local raw = t:GetTeleportSetting(%q)
-    if type(raw) ~= "string" or #raw > 4096 then return end
-    local r = h:JSONDecode(raw)
-    if type(r) ~= "table" or r.version ~= 1 or r.token ~= %q or r.accountId ~= p.LocalPlayer.UserId or r.gameId ~= game.GameId then return end
-    if type(r.expires) ~= "number" or not (r.expires > os.time() and r.expires <= os.time() + 1800) then return end
-    if r.phase ~= "menu" and r.phase ~= "world" then return end
-    t:SetTeleportSetting(%q, "")
-    if r.phase == "menu" and game.PlaceId ~= 4111023553 then return end
-    if r.phase == "world" and (game.PlaceId ~= r.worldPlaceId or game.JobId ~= r.jobId) then return end
-    getgenv().CLAW_NOTES_RESUME = r
-    getgenv().CLAW_NOTES_EXECUTION_KEY = %q
-    script_key = getgenv().CLAW_NOTES_EXECUTION_KEY
-    loadstring(game:HttpGet(%q))()
-end)
-if not ok then warn("[CLAW] Notes resume stopped; no automatic retry.") end
-]], setting, nextRun.token, setting, key, loader)
-        queue(code)
+    local function preflight()
+        if core.uncertain or core.busy then return false, "uncertain" end
+        if env.CLAW_CONTROL or env.CLAW_RELAY then return false, "Stop manager/bringer before standalone dropping." end
+        if not world() or not player.Character then return false, "Wait for your character in the world." end
+        return true
     end
-    local travelling = false
-    local teleportConnection = player.OnTeleport:Connect(function(state)
-        if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then travelling = true end
-    end)
-    local failedConnection = Teleport.TeleportInitFailed:Connect(function(who)
-        if who == player and (runtime.menuActive or runtime.loop and runtime.loop.active) then runtime:stop("rejoin-failed") end
-    end)
-    local function waitFor(check, seconds, live)
-        local untilTime = os.clock() + seconds
-        repeat
-            if not live() then return nil end
-            local value = check(); if value then return value end
-            task.wait(0.1)
-        until os.clock() >= untilTime
-        return nil
-    end
-    runtime.loop = newNotesLoop({ now = os.time, context = context, sleep = task.wait, balance = balance,
-        cancel = function() core:cancel() end, clear = clear, status = status,
+    runtime.loop = newNotesLoop({ now = os.clock, context = context, sleep = task.wait, balance = balance,
+        cancel = function() core:cancel() end, status = status, preflight = preflight,
         uncertain = function() core.uncertain = true end,
-        preflight = function()
-            if core.uncertain or core.busy then return false, "Check the pending drop before starting Auto. Rejoin if uncertain." end
-            if env.CLAW_CONTROL or env.CLAW_RELAY then return false, "Stop the manager/bringer on this alt before standalone Auto." end
-            if type(queue) ~= "function" then return false, "Your executor has no teleport queue." end
-            if type(key) ~= "string" or #key ~= 32 or not key:match("^[%w]+$") then return false, "Use the auto-ready notes loadstring so rejoin can authenticate." end
-            if not remote("ReturnToMenu") then return false, "The normal Return to Menu request is unavailable." end
-            return true
+        ready = function()
+            local prompt = playerGui:FindFirstChild("ChoicePrompt")
+            return not prompt or not core.used[prompt]
         end,
-        drop = function()
-            local ok, result = core:run("MAX"); return ok, result, core.lastAmount
+        drop = function(limit)
+            local ok, result = core:run("MAX", limit); return ok, result, core.lastAmount
         end,
-        depart = function(record, live)
-            local request = remote("ReturnToMenu")
-            if not request or not live() then return false end
-            arm(record); travelling = false
-            if not live() then clear(); return false end
-            request:FireServer()
-            local prompt = waitFor(function()
-                if travelling then return "travelling" end
-                local p = playerGui:FindFirstChild("ChoicePrompt")
-                if not p then return nil end
-                local title = child(p, "ChoiceFrame", "Title")
-                if p:GetAttribute("Title") ~= "Return to Main Menu" and (not title or title.Text ~= "Return to Main Menu") then return nil end
-                local choice = p:FindFirstChild("Choice")
-                return choice and choice:IsA("RemoteEvent") and choice or nil
-            end, 10, live)
-            if not prompt then clear(); return false end
-            if prompt ~= "travelling" then
-                if not live() then clear(); return false end
-                prompt:FireServer(true)
-            end
-            if not waitFor(function() return travelling end, 15, live) then clear(); return false end
-            -- If the old client is still here after a minute, the trip did not finish.
-            task.delay(60, function() if not runtime.closed and runtime.loop.active then runtime:stop("rejoin-failed") end end)
-            return true
+        confirmed = function()
+            runtime.pending = false
+            if runtime.enabled or runtime.journaled then save() end
         end,
     })
+    core.beforeSubmit = function()
+        assert(runtime.loop.live and runtime.loop.live() and not runtime.closed, "Batch cancelled")
+        assert(not env.CLAW_CONTROL and not env.CLAW_RELAY, "Another controller started")
+        runtime.loop.unconfirmed = true
+        if runtime.enabled or runtime.journaled then
+            runtime.pending = true
+            save() -- Durable before InvokeServer: a crash cannot silently replay an uncertain batch.
+        end
+        assert(runtime.loop.live() and not runtime.closed, "Batch cancelled")
+    end
     function runtime:stop(reason)
-        self.menuActive = false; self.loop:stop(reason or "stopped"); clear()
-    end
-    function runtime:destroy()
-        self:stop(); self.closed = true; teleportConnection:Disconnect(); failedConnection:Disconnect()
-    end
-    function runtime:start()
-        if self.loop.active or self.menuActive then self:stop(); return end
-        ui.keepVisible = true
-        local c = context()
-        local record = { version = 1, phase = "world", token = Http:GenerateGUID(false), accountId = c.accountId,
-            gameId = c.gameId, worldPlaceId = c.placeId, jobId = c.jobId, slot = c.slot, expires = os.time() + 1800, cycles = 0 }
-        local ok, problem = self.loop:run(record)
-        if not ok and problem == "wrong-session" then status("Join the world and load your character before Auto.") end
-    end
-    function runtime:resume(record)
-        if type(record) ~= "table" then self:stop("rejoin-failed"); return end
-        ui.keepVisible = true
-        if record.phase == "menu" then
-            if not validNotesRun(record, os.time(), context(), "menu") then status("Expired or wrong-account resume. Auto stopped."); return end
-            self.menuActive = true; status("Returning to the same slot and server...")
-            local function live() return self.menuActive and not self.closed and validNotesRun(record, os.time(), context(), "menu") end
-            local shown = false
-            local show = waitFor(function() return remote("ShowServers") end, 45, live)
-            local pick = remote("PickSlot", true)
-            if not show or not pick then self:stop("rejoin-failed"); return end
-            local observed = show.OnClientEvent:Connect(function(realm) if type(realm) == "string" and realm ~= "" then shown = true end end)
-            pick:FireServer(record.slot)
-            local ready = waitFor(function() return shown end, 30, live); observed:Disconnect()
-            local join = remote("PickServer", true)
-            if not ready or not join or not live() then self:stop("rejoin-failed"); return end
-            local nextRun = table.clone(record); nextRun.phase = "world"; arm(nextRun)
-            if not live() then clear(); return end
-            travelling = false; join:FireServer(record.jobId)
-            if not waitFor(function() return travelling end, 30, live) then self:stop("rejoin-failed"); return end
-            task.delay(60, function() if self.menuActive and not self.closed then self:stop("rejoin-failed") end end)
-        elseif record.phase == "world" then
-            self.menuActive = true; status("Waiting for the same character to load...")
-            local ready = waitFor(function()
-                return player.Character and validNotesRun(record, os.time(), context(), "world") and child(playerGui, "CurrencyGui", "CurrencyFrame", "Notes")
-            end, 90, function() return self.menuActive and not self.closed and os.time() < record.expires end)
-            if not ready then self:stop("rejoin-failed"); return end
-            self.menuActive = false; self.loop:run(record)
-        else self:stop("rejoin-failed")
+        self.enabled, self.waiting = false, false; self.generation += 1
+        self.loop:stop(reason or "stopped"); clearQueueTicket()
+        if self.journaled then
+            local ok = pcall(save)
+            if not ok then
+                status("STOPPED HERE, but Auto OFF could not save. Do not rejoin until saved; remove the notes autoexec loader if needed.")
+                warn("[CLAW] Auto stopped locally but OFF could not be saved.")
+            end
         end
     end
-    runtime.balance = balance
+    function runtime:destroy()
+        self:stop(); self.closed = true
+        if self.teleportConnection then self.teleportConnection:Disconnect() end
+    end
+    function runtime:drain(target)
+        local generation = self.generation
+        local ok, reason = self.loop:run(target)
+        if not ok and self.enabled and generation == self.generation then self:stop(reason) end
+        return ok, reason
+    end
+    function runtime:drop(raw)
+        if self.closed or self.enabled or self.waiting or self.loop.active then return false, "busy" end
+        local target
+        if raw ~= "MAX" then
+            if type(raw) ~= "string" or #raw > 12 or not raw:match("^%s*%d+%s*$") then status("Enter MAX or a positive whole total."); return false, "amount" end
+            target = tonumber(raw)
+            if not target or target < 1 or target > 1000000000 then status("Enter MAX or a positive whole total."); return false, "amount" end
+        end
+        return self:drain(target)
+    end
+    function runtime:waitAndDrain(resuming)
+        self.waiting = true; status("waiting")
+        if not world() then return end -- Menu stays idle; user chooses the slot/server.
+        local generation, untilTime = self.generation, os.clock() + 90
+        local stableAt, stableCount, stableSource, stableActor
+        while self.enabled and not self.closed and generation == self.generation do
+            local notes = child(playerGui, "CurrencyGui", "CurrencyFrame", "Notes")
+            local count, source = balance()
+            local openerReady = not core.canOpen or core.canOpen() or playerGui:FindFirstChild("ChoicePrompt") ~= nil
+            if player.Character and notes and count ~= nil and (count == 0 or openerReady) then
+                if not stableAt or count ~= stableCount or source ~= stableSource or player.Character ~= stableActor then
+                    stableAt, stableCount, stableSource, stableActor = os.clock(), count, source, player.Character
+                end
+                if not resuming or os.clock() - stableAt >= 2 then
+                    self.waiting = false; self:drain(nil); return
+                end
+            else
+                stableAt = nil
+            end
+            if os.clock() >= untilTime then self:stop("Notes display did not become readable. Auto OFF."); return end
+            task.wait(0.1)
+        end
+    end
+    function runtime:start()
+        if self.closed then return end
+        if self.enabled then self:stop(); return end
+        if self.loop.active then self:stop("cancelled"); return end
+        if self.loop.active or core.busy or core.uncertain then status("uncertain"); return end
+        if env.CLAW_CONTROL or env.CLAW_RELAY then status("Stop manager/bringer before standalone dropping."); return end
+        ui.keepVisible = true
+        local ok = pcall(function()
+            assert(storage(), "Saving unavailable")
+            self.token = Http:GenerateGUID(false)
+            self.enabled, self.pending, self.journaled = true, false, true
+            save(); arm()
+        end)
+        if not ok then self:stop("Cannot enable saved Auto. Check file access, teleport queue and your notes loadstring."); return end
+        self:waitAndDrain(false)
+    end
+    function runtime:resume()
+        local ok, r = pcall(read)
+        if not ok then status("Auto setting unreadable. Auto OFF; no automatic drops."); return end
+        if not r then return end
+        self.token, self.pending, self.journaled = r.token, r.pending, true
+        if r.pending then
+            self:stop("Last drop unconfirmed. Check notes before manually enabling Auto again."); return
+        end
+        if not r.enabled then status("stopped"); return end
+        self.enabled = true; ui.keepVisible = true
+        if not pcall(arm) then self:stop("Cannot prepare the next join. Use the notes loadstring."); return end
+        self:waitAndDrain(true)
+    end
+    runtime.teleportConnection = player.OnTeleport:Connect(function(state)
+        if state == Enum.TeleportState.Started or state == Enum.TeleportState.InProgress then
+            runtime.generation += 1; runtime.waiting = false
+            runtime.loop:stop("travelling")
+            -- Leave the saved ON choice intact, but never clear a pending receipt.
+        end
+    end)
+    runtime.balance, runtime.path = balance, path
     return runtime
 end
 -- DROPPER_RUNTIME_END
@@ -367,19 +427,19 @@ local function notesPanelState(raw, busy, uncertain, prompt, canOpen, notice)
     local number = type(raw) == "string" and #raw <= 12 and raw:match("^%s*%d+%s*$") and tonumber(raw) or nil
     local valid = maximumMode or number ~= nil and number >= 1 and number <= 1000000000 and number % 1 == 0
     local live = prompt and prompt.kind == "notes" and type(prompt.minimum) == "number" and type(prompt.maximum) == "number"
-    local inRange = not live or maximumMode and prompt.maximum >= prompt.minimum and prompt.maximum > 0
-        or (not maximumMode and valid and number >= prompt.minimum and number <= prompt.maximum)
+    -- This field is a TOTAL, not the per-dialog limit. Runtime clips it to the balance.
+    local inRange = not live or prompt.maximum >= 0
     local state = { badge = canOpen and "READY" or "SETUP", tone = canOpen and "ready" or "warm",
-        button = "DROP", sub = "once", enabled = valid and inRange and not busy and not uncertain,
+        button = "DROP", sub = "total", enabled = valid and inRange and not busy and not uncertain,
         range = live and (tostring(prompt.minimum) .. " - " .. tostring(prompt.maximum) .. "  /  LIVE LIMIT") or "LIMIT CHECKED WHEN OPENED",
-        short = canOpen and "One drop. Only when you choose." or "Click Notes once to connect." }
+        short = canOpen and "One click drops the chosen total." or "Click Notes once to connect." }
     if live then state.badge, state.tone = "READY", "ready" end
     if notice == "sent" then state.badge, state.tone, state.short = "SENT", "warm", "Request sent. Check the ground."
     elseif notice and notice ~= "learn" and notice ~= "ready" and notice ~= "working" then
         state.badge, state.tone, state.short = "CHECK", "error", "Action stopped. See details."
     end
     if not valid then state.short = "Enter a positive whole number."
-    elseif not inRange then state.short = "Amount exceeds the live limits." end
+    elseif not inRange then state.short = "Waiting for the notes dialog." end
     if busy then state.badge, state.tone, state.button, state.sub, state.short = "WORKING", "warm", "WAIT", "one request", "Waiting on the game. No retry."
     elseif uncertain then state.badge, state.tone, state.button, state.sub, state.short = "CHECK", "error", "LOCKED", "check notes", "Outcome unknown. See details." end
     return state
@@ -455,7 +515,7 @@ local function createNotesPanel(playerGui, onCollapse)
     local body = make("Frame", surface, { Name = "Body", Position = UDim2.fromOffset(0, 38), Size = UDim2.new(1, 0, 1, -38), BackgroundTransparency = 1 })
     local field = make("Frame", body, { Name = "AmountField", Position = UDim2.fromOffset(12, 4), Size = UDim2.fromOffset(116, 56), BackgroundColor3 = Color3.fromRGB(12, 15, 20), BorderSizePixel = 0 })
     round(field, 8); local fieldStroke = stroke(field, Color3.fromRGB(52, 55, 64), 0.25)
-    local maxButton = make("TextButton", field, { Name = "Maximum", Text = "AMOUNT / MAX", Font = Enum.Font.GothamMedium,
+    local maxButton = make("TextButton", field, { Name = "Maximum", Text = "TOTAL / MAX", Font = Enum.Font.GothamMedium,
         TextSize = 8, TextColor3 = palette.muted, BackgroundTransparency = 1,
         Position = UDim2.fromOffset(10, 3), Size = UDim2.fromOffset(77, 17) })
     listen(maxButton.Activated, function()
@@ -485,9 +545,9 @@ local function createNotesPanel(playerGui, onCollapse)
     round(ui.dropButton, 8); stroke(ui.dropButton, palette.bright, 0.65)
     make("UIGradient", ui.dropButton, { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(196, 183, 161)) })
     local actionTitle = label(ui.dropButton, "DROP", 0, 11, 94, 19, 14, Color3.fromRGB(30, 28, 25), Enum.Font.GothamBold)
-    local actionSub = label(ui.dropButton, "once", 0, 31, 94, 12, 9, Color3.fromRGB(76, 65, 48))
+    local actionSub = label(ui.dropButton, "total", 0, 31, 94, 12, 9, Color3.fromRGB(76, 65, 48))
     actionTitle.TextXAlignment, actionSub.TextXAlignment = Enum.TextXAlignment.Center, Enum.TextXAlignment.Center
-    ui.autoButton = make("TextButton", body, { Name = "AutoLoop", Text = "START AUTO", Font = Enum.Font.GothamBold,
+    ui.autoButton = make("TextButton", body, { Name = "AutoLoop", Text = "AUTO OFF", Font = Enum.Font.GothamBold,
         TextSize = 9, TextColor3 = palette.gold, BackgroundTransparency = 1, AutoButtonColor = false,
         Position = UDim2.fromOffset(132, 65), Size = UDim2.fromOffset(100, 16) })
     local rangeText = label(body, "MAX 1000 / DROP", 12, 67, 118, 12, 7, palette.muted, Enum.Font.GothamMedium)
@@ -523,6 +583,7 @@ local function createNotesPanel(playerGui, onCollapse)
         actionTitle.Text, actionSub.Text = state.button, state.sub
         rangeText.Text = m.prompt and m.prompt.kind == "notes" and ("UP TO " .. tostring(math.min(1000, m.prompt.maximum)) .. " NOTES") or "MAX 1000 / DROP"
         self.dropButton.Active = state.enabled and not self.autoActive
+        self.autoButton.Text = self.autoActive and "AUTO ON / STOP" or m.busy and "STOP DROP" or "AUTO OFF"
         self.amount.TextEditable = not m.busy and not self.autoActive
         self.amount.TextSize = #self.amount.Text > 8 and 14 or #self.amount.Text > 6 and 17 or 22
         local color = self.dropButton.Active and (self.hovered and palette.bright or palette.gold) or Color3.fromRGB(68, 60, 49)
@@ -536,7 +597,7 @@ local function createNotesPanel(playerGui, onCollapse)
     end
     function ui:setAuto(active, text)
         self.autoActive = active
-        self.autoButton.Text = active and "STOP AUTO" or "START AUTO"
+        self.autoButton.Text = active and "AUTO ON / STOP" or "AUTO OFF"
         self.autoButton.TextColor3 = active and palette.error or palette.gold
         self:render()
         if text then status.Text, details.Text = text, text end
@@ -578,11 +639,11 @@ end
 -- DROPPER_UI_END
 
 local env = getgenv()
-local resume = env.CLAW_NOTES_RESUME; env.CLAW_NOTES_RESUME = nil
+env.CLAW_NOTES_RESUME = nil -- Discard the old v3 rejoin plan; never travel automatically.
 local inheritedUsed
 if env.CLAW_NOTES_DROPPER then
     local old = env.CLAW_NOTES_DROPPER
-    if old.uiVersion == 3 and not old.closed then old:show(); return end
+    if old.uiVersion == 4 and not old.closed then old:show(); return end
     if old.core and (old.core.busy or old.core.uncertain) then
         old:show(); warn("[CLAW] Finish/check the pending drop before changing the UI. Rejoin if its outcome is unknown."); return
     end
@@ -595,7 +656,7 @@ local player = Players.LocalPlayer
 assert(player, "Join the game before opening the notes dropper")
 local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 30)
 assert(playerGui, "Wait for the game UI")
-local api = { uiVersion = 3, closed = false, hookReady = false }
+local api = { uiVersion = 4, closed = false, hookReady = false }
 local connections, observedButtons = {}, setmetatable({}, { __mode = "k" })
 local learning, learned, currentChoice, currentPrompt
 local function child(root, ...)
@@ -682,6 +743,7 @@ local core = newDropper({ inspect = inspect, now = os.clock, sleep = task.wait, 
     submit = function(choice, amount) return choice:InvokeServer(amount) end,
 })
 api.core = core
+core.canOpen = canOpen
 if inheritedUsed then core.used = inheritedUsed end
 local staleGui = playerGui:FindFirstChild("CLAWNotesDropper")
 if staleGui and inheritedUsed and not staleGui.Enabled then staleGui:Destroy() end
@@ -757,15 +819,14 @@ function api:destroy()
 end
 connect(dropButton.Activated, function()
     if api.closed then return end
-    if core.busy or core.uncertain or runtime.loop.active or runtime.menuActive then return end
+    if core.busy or core.uncertain or runtime.loop.active or runtime.enabled then return end
     runtime.message = nil
-    ui:setNotice("working", "Working on one drop. Do not also press the game's Submit button. Collapsing stops pre-submit waiting, but cannot undo a sent drop.")
+    ui:setNotice("working", "Dropping the chosen total in batches. Do not also press the game's Submit button. Collapse cancels further batches, not notes already sent.")
     task.delay(8, function()
         if core.busy and not api.closed then ui:setNotice("working", "Still waiting for the game. No repeat will be sent. Check the ground before doing anything else.") end
     end)
-    local _, result = core:run(amount.Text)
+    runtime:drop(amount.Text)
     ui:refresh(inspect(), canOpen(), core)
-    ui:setNotice(result, messages[result] or "Stopped.")
 end)
 connect(ui.autoButton.Activated, function()
     if api.closed then return end
@@ -775,10 +836,10 @@ end)
 ui:refresh(nil, false, core)
 ui:setNotice("learn", api.hookReady and messages.learn or "Automatic opener learning is unavailable. Open Notes manually, then use Drop once here.")
 env.CLAW_NOTES_DROPPER = api
-if resume then task.spawn(function()
-    local ok = pcall(function() runtime:resume(resume) end)
+task.spawn(function()
+    local ok = pcall(function() runtime:resume() end)
     if not ok then runtime:stop("automation-error") end
-end) end
+end)
 task.spawn(function()
     while not api.closed do
         local ok = pcall(function()
@@ -789,14 +850,14 @@ task.spawn(function()
                 elseif prompt and prompt.kind == "notes" and prompt.identity ~= learning.before and learning.candidate then
                     if not learning.ambiguous then
                         learned = { remote = learning.candidate, character = learning.character, job = learning.job }
-                        ui:setNotice("ready", "Connected to this session's Notes button. Choose an amount and press DROP. One drop per press; no automatic retries.")
+                        ui:setNotice("ready", "Connected to this session's Notes button. DROP drains your chosen total in batches; Auto saves drop-on-join.")
                     else ui:setNotice("failed", "More than one opening request was observed. Close Notes and click it again to relearn.") end
                     learning = nil
                 end
             end
             local notes = child(playerGui, "CurrencyGui", "CurrencyFrame", "Notes")
-            ui:refresh(prompt, canOpen(), core)
-            ui:setAuto(runtime.loop.active or runtime.menuActive, runtime.message)
+            ui:refresh(prompt, canOpen(), { busy = core.busy or runtime.loop.active, uncertain = core.uncertain })
+            ui:setAuto(runtime.enabled, runtime.message)
             -- Keep the controls reachable if the game hides its currency HUD while the notes dialog is open.
             ui:layout(notes and (visible(notes) or (prompt and prompt.kind == "notes")) and notes or nil)
         end)
@@ -804,4 +865,4 @@ task.spawn(function()
         task.wait(0.15)
     end
 end)
-print("[CLAW] Notes v3 ready. DROP sends one maximum-size drop; START AUTO enables same-server rejoining. Idle unless explicitly started or resuming your active run.")
+print("[CLAW] Notes v4 ready. DROP drains the chosen total in batches. AUTO ON saves drop-on-join for this account. This script never rejoins or moves you.")

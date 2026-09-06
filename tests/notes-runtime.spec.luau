@@ -1,4 +1,4 @@
-return function(source, newLoop, validRun, buttonSource)
+return function(source, newLoop, validRun, buttonSource, autoLoader, manualLoader)
     local passed = 0
     local function test(name, fn) fn(); passed += 1; print("PASS notes runtime " .. name) end
     local function signal()
@@ -24,7 +24,7 @@ return function(source, newLoop, validRun, buttonSource)
     end
     local function child(root, ...) for _, k in ipairs({...}) do root = root and root:FindFirstChild(k) end; return root end
     local function fixture()
-        local f = { time = 1000, queued = {}, settings = {}, json = {}, calls = {}, delayed = {}, serial = 0 }
+        local f = { time = 1000, queued = {}, settings = {}, json = {}, files = {}, calls = {}, delayed = {}, serial = 0, amounts = {} }
         f.env = { CLAW_NOTES_EXECUTION_KEY = string.rep("A", 32) }
         f.player = node("Player", "Player"); f.player.UserId = 12; f.player.DataSlot = "A"; f.player.Character = {}; f.player.OnTeleport = signal()
         f.gui = node("PlayerGui", "PlayerGui")
@@ -45,7 +45,7 @@ return function(source, newLoop, validRun, buttonSource)
             GetTeleportSetting = function(_, k) return f.settings[k] end }
         f.http = {
             GenerateGUID = function() f.serial += 1; return "unique-token-123456789-" .. f.serial end,
-            JSONEncode = function(_, r) local id = "json-" .. r.token; f.json[id] = table.clone(r); return id end,
+            JSONEncode = function(_, r) f.serial += 1; local id = "json-" .. f.serial; f.json[id] = table.clone(r); return id end,
             JSONDecode = function(_, id) assert(f.json[id]); return table.clone(f.json[id]) end }
         f.game = { GameId = 34, PlaceId = 6473861193, JobId = "exact-server" }
         function f.game:GetService(name)
@@ -53,8 +53,16 @@ return function(source, newLoop, validRun, buttonSource)
         end
         f.ui = { setAuto = function(_, active, message) f.active, f.message = active, message end,
             setNotice = function(_, code) assert(type(code) == "string"); f.notice = code end }
-        f.core = { cancel = function() f.cancelled = true end, run = function(self, raw)
-            assert(raw == "MAX"); self.lastAmount = 1000; f.count.Text = "3,335"; return true, "sent"
+        f.core = { used = {}, cancel = function() f.cancelled = true end, run = function(self, raw, cap)
+            assert(raw == "MAX")
+            if f.beforeRun then f.beforeRun() end
+            if self.beforeSubmit then self.beforeSubmit() end
+            if f.afterPrepare then f.afterPrepare() end
+            if f.noSend then return false, "cancelled" end
+            local amount = math.min(cap, tonumber((f.count.Text:gsub(",", ""))))
+            self.lastAmount = amount; table.insert(f.amounts, amount)
+            if not f.noChange then f.count.Text = tostring(tonumber((f.count.Text:gsub(",", ""))) - amount) end
+            return true, "sent"
         end }
         f.scope = setmetatable({ game = f.game, newNotesLoop = newLoop, validNotesRun = validRun,
             os = { time = function() return f.time end, clock = function() return f.time end },
@@ -62,14 +70,26 @@ return function(source, newLoop, validRun, buttonSource)
                 delay = function(_, fn) table.insert(f.delayed, fn) end },
             queue_on_teleport = function(code) table.insert(f.queued, code) end,
             getgenv = function() return f.env end,
+            isfile = function(p) return f.files[p] ~= nil end,
+            readfile = function(p) if f.readFailure then error("read failed") end; return f.files[p] end,
+            writefile = function(p, v) if f.writeFailure then error("write failed") end; f.files[p] = v end,
+            isfolder = function() return true end, makefolder = function() end,
             Enum = { TeleportState = { Started = "Started", InProgress = "InProgress" } }, warn = function() f.warning = true end,
         }, { __index = getfenv() })
         local factory = assert(loadstring(source .. "\nreturn newNotesRuntime")); setfenv(factory, f.scope)
-        f.runtime = factory()(f.env, f.core, f.ui, f.player, f.gui, child, function(n) return not n.hidden end)
-        function f:bootstrap()
+        function f:mount()
+            self.runtime = factory()(self.env, self.core, self.ui, self.player, self.gui, child, function(n) return not n.hidden end)
+        end
+        f:mount()
+        function f:saved() return self.http:JSONDecode(self.files[self.runtime.path]) end
+        function f:seed(enabled, pending)
+            self.files[self.runtime.path] = self.http:JSONEncode({ version = 2, token = "saved-token-123456789",
+                accountId = 12, gameId = 34, enabled = enabled, pending = pending or false })
+        end
+        function f:bootstrap(code)
             local scope = setmetatable({ loadstring = function() return function() f.loaded = (f.loaded or 0) + 1 end end }, { __index = f.scope })
             function f.game:HttpGet(url) assert(url == "https://api.luarmor.net/files/v4/loaders/8c5cec745c34ac98ebbfca1ee3bad27f.lua"); return "payload" end
-            local fn = assert(loadstring(f.queued[#f.queued])); setfenv(fn, scope); fn()
+            local fn = assert(loadstring(code or f.queued[#f.queued])); setfenv(fn, scope); fn()
         end
         return f
     end
@@ -80,71 +100,128 @@ return function(source, newLoop, validRun, buttonSource)
         f.count.Text = "1,234,567"; assert(f.runtime.balance() == 1234567)
         local extra = node("Other", "TextLabel", f.notes); extra.Text = "2"; assert(f.runtime.balance() == nil)
     end)
-    test("manual construction is idle; Start uses one normal menu request", function()
-        local f = fixture(); assert(#f.calls == 0 and #f.queued == 0)
-        f.runtime:start(); assert(#f.calls == 1 and f.calls[1][1] == "ReturnToMenu" and #f.queued == 1)
+    test("first load is OFF; manual MAX drains without any key or settings requirement", function()
+        local f = fixture(); f.runtime:resume(); assert(not f.runtime.enabled and #f.amounts == 0)
+        f.scope.writefile = false; f.runtime:drop("MAX")
+        assert(table.concat(f.amounts, ",") == "1000,1000,1000,1000,335" and #f.calls == 0 and #f.queued == 0)
     end)
-    test("queued bootstrap consumes its token once and restores only the same account", function()
+    test("manual total clips 5000 to 3500 and honors a smaller total", function()
+        local f = fixture(); f.count.Text = "3500"; assert(f.runtime:drop("5000"))
+        assert(table.concat(f.amounts, ",") == "1000,1000,1000,500")
+        f = fixture(); assert(f.runtime:drop("1500")); assert(f.count.Text == "2835")
+    end)
+    test("ON drains and stays enabled at zero without any menu or server call", function()
+        local f = fixture(); f.runtime:start()
+        assert(f:saved().enabled and not f:saved().pending and f.runtime.enabled and not f.runtime.loop.active)
+        assert(#f.amounts == 5 and #f.calls == 0 and #f.queued == 1 and f.active)
+        assert(f.message:find("next join"))
+    end)
+    test("second click persists OFF and invalidates queued continuation", function()
+        local f = fixture(); f.runtime:start(); f.runtime:start(); f:bootstrap()
+        assert(not f.loaded and not f:saved().enabled and not f.runtime.enabled)
+    end)
+    test("new runtime reads saved ON and drains a different server and slot without a click", function()
+        local f = fixture(); f:seed(true); f.game.JobId = "other-server"; f.player.DataSlot = "B"
+        f.runtime:resume(); assert(f.runtime.enabled and f.count.Text == "0" and #f.calls == 0)
+    end)
+    test("saved OFF stays OFF after another load", function()
+        local f = fixture(); f:seed(false); f.runtime:resume()
+        assert(not f.runtime.enabled and #f.amounts == 0 and #f.queued == 0)
+    end)
+    test("saved ON at zero does not require a Notes opener", function()
+        local f = fixture(); f:seed(true); f.count.Text = "0"
+        f.runtime:resume(); assert(f.runtime.enabled and #f.amounts == 0)
+    end)
+    test("pending receipt after a crash cannot automatically replay", function()
+        local f = fixture(); f:seed(true, true); f.runtime:resume()
+        assert(not f.runtime.enabled and not f:saved().enabled and f:saved().pending and #f.amounts == 0)
+    end)
+    test("receipt is on disk before each send and cleared only after confirmation", function()
+        local f = fixture(); local prepared = 0
+        f.afterPrepare = function() assert(f:saved().pending); prepared += 1 end
+        f.runtime:start(); assert(prepared == 5 and not f:saved().pending)
+    end)
+    test("unknown balance disables Auto and retains receipt across loads", function()
+        local f = fixture(); f.noChange = true; f.runtime:start()
+        assert(#f.amounts == 1 and f.core.uncertain and not f:saved().enabled and f:saved().pending)
+        f.core.uncertain = false; f:mount(); f.runtime:resume(); assert(#f.amounts == 1)
+    end)
+    test("Stop between batches saves OFF without marking a confirmed drop uncertain", function()
+        local f = fixture(); f.waitHook = function() f.runtime:stop() end; f.runtime:start()
+        assert(#f.amounts == 1 and not f:saved().enabled and not f:saved().pending and not f.core.uncertain)
+    end)
+    test("Stop during confirmation never submits the next batch", function()
+        local f = fixture(); f.noChange = true; f.waitHook = function() f.runtime:stop() end; f.runtime:start()
+        assert(#f.amounts == 1 and not f:saved().enabled and f:saved().pending and f.core.uncertain)
+    end)
+    test("failed setting write prevents starting and warns if OFF also cannot save", function()
+        local f = fixture(); f.writeFailure = true; f.runtime:start()
+        assert(#f.amounts == 0 and #f.calls == 0 and f.warning and not f.runtime.enabled)
+    end)
+    test("failed durable receipt prevents InvokeServer", function()
+        local f = fixture(); f.beforeRun = function() f.writeFailure = true end
+        f.runtime:start(); assert(#f.amounts == 0 and not f.runtime.enabled)
+    end)
+    test("malformed or wrong-account setting never starts", function()
+        for _, mode in ipairs({ "bad", "account", "game", "version", "read" }) do
+            local f = fixture(); f:seed(true)
+            if mode == "bad" then f.files[f.runtime.path] = "bad json"
+            elseif mode == "read" then f.readFailure = true
+            else
+                local saved = f:saved()
+                saved[({ account = "accountId", game = "gameId", version = "version" })[mode]] = 99
+                f.files[f.runtime.path] = f.http:JSONEncode(saved)
+            end
+            f.runtime:resume(); assert(#f.amounts == 0 and not f.runtime.enabled)
+        end
+    end)
+    test("menu resume remains idle and never selects a slot or server", function()
+        local f = fixture(); f.game.PlaceId = 4111023553; f:seed(true); f.runtime:resume()
+        assert(f.runtime.enabled and f.runtime.waiting and #f.amounts == 0 and #f.calls == 0 and #f.queued == 1)
+        f.runtime:start(); assert(not f:saved().enabled)
+    end)
+    test("ON waits for character and unreadable display instead of guessing a balance", function()
+        local f = fixture(); f.player.Character = nil; f:seed(true)
+        f.waitHook = function() if not f.player.Character then f.player.Character = {} end end; f.runtime:resume(); assert(#f.amounts == 5)
+        f = fixture(); f.count.Text = "?"; f:seed(true); f.runtime:resume()
+        assert(#f.amounts == 0 and not f.runtime.enabled and not f:saved().enabled)
+    end)
+    test("user-initiated teleport preserves ON without sending any travel request", function()
+        local f = fixture(); f.waitHook = function() f.player.OnTeleport:Fire("Started") end; f.runtime:start()
+        assert(#f.amounts == 1 and f:saved().enabled and not f:saved().pending and #f.calls == 0)
+    end)
+    test("queued continuation consumes its ticket once", function()
         local f = fixture(); f.runtime:start(); f.game.PlaceId = 4111023553; f:bootstrap(); f:bootstrap()
-        assert(f.loaded == 1 and f.env.CLAW_NOTES_RESUME.phase == "menu")
+        assert(f.loaded == 1 and #f.calls == 0)
     end)
-    test("Stop invalidates a queued bootstrap without clearing other scripts", function()
-        local f = fixture(); f.runtime:start(); f.runtime:stop(); f.game.PlaceId = 4111023553; f:bootstrap()
-        assert(not f.loaded and not f.active)
-    end)
-    test("wrong account, game, place and expiry never download a payload", function()
-        for _, change in ipairs({ "account", "game", "place", "expiry" }) do
-            local f = fixture(); f.runtime:start(); f.game.PlaceId = 4111023553
-            if change == "account" then f.player.UserId = 99 elseif change == "game" then f.game.GameId = 99
-            elseif change == "place" then f.game.PlaceId = 123 else f.time = 3000 end
+    test("queued continuation rejects wrong account game and unsupported place", function()
+        for _, mode in ipairs({ "account", "game", "place" }) do
+            local f = fixture(); f.runtime:start()
+            if mode == "account" then f.player.UserId = 99 elseif mode == "game" then f.game.GameId = 99 else f.game.PlaceId = 123 end
             f:bootstrap(); assert(not f.loaded)
         end
     end)
-    test("menu resume selects the same slot and exact server once", function()
-        local f = fixture(); f.runtime:start(); f.game.PlaceId = 4111023553; f:bootstrap()
-        f.runtime:resume(f.env.CLAW_NOTES_RESUME)
-        assert(f.calls[2][1] == "PickSlot" and f.calls[2][2] == "A")
-        assert(f.calls[3][1] == "PickServer" and f.calls[3][2] == "exact-server" and #f.calls == 3)
-    end)
-    test("storage failure prevents the leave request and reports it", function()
-        local f = fixture(); f.storageFailure = true; f.runtime:start()
-        assert(#f.calls == 0 and #f.queued == 0 and f.warning)
-    end)
-    test("teleport failure clears the pending resume", function()
-        local f = fixture(); f.runtime:start(); f.teleport.TeleportInitFailed:Fire(f.player)
-        f.game.PlaceId = 4111023553; f:bootstrap(); assert(not f.loaded and not f.active)
-    end)
-    test("normal return confirmation must have the exact expected title", function()
-        for _, correct in ipairs({ true, false }) do
-            local f = fixture(); local request = f.requests:FindFirstChild("ReturnToMenu")
-            function request:FireServer()
-                table.insert(f.calls, { "ReturnToMenu" })
-                local prompt = node("ChoicePrompt", "ScreenGui", f.gui)
-                prompt.Title = correct and "Return to Main Menu" or "Delete character"
-                local choice = node("Choice", "RemoteEvent", prompt)
-                function choice:FireServer(yes)
-                    assert(yes == true and correct); table.insert(f.calls, { "ConfirmReturn" }); f.player.OnTeleport:Fire("Started")
-                end
-            end
-            f.runtime:start()
-            assert(#f.calls == (correct and 2 or 1))
-            if not correct then assert(not f.active) end
+    test("autoexec and teleport continuation cannot double-load", function()
+        for _, mode in ipairs({ "loading", "loaded" }) do
+            local f = fixture(); f.runtime:start()
+            if mode == "loading" then f.env.CLAW_NOTES_LOADING = true else f.env.CLAW_NOTES_DROPPER = { closed = false } end
+            f:bootstrap(); assert(not f.loaded)
         end
     end)
-    test("Stop while the menu is waiting for the slot response prevents joining", function()
-        local f = fixture(); f.runtime:start(); f.game.PlaceId = 4111023553; f:bootstrap()
-        local pick = f.menu:FindFirstChild("PickSlot")
-        function pick:FireServer(slot) table.insert(f.calls, { "PickSlot", slot }) end
-        f.waitHook = function() f.runtime:stop() end
-        f.runtime:resume(f.env.CLAW_NOTES_RESUME)
-        assert(#f.calls == 2 and #f.queued == 1 and not f.active)
+    test("missing key blocks saved Auto but not manual batching", function()
+        local f = fixture(); f.env.CLAW_NOTES_EXECUTION_KEY = nil; f:mount(); f.runtime:start()
+        assert(#f.amounts == 0 and not f.runtime.enabled)
+        assert(f.runtime:drop("553") and #f.amounts == 1)
     end)
-    test("missing key prevents the first drop", function()
-        local f = fixture(); f.env.CLAW_NOTES_EXECUTION_KEY = nil
-        -- Key is captured at construction, so create a fresh factory with the empty environment.
-        local factory = assert(loadstring(source .. "\nreturn newNotesRuntime")); setfenv(factory, f.scope)
-        f.runtime = factory()(f.env, f.core, f.ui, f.player, f.gui, child, function() return true end)
-        f.runtime:start(); assert(f.count.Text == "4,335" and #f.calls == 0)
+    test("manager or bringer conflicts refuse both manual batches and Auto", function()
+        for _, name in ipairs({ "CLAW_CONTROL", "CLAW_RELAY" }) do
+            local f = fixture(); f.env[name] = {}; f.runtime:start(); f.runtime:drop("MAX")
+            assert(#f.amounts == 0 and not f.runtime.enabled)
+        end
+    end)
+    test("used prompt remains locked until it disappears", function()
+        local f = fixture(); local prompt = node("ChoicePrompt", "ScreenGui", f.gui); f.core.used[prompt] = true
+        f.runtime:drop("MAX"); assert(#f.amounts == 0)
     end)
     test("ambiguous Notes events are not activated", function()
         local f = fixture(); f.notes.MouseButton1Click = {}; f.notes.Activated = {}
@@ -154,6 +231,48 @@ return function(source, newLoop, validRun, buttonSource)
             getconnections = function(s) return map[s] end }, { __index = getfenv() })
         local factory = assert(loadstring(buttonSource .. "\nreturn notesConnection")); setfenv(factory, scope); local select = factory()
         assert(select() == one); map[f.notes.Activated] = { one }; assert(select() == nil)
+    end)
+    test("autoexec only loads for a saved ON account", function()
+        local f = fixture(); f:bootstrap(autoLoader); assert(not f.loaded)
+        f:seed(false); f:bootstrap(autoLoader); assert(not f.loaded)
+        f:seed(true); f:bootstrap(autoLoader); assert(f.loaded == 1)
+    end)
+    test("autoexec is inert in other games and for other accounts", function()
+        for _, mode in ipairs({ "place", "account", "game", "wrong-record" }) do
+            local f = fixture(); f:seed(true)
+            if mode == "place" then f.game.PlaceId = 123
+            elseif mode == "account" then f.player.UserId = 99
+            elseif mode == "game" then f.game.GameId = 99
+            else local r = f:saved(); r.accountId = 99; f.files[f.runtime.path] = f.http:JSONEncode(r) end
+            f:bootstrap(autoLoader); assert(not f.loaded)
+        end
+    end)
+    test("autoexec rejects malformed data and never writes settings", function()
+        local f = fixture(); f.files[f.runtime.path] = "bad data"; f.writeFailure = true
+        f:bootstrap(autoLoader); assert(not f.loaded and f.warning)
+    end)
+    test("personal manual loader opens panel even with saved OFF", function()
+        local f = fixture(); f:seed(false); f:bootstrap(manualLoader); assert(f.loaded == 1)
+    end)
+    test("loader guard handles simultaneous or duplicate executions", function()
+        local f = fixture(); f:seed(true); f.env.CLAW_NOTES_LOADING = true
+        f:bootstrap(autoLoader); f:bootstrap(manualLoader); assert(not f.loaded)
+        f.env.CLAW_NOTES_LOADING = nil
+        f.env.CLAW_NOTES_DROPPER = { uiVersion = 4, closed = false, show = function() f.shown = true end }
+        f:bootstrap(autoLoader); assert(f.shown and not f.loaded)
+    end)
+    test("button can cancel a manual batch without enabling saved Auto", function()
+        local f = fixture(); f.waitHook = function() f.runtime:start() end
+        f.runtime:drop("MAX"); assert(#f.amounts == 1 and not f.runtime.enabled and not f.files[f.runtime.path])
+    end)
+    test("join waits for the initial Notes display to settle before draining", function()
+        local f = fixture(); f:seed(true); f.count.Text = "0"
+        f.waitHook = function() if f.time < 1001 then f.count.Text = "553" end end
+        f.runtime:resume(); assert(#f.amounts == 1 and f.amounts[1] == 553 and f.time >= 1002)
+    end)
+    test("join waits for the Notes handler to connect without a manual click", function()
+        local f = fixture(); f:seed(true); f.core.canOpen = function() return f.time > 1001 end
+        f.runtime:resume(); assert(#f.amounts == 5 and f.runtime.enabled)
     end)
     print(passed .. " notes runtime tests passed")
 end
