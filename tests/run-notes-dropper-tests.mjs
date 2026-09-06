@@ -19,7 +19,7 @@ assert.doesNotMatch(part('VIEW') + part('UI'), /FireServer|InvokeServer|core\s*:
 const file = resolve(root, '.tools/tests/notes-dropper.generated.luau'); mkdirSync(dirname(file), { recursive: true });
 writeFileSync(file, part('CORE') + '\nlocal run = require("../../tests/notes-dropper.spec")\nrun(newDropper,' + quote(part('PROMPT')) + ',' + quote(part('LEARN')) + ')\n'
   + part('AUTO') + '\nlocal autoTests = require("../../tests/notes-auto.spec")\nautoTests(newNotesLoop, validNotesRun)\n'
-  + '\nlocal runtimeTests = require("../../tests/notes-runtime.spec")\nruntimeTests(' + quote(part('RUNTIME')) + ', newNotesLoop, validNotesRun,' + quote(part('BUTTON')) + ',' + quote(buildNotesLoader('A'.repeat(32), { autoexec: true })) + ',' + quote(buildNotesLoader('A'.repeat(32))) + ')\n'
+  + '\nlocal runtimeTests = require("../../tests/notes-runtime.spec")\nruntimeTests(' + quote(part('RUNTIME')) + ', newNotesLoop, validNotesRun,' + quote(part('BUTTON')) + ',' + quote(buildNotesLoader('A'.repeat(32), { autoexec: true })) + ',' + quote(buildNotesLoader('A'.repeat(32))) + ',' + quote(part('BOOT')) + ')\n'
   + part('VIEW') + '\nlocal uiTests = require("../../tests/notes-ui.spec")\nuiTests(notesPanelGeometry, notesPanelState,' + quote(part('UI')) + ')\n');
 const result = spawnSync(luauIndex >= 0 ? resolve(process.argv[luauIndex + 1]) : resolve(root, '.tools/luau/bin', process.platform === 'win32' ? 'luau.exe' : 'luau'), [file], { cwd: root, stdio: 'inherit', timeout: 30000 });
 if (result.error) throw result.error;

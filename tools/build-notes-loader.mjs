@@ -6,7 +6,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export function buildNotesLoader(key, { autoexec = false } = {}) {
     if (!/^[A-Za-z0-9]{32}$/.test(key)) throw new Error('Expected the existing notes-only execution key, not a dashboard API key.');
     const gate = autoexec ? `
-    -- Autoexec is inert until THIS Roblox account has explicitly saved Auto ON.
+    -- An explicit prefix overrides the saved setting; omission keeps saved-ON-only autoexec.
+    if e.CLAW_NOTES_AUTO == nil then
     if type(isfile) ~= "function" or type(readfile) ~= "function" then return end
     local path = "CLAW/notes-auto-v2-" .. tostring(game.GameId) .. "-" .. tostring(p.LocalPlayer.UserId) .. ".json"
     if not isfile(path) then return end
@@ -16,21 +17,27 @@ export function buildNotesLoader(key, { autoexec = false } = {}) {
     if type(r) ~= "table" or r.version ~= 2 or r.enabled ~= true or type(r.pending) ~= "boolean"
         or type(r.token) ~= "string" or #r.token < 16 or #r.token > 80
         or r.accountId ~= p.LocalPlayer.UserId or r.gameId ~= game.GameId then return end
+    end
 ` : '';
     return `-- CLAW Notes. Private execution key; never publish this ready loader.
 -- No teleport, server selection, injection, or gameplay actions in this loader.
+-- Optional prefix: getgenv().CLAW_NOTES_AUTO = true -- false disables; omit for saved choice.
 local ok = pcall(function()
     if game.PlaceId ~= 4111023553 and game.PlaceId ~= 6473861193 and game.PlaceId ~= 6032399813 then return end
     local p = game:GetService("Players")
     local deadline = os.clock() + 120
     repeat task.wait(0.1) until p.LocalPlayer or os.clock() >= deadline
     if not p.LocalPlayer then return end
-${gate}
     local e = getgenv()
-    if e.CLAW_NOTES_LOADING then return end
-    if e.CLAW_NOTES_DROPPER and e.CLAW_NOTES_DROPPER.uiVersion == 4 and not e.CLAW_NOTES_DROPPER.closed then
-        e.CLAW_NOTES_DROPPER:show(); return
+${gate}
+    if e.CLAW_NOTES_DROPPER and e.CLAW_NOTES_DROPPER.uiVersion == 5 and not e.CLAW_NOTES_DROPPER.closed then
+        local requestedAuto = e.CLAW_NOTES_AUTO
+        e.CLAW_NOTES_AUTO = nil
+        e.CLAW_NOTES_DROPPER:show()
+        if requestedAuto ~= nil then e.CLAW_NOTES_DROPPER:setAuto(requestedAuto) end
+        return
     end
+    if e.CLAW_NOTES_LOADING then return end
     e.CLAW_NOTES_LOADING = true
     script_key = "${key}"
     e.CLAW_NOTES_EXECUTION_KEY = script_key

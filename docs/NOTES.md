@@ -20,7 +20,28 @@ The current standalone version deliberately does not run beside the manager/brin
 
 Keep the user's existing notes-only key above the permanent URL. The retained execution key lets the script reload after a user-initiated teleport; no dashboard API credential belongs here.
 
+Optional startup setting, above either the raw script or its Luarmor loadstring:
+
 ```lua
+getgenv().CLAW_NOTES_AUTO = true -- true: enable Auto; false: disable Auto
+```
+
+Use actual `true`/`false`, without quotation marks. Omit the line (or set it to
+`nil`) to use the saved ON/OFF choice. An explicit value overrides the saved
+choice for this execution and saves the new choice. It is consumed once, so the
+UI can still switch Auto OFF afterward. Setting `true` while already ON does not
+toggle OFF, restart a batch, or create another loop. `false` stops a running batch
+and saves OFF; it cannot undo a request already sent. Neither value clears an
+uncertain drop receipt or bypasses the safety checks.
+
+If a `true` prefix is placed in autoexec, each new execution explicitly turns Auto
+back ON, even if the UI previously saved OFF. Leave the prefix out of autoexec to
+keep the saved switch authoritative. Installed personal autoexec remains
+saved-choice-only by default; the builder includes a commented example, not an
+active forced-ON line.
+
+```lua
+-- Optional: getgenv().CLAW_NOTES_AUTO = true
 script_key = "YOUR_NOTES_EXECUTION_KEY";
 getgenv().CLAW_NOTES_EXECUTION_KEY = script_key;
 local ok = pcall(function()

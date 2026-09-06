@@ -1,4 +1,4 @@
-return function(source, newLoop, validRun, buttonSource, autoLoader, manualLoader)
+return function(source, newLoop, validRun, buttonSource, autoLoader, manualLoader, bootSource)
     local passed = 0
     local function test(name, fn) fn(); passed += 1; print("PASS notes runtime " .. name) end
     local function signal()
@@ -258,7 +258,7 @@ return function(source, newLoop, validRun, buttonSource, autoLoader, manualLoade
         local f = fixture(); f:seed(true); f.env.CLAW_NOTES_LOADING = true
         f:bootstrap(autoLoader); f:bootstrap(manualLoader); assert(not f.loaded)
         f.env.CLAW_NOTES_LOADING = nil
-        f.env.CLAW_NOTES_DROPPER = { uiVersion = 4, closed = false, show = function() f.shown = true end }
+        f.env.CLAW_NOTES_DROPPER = { uiVersion = 5, closed = false, show = function() f.shown = true end }
         f:bootstrap(autoLoader); assert(f.shown and not f.loaded)
     end)
     test("button can cancel a manual batch without enabling saved Auto", function()
@@ -273,6 +273,86 @@ return function(source, newLoop, validRun, buttonSource, autoLoader, manualLoade
     test("join waits for the Notes handler to connect without a manual click", function()
         local f = fixture(); f:seed(true); f.core.canOpen = function() return f.time > 1001 end
         f.runtime:resume(); assert(#f.amounts == 5 and f.runtime.enabled)
+    end)
+    test("true prefix enables and saves ON without clicking, including saved OFF", function()
+        for _, existing in ipairs({ true, false }) do
+            local f = fixture(); if existing then f:seed(false) end
+            f.runtime:resume(true)
+            assert(#f.amounts == 5 and f.runtime.enabled and f:saved().enabled and #f.calls == 0)
+        end
+    end)
+    test("false prefix overrides saved ON without submitting anything", function()
+        local f = fixture(); f:seed(true); f.runtime:resume(false)
+        assert(#f.amounts == 0 and not f.runtime.enabled and not f:saved().enabled)
+        f = fixture(); f.runtime:resume(false); assert(not f:saved().enabled and #f.amounts == 0)
+    end)
+    test("prefix ON is idempotent, not a toggle or another drain", function()
+        local f = fixture(); f.runtime:resume(true); f.count.Text = "553"
+        local queued = #f.queued; f.runtime:applyAuto(true)
+        assert(f.runtime.enabled and #f.amounts == 5 and #f.queued == queued and f.count.Text == "553")
+    end)
+    test("false prefix on a running batch stops and saves OFF", function()
+        local f = fixture(); f.waitHook = function() f.runtime:applyAuto(false) end
+        f.runtime:start(); assert(#f.amounts == 1 and not f:saved().enabled)
+    end)
+    test("true prefix cannot bypass a saved pending receipt", function()
+        local f = fixture(); f:seed(true, true); f.runtime:resume(true)
+        assert(#f.amounts == 0 and f:saved().pending and not f:saved().enabled)
+    end)
+    test("false keeps a pending receipt and cannot reset uncertainty", function()
+        local f = fixture(); f:seed(true, true); f.runtime:resume(false)
+        assert(#f.amounts == 0 and f:saved().pending and not f:saved().enabled)
+    end)
+    test("quoted or invalid settings fail closed instead of using saved ON", function()
+        for _, value in ipairs({ "true", "false", 1, 0, {} }) do
+            local f = fixture(); f:seed(true); f.runtime:resume(value)
+            assert(#f.amounts == 0 and not f.runtime.enabled and not f:saved().enabled)
+        end
+    end)
+    test("false prefix can save OFF even when the old setting cannot be decoded", function()
+        local f = fixture(); f.files[f.runtime.path] = "bad data"; f.runtime:resume(false)
+        assert(#f.amounts == 0 and not f:saved().enabled and f:saved().pending)
+    end)
+    test("true prefix cannot ignore missing storage or an unreadable saved receipt", function()
+        local f = fixture(); f.scope.writefile = false; f.runtime:resume(true)
+        assert(#f.amounts == 0 and not f.runtime.enabled)
+        f = fixture(); f.files[f.runtime.path] = "bad data"; f.runtime:resume(true)
+        assert(#f.amounts == 0 and not f.runtime.enabled)
+    end)
+    test("explicit setting applied before startup is not overwritten by stale startup intent", function()
+        local f = fixture(); f.runtime:applyAuto(false); f.runtime:resume(true)
+        assert(#f.amounts == 0 and not f.runtime.enabled and not f:saved().enabled)
+    end)
+    test("generated autoexec allows an explicit prefix even when no saved ON exists", function()
+        for _, value in ipairs({ true, false }) do
+            local f = fixture(); f.env.CLAW_NOTES_AUTO = value; f:bootstrap(autoLoader)
+            assert(f.loaded == 1 and f.env.CLAW_NOTES_AUTO == value)
+        end
+    end)
+    test("both generated loaders apply and consume prefix on an existing UI, even while loading", function()
+        for _, loader in ipairs({ autoLoader, manualLoader }) do
+            for _, value in ipairs({ true, false }) do
+                local f = fixture(); f.env.CLAW_NOTES_AUTO = value; f.env.CLAW_NOTES_LOADING = true
+                f.env.CLAW_NOTES_DROPPER = { uiVersion = 5, closed = false, show = function() f.shown = true end,
+                    setAuto = function(_, v) f.applied = v end }
+                f:bootstrap(loader)
+                assert(f.shown and f.applied == value and f.env.CLAW_NOTES_AUTO == nil and not f.loaded)
+            end
+        end
+    end)
+    test("raw-script startup consumes prefixes and applies them to an already loaded UI", function()
+        for _, value in ipairs({ true, false, "true" }) do
+            local f = fixture(); f.env.CLAW_NOTES_AUTO = value
+            f.env.CLAW_NOTES_DROPPER = { uiVersion = 5, closed = false, show = function() end,
+                setAuto = function(_, v) f.applied = v end }
+            local run = assert(loadstring(bootSource)); setfenv(run, f.scope); run()
+            assert(f.applied == value and f.env.CLAW_NOTES_AUTO == nil)
+        end
+    end)
+    test("raw-script fresh startup retains false exactly rather than defaulting to saved state", function()
+        local f = fixture(); f.env.CLAW_NOTES_AUTO = false
+        local run = assert(loadstring(bootSource .. "\nreturn requestedAuto")); setfenv(run, f.scope)
+        assert(run() == false and f.env.CLAW_NOTES_AUTO == nil)
     end)
     print(passed .. " notes runtime tests passed")
 end

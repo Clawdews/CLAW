@@ -373,7 +373,7 @@ if not ok then warn("[CLAW] Notes continuation stopped; no automatic retry.") en
             task.wait(0.1)
         end
     end
-    function runtime:start()
+    function runtime:start(resuming)
         if self.closed then return end
         if self.enabled then self:stop(); return end
         if self.loop.active then self:stop("cancelled"); return end
@@ -387,13 +387,38 @@ if not ok then warn("[CLAW] Notes continuation stopped; no automatic retry.") en
             save(); arm()
         end)
         if not ok then self:stop("Cannot enable saved Auto. Check file access, teleport queue and your notes loadstring."); return end
-        self:waitAndDrain(false)
+        self:waitAndDrain(resuming == true)
     end
-    function runtime:resume()
+    function runtime:applyAuto(value, resuming)
+        if self.closed then return end
+        self.configured = true
+        if type(value) ~= "boolean" then
+            self.journaled = true
+            self:stop("CLAW_NOTES_AUTO must be true or false, without quotes. Auto OFF."); return
+        end
+        if not value then
+            self.journaled = true; self:stop(); return
+        end
+        if self.enabled then return end -- Setting ON is not the same as clicking a toggle.
+        if self.pending or core.uncertain then
+            self:stop("Last drop unconfirmed. Check notes before manually enabling Auto again."); return
+        end
+        if self.loop.active or core.busy then status("Finish or stop the current drop before enabling Auto."); return end
+        self:start(resuming)
+    end
+    function runtime:resume(requestedAuto)
+        if self.closed or self.configured then return end
         local ok, r = pcall(read)
-        if not ok then status("Auto setting unreadable. Auto OFF; no automatic drops."); return end
+        if not ok then
+            if requestedAuto == false then
+                self.pending, self.journaled = true, true -- Preserve uncertainty if the old file could not be read.
+                self:stop()
+            else status("Auto setting unreadable. Auto OFF; no automatic drops.") end
+            return
+        end
+        if r then self.token, self.pending, self.journaled = r.token, r.pending, true end
+        if requestedAuto ~= nil then self:applyAuto(requestedAuto, true); return end
         if not r then return end
-        self.token, self.pending, self.journaled = r.token, r.pending, true
         if r.pending then
             self:stop("Last drop unconfirmed. Check notes before manually enabling Auto again."); return
         end
@@ -639,12 +664,20 @@ local function createNotesPanel(playerGui, onCollapse)
 end
 -- DROPPER_UI_END
 
+-- DROPPER_BOOT_BEGIN
 local env = getgenv()
+local requestedAuto = env.CLAW_NOTES_AUTO
+env.CLAW_NOTES_AUTO = nil -- One request per execution; the UI can still save OFF afterwards.
 env.CLAW_NOTES_RESUME = nil -- Discard the old v3 rejoin plan; never travel automatically.
 local inheritedUsed
 if env.CLAW_NOTES_DROPPER then
     local old = env.CLAW_NOTES_DROPPER
-    if old.uiVersion == 4 and not old.closed then old:show(); return end
+    if old.uiVersion == 5 and not old.closed then
+        old:show()
+        if requestedAuto ~= nil then old:setAuto(requestedAuto) end
+        return
+    end
+    if requestedAuto == false and type(old.stopAuto) == "function" then old:stopAuto() end
     if old.core and (old.core.busy or old.core.uncertain) then
         old:show(); warn("[CLAW] Finish/check the pending drop before changing the UI. Rejoin if its outcome is unknown."); return
     end
@@ -652,12 +685,13 @@ if env.CLAW_NOTES_DROPPER then
     inheritedUsed = old.core and old.core.used
     old:destroy()
 end
+-- DROPPER_BOOT_END
 local Players, Replicated = game:GetService("Players"), game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 assert(player, "Join the game before opening the notes dropper")
 local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 30)
 assert(playerGui, "Wait for the game UI")
-local api = { uiVersion = 4, closed = false, hookReady = false }
+local api = { uiVersion = 5, closed = false, hookReady = false }
 local connections, observedButtons = {}, setmetatable({}, { __mode = "k" })
 local learning, learned, currentChoice, currentPrompt
 local function child(root, ...)
@@ -810,6 +844,7 @@ end
 function api:show() if not self.closed then gui.Enabled = true end end
 function api:stopAuto() runtime:stop() end
 function api:startAuto() if not self.closed then runtime:start() end end
+function api:setAuto(enabled) if not self.closed then runtime:applyAuto(enabled) end end
 function api:stop() runtime:stop(); learning = nil; gui.Enabled = false end
 function api:destroy()
     self:stop(); self.closed = true
@@ -838,7 +873,10 @@ ui:refresh(nil, false, core)
 ui:setNotice("learn", api.hookReady and messages.learn or "Automatic opener learning is unavailable. Open Notes manually, then use Drop once here.")
 env.CLAW_NOTES_DROPPER = api
 task.spawn(function()
-    local ok = pcall(function() runtime:resume() end)
+    if env.CLAW_NOTES_AUTO ~= nil then
+        requestedAuto, env.CLAW_NOTES_AUTO = env.CLAW_NOTES_AUTO, nil
+    end
+    local ok = pcall(function() runtime:resume(requestedAuto) end)
     if not ok then runtime:stop("automation-error") end
 end)
 task.spawn(function()
@@ -866,4 +904,4 @@ task.spawn(function()
         task.wait(0.15)
     end
 end)
-print("[CLAW] Notes v4 ready. DROP drains the chosen total in batches. AUTO ON saves drop-on-join for this account. This script never rejoins or moves you.")
+print("[CLAW] Notes v5 ready. CLAW_NOTES_AUTO = true/false sets Auto at launch; omit to use the saved choice. This script never rejoins or moves you.")
