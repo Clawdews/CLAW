@@ -56,6 +56,14 @@ test('HTML, non-success JSON, server errors and unknown network results are not 
   }
   await assert.rejects(jsonRequest('https://api.luarmor.net/status', {}, async () => { throw new Error(credential); }), e => !e.message.includes(credential));
 });
+test('rejected API requests retain a useful reason without leaking credentials or URLs', async () => {
+  await assert.rejects(uploadSource(source, credential, async () => json({ success: false,
+    message: 'Missing x-turnstile-token header. Secret ' + credential + ' https://example.com/' + credential }, 400)), error => {
+    assert.match(error.message, /HTTP 400.*Missing x-turnstile-token header/);
+    assert.ok(!error.message.includes(credential) && !error.message.includes('https://'));
+    return true;
+  });
+});
 function runFixture() {
   const f = { state: {}, uploads: 0, verifies: 0, saves: [], messages: [] };
   f.deps = { readState: () => f.state, saveState: s => { f.state = s; f.saves.push(s); }, status: m => f.messages.push(m),

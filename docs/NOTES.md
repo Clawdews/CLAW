@@ -26,15 +26,27 @@ end)
 if not ok then warn("[CLAW] Notes loader stopped. Check your key and connection.") end
 ```
 
-`tools/build-notes-loader.mjs` refreshes the already-created friend's ignored wrapper without changing or creating the key. Do not run a friend's device-bound key on the owner's PC.
+`tools/build-notes-loader.mjs` generates the personal ready loader in ignored
+`.tools/CLAW Notes.lua` from the separately saved notes execution key. It never
+creates or changes keys. Optional `--key-file` and `--out` arguments support other
+keys; ready loader outputs must remain inside the ignored `.tools` folder.
 
 ## Automatic publishing from a Windows PC
+
+**Current live limitation (2026-09-05):** the API key and authorized PC IP were
+verified, but Luarmor rejected script uploads with HTTP 400, `Missing
+x-turnstile-token header`. The installed Windows task is **disabled**. The existing
+notes release was uploaded through the dashboard and remains live. The tooling
+below is prepared, but unattended publishing is **not operational** until Luarmor
+provides a supported way to satisfy its upload verification. Do not treat an IP
+allowlist or successful account-details request as proof that uploads are allowed.
+No CAPTCHA service or new paid account has been added.
 
 `tools/luarmor-publisher.mjs` reads only `notes-dropper.lua` from the private `control-beta` branch after **Notes release checks** pass for that exact revision. It repeats local compilation and tests, checks credential patterns, then updates only the existing CLAW Notes Luarmor script. It does not execute GitHub workflow commands on the PC, upload the dirty working tree, update its own tooling, or change other CLAW scripts.
 
 The API key is stored in ignored `.tools/luarmor-publisher/api-key.dpapi`, protected by the current Windows user. Windows login protection does not protect against software already running as that user. GitHub uses the existing local Git sign-in. No API key is stored in GitHub Actions or the game script.
 
-After authorizing the PC's public IP in Luarmor and saving the existing API key through the one-use `node tools/luarmor-publisher-setup.mjs` local form:
+After resolving that upload-access requirement, authorizing the PC's public IP in Luarmor and saving the existing API key through the one-use `node tools/luarmor-publisher-setup.mjs` local form:
 
 ```powershell
 ./tools/install-luarmor-publisher.ps1 -Action Install

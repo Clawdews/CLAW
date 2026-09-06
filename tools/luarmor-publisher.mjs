@@ -29,7 +29,16 @@ export async function jsonRequest(url, options = {}, fetcher = fetch) {
   let response;
   try { response = await fetcher(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(90000) }); }
   catch { throw new Error('Network request failed. Response and credentials withheld.'); }
-  requireThat(response.ok, `Service returned HTTP ${response.status}.`);
+  if (!response.ok) {
+    let detail = '';
+    if ((response.headers.get('content-type') || '').includes('application/json')) {
+      try {
+        const body = await response.json();
+        if (typeof body.message === 'string') detail = body.message.replace(/https?:\/\/\S+|[A-Za-z0-9_./+=-]{24,}/g, '[redacted]').replace(/[\r\n\t]/g, ' ').slice(0, 240);
+      } catch { /* Do not print response bodies or network internals. */ }
+    }
+    throw new Error(`Service returned HTTP ${response.status}.${detail ? ' ' + detail : ''}`);
+  }
   requireThat((response.headers.get('content-type') || '').includes('application/json'), 'Service did not return JSON.');
   let text;
   try { text = await response.text(); requireThat(text.length <= 3000000, 'Response too large.'); return JSON.parse(text); }
@@ -83,7 +92,7 @@ function gitCredential() {
   const value = result.stdout.split(/\r?\n/).find(line => line.startsWith('password='))?.slice(9); result.stdout = '';
   requireThat(value, 'Saved GitHub sign-in is unavailable.'); return value;
 }
-function apiCredential() {
+export function apiCredential() {
   const encrypted = readFileSync(statePath('api-key.dpapi'), 'utf8');
   const command = '$s = ConvertTo-SecureString ([Console]::In.ReadToEnd()); $p = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); try { [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($p)) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p) }';
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { input: encrypted, encoding: 'utf8', windowsHide: true, timeout: 15000, env: windowsPowerShellEnv() });
