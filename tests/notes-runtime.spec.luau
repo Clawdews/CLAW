@@ -114,6 +114,31 @@ return function(source, newLoop, validRun, buttonSource)
         local f = fixture(); f.runtime:start(); f.teleport.TeleportInitFailed:Fire(f.player)
         f.game.PlaceId = 4111023553; f:bootstrap(); assert(not f.loaded and not f.active)
     end)
+    test("normal return confirmation must have the exact expected title", function()
+        for _, correct in ipairs({ true, false }) do
+            local f = fixture(); local request = f.requests:FindFirstChild("ReturnToMenu")
+            function request:FireServer()
+                table.insert(f.calls, { "ReturnToMenu" })
+                local prompt = node("ChoicePrompt", "ScreenGui", f.gui)
+                prompt.Title = correct and "Return to Main Menu" or "Delete character"
+                local choice = node("Choice", "RemoteEvent", prompt)
+                function choice:FireServer(yes)
+                    assert(yes == true and correct); table.insert(f.calls, { "ConfirmReturn" }); f.player.OnTeleport:Fire("Started")
+                end
+            end
+            f.runtime:start()
+            assert(#f.calls == (correct and 2 or 1))
+            if not correct then assert(not f.active) end
+        end
+    end)
+    test("Stop while the menu is waiting for the slot response prevents joining", function()
+        local f = fixture(); f.runtime:start(); f.game.PlaceId = 4111023553; f:bootstrap()
+        local pick = f.menu:FindFirstChild("PickSlot")
+        function pick:FireServer(slot) table.insert(f.calls, { "PickSlot", slot }) end
+        f.waitHook = function() f.runtime:stop() end
+        f.runtime:resume(f.env.CLAW_NOTES_RESUME)
+        assert(#f.calls == 2 and #f.queued == 1 and not f.active)
+    end)
     test("missing key prevents the first drop", function()
         local f = fixture(); f.env.CLAW_NOTES_EXECUTION_KEY = nil
         -- Key is captured at construction, so create a fresh factory with the empty environment.
