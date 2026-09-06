@@ -44,6 +44,10 @@ return function(newDropper, promptSource, learnSource)
         local f = fixture(); f.core.beforeSubmit = function() f.current = table.clone(f.current); f.current.choice = {} end
         assert(not f.core:run("MAX")); assert(f.sends == 0)
     end)
+    test("manual submission while saving cannot be submitted a second time", function()
+        local f = fixture(); f.core.beforeSubmit = function() f.core.used[f.identity] = true end
+        local ok, why = f.core:run("MAX"); assert(not ok and why == "already-sent" and f.sends == 0)
+    end)
     test("chosen amount is submitted once to the exact active notes prompt", function()
         local f = fixture(); local ok, result = f.core:run("2")
         assert(ok and result == "sent" and f.sends == 1 and f.amount == 2 and f.opens == 0)

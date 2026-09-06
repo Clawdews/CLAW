@@ -53,6 +53,7 @@ local function newDropper(adapter)
             local verified = adapter.inspect()
             if not verified or verified.kind ~= "notes" or verified.identity ~= fresh.identity or verified.choice ~= fresh.choice
                 or verified.minimum ~= fresh.minimum or verified.maximum ~= fresh.maximum then return "changed" end
+            if self.used[fresh.identity] then return "already-sent" end
             self.used[fresh.identity] = true -- Mark before yielding; an error is not permission to resend.
             self.phase = "submitting"
             self.lastAmount = amount
