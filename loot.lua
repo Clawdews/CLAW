@@ -6,7 +6,7 @@ local CONFIG = {
 	BATCH_SIZE  = 12,  -- max item lines merged into one message
 	USER_ID     = "",  -- your Discord user ID, for pings
 	DEBUG_SCAN  = false, -- true = dump loot-ish labels to console at startup
-	PING_ITEMS  = {    -- lowercase names that trigger an @ mention
+	PING_ITEMS  = {    -- item names that trigger an @ mention (any capitalization)
 		["ether core"] = true,
 	},
 }
@@ -20,9 +20,25 @@ if type(supplied) == "table" then
 	end
 end
 
+-- Item names are compared lowercase, so normalize the configured keys too.
+local pingItems = {}
+if type(CONFIG.PING_ITEMS) == "table" then
+	for name, enabled in pairs(CONFIG.PING_ITEMS) do
+		if enabled then pingItems[string.lower(tostring(name))] = true end
+	end
+end
+CONFIG.PING_ITEMS = pingItems
+CONFIG.USER_ID = tostring(CONFIG.USER_ID or "")
+
 if type(CONFIG.WEBHOOK_URL) ~= "string" or CONFIG.WEBHOOK_URL == "" then
 	warn("[Loot] set WEBHOOK_URL in CLAW_LOOT_CONFIG before loading")
 	return
+end
+
+-- Stop a previously loaded copy so reloading does not double every notification.
+local previous = rawget(environment, "Loot")
+if type(previous) == "table" and type(previous.stop) == "function" then
+	pcall(previous.stop)
 end
 
 local RAW_REQUEST = (syn and syn.request)
@@ -42,6 +58,7 @@ local Loot = (function()
 		api.notify = function() end
 		api.text   = function() end
 		api.flushNow = function() end
+		api.stop   = function() end
 		return api
 	end
 
@@ -55,7 +72,8 @@ local Loot = (function()
 	local DEFAULT_COLOR = 0x2B2D31
 
 	local queue, queueIndex = {}, {}
-	local pingWanted, sessionCount, workerAlive = false, 0, false
+	local sessionCount, workerAlive, alive = 0, false, true
+	local rootConnections = {}
 
 	local function me()
 		local p = Players.LocalPlayer
@@ -125,16 +143,18 @@ local Loot = (function()
 
 	local function flush()
 		if #queue == 0 then return end
-		local batch = {}
+		local batch, ping = {}, false
 		for _ = 1, math.min(CONFIG.BATCH_SIZE, #queue) do
-			table.insert(batch, table.remove(queue, 1))
+			local item = table.remove(queue, 1)
+			ping = ping or item.ping
+			table.insert(batch, item)
 		end
 		queueIndex = {}
 		for i, item in ipairs(queue) do queueIndex[string.lower(item.name)] = i end
 
-		local content = (pingWanted and CONFIG.USER_ID ~= "")
+		-- Mention only on the message that actually contains a ping item.
+		local content = (ping and CONFIG.USER_ID ~= "")
 			and ("<@" .. CONFIG.USER_ID .. ">") or nil
-		pingWanted = false
 
 		post({
 			username   = CONFIG.USERNAME,
@@ -148,7 +168,7 @@ local Loot = (function()
 		if workerAlive then return end
 		workerAlive = true
 		task.spawn(function()
-			while true do
+			while alive do
 				task.wait(CONFIG.FLUSH_EVERY)
 				if #queue > 0 then pcall(flush) end
 			end
@@ -157,19 +177,20 @@ local Loot = (function()
 
 
 	function api.notify(name, opts)
+		if not alive then return end
 		name = tostring(name)
 		opts = opts or {}
 		local amount = tonumber(opts.amount) or 1
 		local key = string.lower(name)
 
 		sessionCount = sessionCount + amount
-		if CONFIG.PING_ITEMS[key] then pingWanted = true end
 
 		local at = queueIndex[key]
 		if at and queue[at] then
 			queue[at].amount = queue[at].amount + amount
 		else
-			table.insert(queue, { name = name, amount = amount, rarity = opts.rarity })
+			table.insert(queue, { name = name, amount = amount, rarity = opts.rarity,
+				ping = CONFIG.PING_ITEMS[key] == true })
 			queueIndex[key] = #queue
 		end
 		startWorker()
@@ -184,6 +205,17 @@ local Loot = (function()
 	end
 
 	function api.flushNow() pcall(flush) end
+
+	function api.stop()
+		if not alive then return end
+		alive = false
+		for _, connection in ipairs(rootConnections) do
+			connection:Disconnect()
+		end
+		table.clear(rootConnections)
+		-- Send whatever was still queued instead of dropping it.
+		if #queue > 0 then task.spawn(pcall, flush) end
+	end
 
 
 	task.spawn(function()
@@ -201,10 +233,12 @@ local Loot = (function()
 			local p = Players.LocalPlayer
 			if p then addRoot(p:WaitForChild("PlayerGui", 15)) end
 		end)
+		if not alive then return end
 
 		local lastSeen = setmetatable({}, { __mode = "k" })
 
 		local function report(obj)
+			if not alive then return end
 			local ok, txt = pcall(function() return obj.Text end)
 			if not ok or type(txt) ~= "string" then return end
 			local name = string.match(txt, "^%s*Looted:%s*(.+)$")
@@ -230,7 +264,7 @@ local Loot = (function()
 		for _, root in ipairs(roots) do
 			pcall(function()
 				for _, d in ipairs(root:GetDescendants()) do pcall(hook, d) end
-				root.DescendantAdded:Connect(function(d) pcall(hook, d) end)
+				table.insert(rootConnections, root.DescendantAdded:Connect(function(d) pcall(hook, d) end))
 			end)
 		end
 
@@ -260,5 +294,5 @@ local Loot = (function()
 	return api
 end)()
 
-if getgenv then getgenv().Loot = Loot else _G.Loot = Loot end
+environment.Loot = Loot
 return Loot

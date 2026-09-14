@@ -20,6 +20,7 @@ Use `alts bring` from the main. Default speed is 200 horizontal and 24 vertical.
 
 | Command | Action |
 | --- | --- |
+| `alts help` | List commands |
 | `alts bring` | Bring the alts |
 | `alts stop` | Stop movement |
 | `alts speed 200` | Set horizontal speed |
@@ -32,19 +33,19 @@ Safety starts off. Add trusted alt IDs before enabling it. Travel is direct and 
 
 ## Loot notifier
 
-Fill in your Discord webhook and run this before PR:
+Fill in your Discord webhook and run this before Project Rain (PR):
 
 ```lua
 getgenv().CLAW_LOOT_CONFIG = {
     WEBHOOK_URL = "",
     USER_ID = "",
-    PING_ITEMS = { ["ether core"] = true },
+    PING_ITEMS = { ["Ether Core"] = true },
 }
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Clawdews/CLAW/main/loot.lua?t=" .. tostring(os.time())))()
 ```
 
-It watches PR's `Looted:` messages and batches repeated items. Keep the filled configuration private. Do not load a second copy if PR already starts it.
+It watches PR's `Looted:` messages and batches repeated items. `PING_ITEMS` names are not case-sensitive. Loading it again replaces the running copy. Keep the filled configuration private, and skip this if your PR setup already starts the notifier.
 
 ## Discord control
 
