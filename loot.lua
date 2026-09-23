@@ -55,7 +55,7 @@ local Loot = (function()
 	local DEFAULT_COLOR = 0x2B2D31
 
 	local queue, queueIndex = {}, {}
-	local pingWanted, sessionCount, workerAlive = false, 0, false
+	local sessionCount, workerAlive = 0, false
 
 	local function me()
 		local p = Players.LocalPlayer
@@ -125,16 +125,17 @@ local Loot = (function()
 
 	local function flush()
 		if #queue == 0 then return end
-		local batch = {}
+		local batch, wantPing = {}, false
 		for _ = 1, math.min(CONFIG.BATCH_SIZE, #queue) do
-			table.insert(batch, table.remove(queue, 1))
+			local item = table.remove(queue, 1)
+			if item.ping then wantPing = true end
+			table.insert(batch, item)
 		end
 		queueIndex = {}
 		for i, item in ipairs(queue) do queueIndex[string.lower(item.name)] = i end
 
-		local content = (pingWanted and CONFIG.USER_ID ~= "")
+		local content = (wantPing and CONFIG.USER_ID ~= "")
 			and ("<@" .. CONFIG.USER_ID .. ">") or nil
-		pingWanted = false
 
 		post({
 			username   = CONFIG.USERNAME,
@@ -163,13 +164,14 @@ local Loot = (function()
 		local key = string.lower(name)
 
 		sessionCount = sessionCount + amount
-		if CONFIG.PING_ITEMS[key] then pingWanted = true end
+		local wantsPing = CONFIG.PING_ITEMS[key] == true
 
 		local at = queueIndex[key]
 		if at and queue[at] then
 			queue[at].amount = queue[at].amount + amount
+			if wantsPing then queue[at].ping = true end
 		else
-			table.insert(queue, { name = name, amount = amount, rarity = opts.rarity })
+			table.insert(queue, { name = name, amount = amount, rarity = opts.rarity, ping = wantsPing })
 			queueIndex[key] = #queue
 		end
 		startWorker()
