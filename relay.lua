@@ -127,6 +127,9 @@ local Relay = {
 	SafetyTriggered = false,
 	UnsafeSince = setmetatable({}, { __mode = "k" }),
 	OriginalCollision = setmetatable({}, { __mode = "k" }),
+	BringDesired = false,
+	BringDesiredSeconds = 0,
+	BringSupervisor = 0,
 }
 Relay.__index = Relay
 
@@ -154,7 +157,71 @@ function Relay:_character(player)
 	return character, root, humanoid
 end
 
+-- Deepwoken drives character collision off active effects, so plain CanCollide=false
+-- gets re-asserted by the game and you stick to walls. Spoofing the EffectReplicator's
+-- HasAny for the teleport-phase classes is what actually lets the alt phase cleanly.
+local NOCLIP_SPOOF_CLASSES = { PrepareTP = true, TPSafe = true }
+
+function Relay:_wantsNoclip()
+	return self.Running and (self.PhaseEnabled or self.MovementActive)
+end
+
+function Relay:_installNoclipSpoof()
+	if self.NoclipHooked then
+		return
+	end
+	local effectReplicator = ReplicatedStorage:FindFirstChild("EffectReplicator")
+	if not effectReplicator then
+		return
+	end
+	local ok, module = pcall(require, effectReplicator)
+	if not ok or type(module) ~= "table" or typeof(module.HasAny) ~= "function" then
+		return
+	end
+	if table.isfrozen and table.isfrozen(module) then
+		warnRelay("EffectReplicator is read-only; noclip effect spoof unavailable")
+		return
+	end
+	local relay = self
+	local originalHasAny = module.HasAny
+	local ok2 = pcall(function()
+		module.HasAny = function(replicatorSelf, ...)
+			if relay:_wantsNoclip() then
+				for _, class in next, { ... } do
+					if NOCLIP_SPOOF_CLASSES[class] then
+						return true
+					end
+				end
+			end
+			return originalHasAny(replicatorSelf, ...)
+		end
+	end)
+	if not ok2 then
+		warnRelay("could not install noclip effect spoof")
+		return
+	end
+	self.EffectModule = module
+	self.OriginalHasAny = originalHasAny
+	self.NoclipHooked = true
+	log("noclip effect spoof installed")
+end
+
+function Relay:_removeNoclipSpoof()
+	if not self.NoclipHooked then
+		return
+	end
+	if self.EffectModule and self.OriginalHasAny then
+		pcall(function()
+			self.EffectModule.HasAny = self.OriginalHasAny
+		end)
+	end
+	self.EffectModule = nil
+	self.OriginalHasAny = nil
+	self.NoclipHooked = false
+end
+
 function Relay:_applyNoclip()
+	self:_installNoclipSpoof()
 	local character = LocalPlayer.Character
 	if not character then
 		return
@@ -297,7 +364,8 @@ function Relay:_stepFlight(movement, dt)
 	local previousDt = movement.PreviousStepDt or 0
 	if previousDt <= 0.25 then
 		local expected = movement.PreviousPosition + movement.Velocity * previousDt
-		if (position - expected).Magnitude > 12 then
+		local tolerance = 12 + (movement.Velocity * previousDt).Magnitude * 0.5
+		if (position - expected).Magnitude > tolerance then
 			return self:cancelMovement("position changed unexpectedly; possible knockback or server correction")
 		end
 	end
@@ -412,6 +480,43 @@ function Relay:bring(seconds)
 	return true
 end
 
+function Relay:_bringComplete()
+	-- Arrival (or already being there) is the only reason we stop wanting to bring.
+	return self.LastMovement == "arrived" or self.LastMovement == "already at destination"
+end
+
+function Relay:_startBringSupervisor()
+	self.BringSupervisor = self.BringSupervisor + 1
+	local generation = self.BringSupervisor
+	task.spawn(function()
+		while self.Running and self.BringDesired and generation == self.BringSupervisor do
+			if not self.MovementActive then
+				if self:_bringComplete() then
+					self.BringDesired = false
+					log("bring complete")
+					break
+				end
+				-- Stopped for a non-arrival reason (knockback, lost mover, no progress,
+				-- respawn, timeout...). Re-aim at the controller's current position and go.
+				local stoppedBecause = self.LastMovement
+				local ok, reason = self:bring(self.BringDesiredSeconds)
+				if ok then
+					if self:_bringComplete() then
+						self.BringDesired = false
+						log("bring complete")
+						break
+					end
+					log("resumed bring after: " .. tostring(stoppedBecause))
+				else
+					-- Controller or local character not ready yet; hold and retry.
+					self.LastMovement = "waiting to resume (" .. tostring(reason) .. ")"
+				end
+			end
+			task.wait(0.3)
+		end
+	end)
+end
+
 function Relay:setPhase(enabled)
 	self.PhaseEnabled = enabled == true
 	if self.PhaseEnabled then
@@ -427,6 +532,7 @@ function Relay:_requests()
 end
 
 function Relay:returnToMenu(reason)
+	self.BringDesired = false
 	self:cancelMovement()
 	local requests = self:_requests()
 	local remote = requests and requests:FindFirstChild("ReturnToMenu")
@@ -566,8 +672,11 @@ function Relay:_executeCommand(commandLine)
 			Config.BringSeconds = 0
 			seconds = 0
 		end
+		self.BringDesired = true
+		self.BringDesiredSeconds = seconds
 		local ok, reason = self:bring(seconds)
 		if not ok then warnRelay(reason) end
+		self:_startBringSupervisor()
 	elseif command == "speed" or command == "yspeed" then
 		local key = command == "speed" and "BringSpeed" or "BringVerticalSpeed"
 		local axis = command == "speed" and "XZ" or "Y"
@@ -581,6 +690,7 @@ function Relay:_executeCommand(commandLine)
 		Config[key] = speed
 		log(axis .. " speed: " .. speed .. " studs/s (acceleration/braking still apply)")
 	elseif command == "stop" then
+		self.BringDesired = false
 		self:cancelMovement("controller command")
 	elseif command == "phase" then
 		local mode = string.lower(remainder)
@@ -669,10 +779,12 @@ function Relay:Destroy(reason)
 		return
 	end
 	self.Running = false
+	self.BringDesired = false
 	self.MenuGeneration = self.MenuGeneration + 1
 	self:cancelMovement()
 	self.PhaseEnabled = false
 	self:_restoreCollision()
+	self:_removeNoclipSpoof()
 	if self.ControllerChat then
 		self.ControllerChat:Disconnect()
 		self.ControllerChat = nil
