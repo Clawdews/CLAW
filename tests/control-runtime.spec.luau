@@ -158,7 +158,8 @@ return function(clientSource, autoSource, coreSource, regionSource, menuSource, 
 				return function() return { new = function()
 					local mover = {}
 					function mover:stop() f.moveStops = (f.moveStops or 0) + 1 end
-					function mover:destroy() self:stop() end
+					function mover:cancel() self:stop() end
+						function mover:destroy() self:stop() end
 					function mover:bring()
 						f.moves = (f.moves or 0) + 1
 						for _, raw in pairs(f.files) do

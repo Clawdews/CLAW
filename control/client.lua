@@ -42,6 +42,7 @@ local stopped, busy, socket, socketGeneration = false, false, nil, 0
 local reconnectAt, backoff, presenceAt, packetAt = 0, 2, 0, 0
 local networkProblem
 local movement, movementState = nil, "idle"
+local pushPresence, lastPresencePush = nil, 0
 local actionResults, inventoryAt, lastInventory = {}, 0, nil
 local inventoryCharacter, lootPending, lootAt = nil, {}, 0
 local movementRevision = 0
@@ -128,7 +129,7 @@ core = Core.new({ now = os.time, current = current, nonce = function() return Ht
 	join = function(id) assert(fire("PickServer", true, id), "PickServer unavailable") end,
 	hasPlayer = function(id) return Players:GetPlayerByUserId(id) ~= nil end,
 })
-movement = Movement.new(function(state) movementState = state end)
+movement = Movement.new(function(state) movementState = state; if pushPresence then pushPresence() end end)
 auto = Auto.new({ now = os.time, current = current, save = save,
 	requireRegionCheck = true,
 	chooseSlot = function(profile, placeId)
@@ -182,6 +183,7 @@ auto = Auto.new({ now = os.time, current = current, save = save,
 	changed = function(status)
 		print("[CLAW CONTROL] " .. status)
 		if auto and not save() then auto.storageBlocked = true end
+		if pushPresence then pushPresence() end
 	end,
 }, saved and saved.auto)
 if saved and saved.core and core:resume(saved.core) then
@@ -216,7 +218,7 @@ end)
 local function disconnect()
 	socketGeneration += 1
 	movementRevision += 1
-	movement:stop("control disconnected")
+	movement:cancel("control disconnected")
 	lastInventory = nil; inventoryCharacter = nil; table.clear(lootPending)
 	for _, connection in ipairs(socketConnections) do connection:Disconnect() end
 	table.clear(socketConnections)
@@ -224,13 +226,27 @@ local function disconnect()
 	if old then pcall(function() old:Close() end) end -- Stop Volt's own reconnect; obtain a fresh single-use ticket instead.
 	auto:disconnected()
 	reconnectAt = os.clock() + backoff + math.random()
-	backoff = math.min(backoff * 2, 60)
+	backoff = math.min(backoff * 2, 20)
 end
 local function send(value)
 	if not socket then return false end
 	local ok = pcall(function() socket:Send(Http:JSONEncode(value)) end)
 	if not ok then disconnect() end
 	return ok
+end
+-- Presence is pushed immediately on a movement/status change, rate-limited to keep the
+-- socket calm, so the Discord panel reflects state in ~1.5s instead of the 10s heartbeat.
+function pushPresence()
+	if not socket then return end
+	local nowClock = os.clock()
+	if nowClock - lastPresencePush < 1.5 then
+		presenceAt = math.min(presenceAt, lastPresencePush + 1.5)
+		return
+	end
+	lastPresencePush = nowClock
+	presenceAt = nowClock + 10
+	local snapshot = current(); snapshot.state = auto.status
+	send({ type = "presence", current = snapshot })
 end
 local function itemName(value)
 	if type(value) ~= "string" then return nil end
@@ -336,7 +352,7 @@ local function handleAction(data)
 	if previous then return actionReply(data.id, previous.ok, previous.message) end
 	if data.action == "stop" then
 		movementRevision += 1
-		movement:stop("stopped by owner")
+		movement:cancel("stopped by owner")
 		return actionReply(data.id, true, "movement stopped")
 	end
 	if data.action == "scan-items" then
@@ -357,12 +373,12 @@ local function handleAction(data)
 	if data.action == "bring" then
 		if tostring(data.args.mainId) ~= tostring(auto.profile.mainId) then return actionReply(data.id, false, "main changed") end
 		local called, ok, reason = pcall(movement.bring, movement, data.args.mainId, data.args.offset)
-		if not called then movement:stop("movement error"); return actionReply(data.id, false, "movement could not start") end
+		if not called then movement:cancel("movement error"); return actionReply(data.id, false, "movement could not start") end
 		return actionReply(data.id, ok, reason)
 	end
 	if data.action == "park" then
 		local called, ok, reason = pcall(movement.park, movement, data.args.position, data.args.placeId, data.args.jobId)
-		if not called then movement:stop("movement error"); return actionReply(data.id, false, "movement could not start") end
+		if not called then movement:cancel("movement error"); return actionReply(data.id, false, "movement could not start") end
 		return actionReply(data.id, ok, reason)
 	end
 	return disconnect()
@@ -405,7 +421,7 @@ local function connectRelay()
 				if data.halted == true or data.enabled == false or data.role ~= "alt"
 					or (previous and (previous.mainId ~= data.mainId or previous.activeTeam ~= data.activeTeam)) then
 					movementRevision += 1
-					movement:stop(data.halted and "emergency stop" or "account settings changed")
+					movement:cancel(data.halted and "emergency stop" or "account settings changed")
 				end
 			end
 		elseif data.type == "target" then auto:setTarget(data)
@@ -454,10 +470,9 @@ connect(Run.Heartbeat, function(dt)
 		if send(menuCatalog) then catalogSentAt = os.clock(); sentSignature = menuSignature; catalogPending = false end
 	end
 	if socket and os.clock() >= presenceAt then
-		presenceAt = os.clock() + 10
-		local snapshot = current(); snapshot.state = auto.status
-		send({ type = "presence", current = snapshot })
-	elseif not socket and not busy and os.clock() >= reconnectAt then task.spawn(connectRelay) end
+		pushPresence()
+	end
+	if not socket and not busy and os.clock() >= reconnectAt then task.spawn(connectRelay) end
 	if socket and game.PlaceId ~= Core.LOBBY_PLACE_ID and os.clock() >= inventoryAt then
 		inventoryAt = os.clock() + 60
 		task.spawn(scanItems)

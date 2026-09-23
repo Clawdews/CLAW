@@ -4,7 +4,13 @@ Movement.__index = Movement
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
+
+-- Deepwoken re-asserts collision off active effects, so CanCollide alone sticks to
+-- walls. Spoofing the EffectReplicator's HasAny for the teleport-phase classes is
+-- what actually lets a moving character phase cleanly.
+local NOCLIP_SPOOF_CLASSES = { PrepareTP = true, TPSafe = true }
 
 local function finite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
@@ -32,7 +38,37 @@ local function property(active, object, key, value)
 end
 
 function Movement.new(changed)
-	return setmetatable({ running = true, active = nil, generation = 0, state = "idle", changed = changed }, Movement)
+	return setmetatable({ running = true, active = nil, generation = 0, state = "idle", changed = changed,
+		persist = false, supervisor = 0, lastProvider = nil, lastLabel = nil, noclipHooked = false }, Movement)
+end
+function Movement:_installNoclipSpoof()
+	if self.noclipHooked then return end
+	local replicator = ReplicatedStorage:FindFirstChild("EffectReplicator")
+	if not replicator then return end
+	local ok, module = pcall(require, replicator)
+	if not ok or type(module) ~= "table" or type(module.HasAny) ~= "function" then return end
+	if table.isfrozen and table.isfrozen(module) then return end
+	local this = self
+	local original = module.HasAny
+	local installed = pcall(function()
+		module.HasAny = function(replicatorSelf, ...)
+			if this.active then
+				for _, class in next, { ... } do
+					if NOCLIP_SPOOF_CLASSES[class] then return true end
+				end
+			end
+			return original(replicatorSelf, ...)
+		end
+	end)
+	if not installed then return end
+	self.effectModule, self.originalHasAny, self.noclipHooked = module, original, true
+end
+function Movement:_removeNoclipSpoof()
+	if not self.noclipHooked then return end
+	if self.effectModule and self.originalHasAny then
+		pcall(function() self.effectModule.HasAny = self.originalHasAny end)
+	end
+	self.effectModule, self.originalHasAny, self.noclipHooked = nil, nil, false
 end
 function Movement:_state(value)
 	if self.state == value then return end
@@ -81,6 +117,7 @@ function Movement:_flight(active)
 	end
 	local helio = active.root:FindFirstChild("HelioFlight")
 	if helio and helio:IsA("BodyVelocity") then property(active, helio, "MaxForce", Vector3.zero) end
+	self:_installNoclipSpoof()
 	self:_noclip(active)
 	local head = active.model:FindFirstChild("Head")
 	local pin = head and head:FindFirstChild("BodyPosition")
@@ -154,11 +191,52 @@ function Movement:_start(provider, label)
 	end)
 	return true, "movement started"
 end
+-- Arrival is the only self-completing outcome; a bare "arrived ..." state stops the desire.
+local function arrived(state)
+	return type(state) == "string" and string.sub(state, 1, 7) == "arrived"
+end
+-- Keep re-issuing the same destination whenever movement drops for a non-arrival reason
+-- (knockback, lost mover, no progress, a physics error). The owner clears it with cancel().
+function Movement:_startSupervisor()
+	self.supervisor += 1
+	local generation = self.supervisor
+	task.spawn(function()
+		while self.running and self.persist and generation == self.supervisor do
+			if not self.active then
+				if arrived(self.state) then
+					self.persist = false
+					break
+				end
+				self:_start(self.lastProvider, self.lastLabel)
+				if arrived(self.state) then
+					self.persist = false
+					break
+				end
+			end
+			task.wait(0.3)
+		end
+	end)
+end
+function Movement:_persistentStart(provider, label)
+	self.persist = false
+	local ok, reason = self:_start(provider, label)
+	if ok then
+		self.lastProvider, self.lastLabel = provider, label
+		self.persist = true
+		self:_startSupervisor()
+	end
+	return ok, reason
+end
+function Movement:cancel(reason)
+	self.persist = false
+	self.supervisor += 1
+	return self:stop(reason)
+end
 function Movement:bring(mainId, offset)
 	mainId = tonumber(mainId)
 	offset = vector(offset or { x = 0, y = 0, z = 0 })
 	if not mainId or not offset then return false, "invalid bring target" end
-	return self:_start(function()
+	return self:_persistentStart(function()
 		local target = Players:GetPlayerByUserId(mainId)
 		local _, root = character(target)
 		if not root then return nil, "main character unavailable" end
@@ -168,10 +246,11 @@ end
 function Movement:park(position, placeId, jobId)
 	local goal = vector(position)
 	if not goal or placeId ~= game.PlaceId or jobId ~= game.JobId then return false, "saved spot is in another server" end
-	return self:_start(function() return goal end, "to park")
+	return self:_persistentStart(function() return goal end, "to park")
 end
 function Movement:destroy()
 	self.running = false
-	self:stop("stopped")
+	self:cancel("stopped")
+	self:_removeNoclipSpoof()
 end
 return Movement

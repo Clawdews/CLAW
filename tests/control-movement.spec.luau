@@ -90,11 +90,26 @@ return function(source)
 		function object:Destroy() self.destroyed = true; self.Parent = nil end
 		created[#created + 1] = object; return object
 	end
+	-- Fake EffectReplicator module so the noclip HasAny spoof can be exercised.
+	local effectModule = {}
+	function effectModule:HasAny() return false end
+	local baseHasAny = effectModule.HasAny
+	local replicated = node("ReplicatedStorage", "ReplicatedStorage")
+	local effectReplicator = node("ModuleScript", "EffectReplicator")
+	replicated:Add(effectReplicator)
+	local function fakeRequire(target)
+		assert(target == effectReplicator, "unexpected require target")
+		return effectModule
+	end
+	-- Supervisor uses task.spawn/wait; a no-op spawn keeps this synchronous test from
+	-- looping. Resume behaviour is verified in-game.
+	local task = { spawn = function() end, wait = function() end }
 	local game = { PlaceId = 6032399813, JobId = "server" }
 	function game:GetService(name)
-		return assert(({ Players = players, RunService = run })[name], name)
+		return assert(({ Players = players, RunService = run, ReplicatedStorage = replicated })[name], name)
 	end
-	local environment = setmetatable({ game = game, Vector3 = Vector3, CFrame = CFrame, Instance = Instance }, { __index = getfenv() })
+	local environment = setmetatable({ game = game, Vector3 = Vector3, CFrame = CFrame, Instance = Instance,
+		require = fakeRequire, task = task }, { __index = getfenv() })
 	local chunk = assert(loadstring(source, "movement")); setfenv(chunk, environment)
 	local Movement = chunk()
 
@@ -105,6 +120,9 @@ return function(source)
 	assert(manager.ActiveController == air and sensor.SearchDistance == 0 and torso.CanCollide == false)
 	assert(pin.destroyed == false and pin.MaxForce.X == 0 and helio.MaxForce.X == 0)
 	local mover = created[#created]; assert(mover.Parent == localRoot and mover.destroyed == false)
+	assert(movement.noclipHooked == true, "noclip effect spoof installs on flight")
+	assert(effectModule.HasAny(effectModule, "PrepareTP") == true, "spoof reports a teleport-phase class while moving")
+	assert(effectModule.HasAny(effectModule, "Bleeding") == false, "other effect classes fall through to the game")
 	run.PreSimulation:Fire(0.1)
 	assert(mover.Velocity.Magnitude > 0 and localRoot.AssemblyLinearVelocity.Magnitude > 0)
 	local added = node("Part", "NewPart"); added.basePart = true; added.CanCollide = true; localModel:Add(added)
@@ -114,6 +132,7 @@ return function(source)
 	assert(sensor.SearchDistance == 6 and torso.CanCollide == true and added.CanCollide == true)
 	assert(pin.destroyed == false and pin.MaxForce.X == 9 and helio.MaxForce.X == 5)
 	assert(localRoot.AssemblyLinearVelocity.Magnitude == 0)
+	assert(effectModule.HasAny(effectModule, "PrepareTP") == false, "spoof is inert once movement stops")
 	manager.ActiveController = nil
 	assert(movement:bring("11", { x = 0, y = 0, z = 0 }))
 	run.PreSimulation:Fire(0.1)
@@ -125,5 +144,6 @@ return function(source)
 	ok, reason = movement:park({ x = 1, y = 2, z = 3 }, game.PlaceId, "another-server")
 	assert(ok == false and reason == "saved spot is in another server")
 	movement:destroy(); assert(movement.running == false)
-	print("PASS movement restores game state, stops cleanly and rejects invalid destinations")
+	assert(movement.noclipHooked == false and effectModule.HasAny == baseHasAny, "noclip spoof is removed and HasAny restored on destroy")
+	print("PASS movement restores game state, spoofs noclip while moving, stops cleanly and rejects invalid destinations")
 end
