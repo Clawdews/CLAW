@@ -154,7 +154,71 @@ function Relay:_character(player)
 	return character, root, humanoid
 end
 
+-- Deepwoken drives character collision off active effects, so plain CanCollide=false
+-- gets re-asserted by the game and you stick to walls. Spoofing the EffectReplicator's
+-- HasAny for the teleport-phase classes is what actually lets the alt phase cleanly.
+local NOCLIP_SPOOF_CLASSES = { PrepareTP = true, TPSafe = true }
+
+function Relay:_wantsNoclip()
+	return self.Running and (self.PhaseEnabled or self.MovementActive)
+end
+
+function Relay:_installNoclipSpoof()
+	if self.NoclipHooked then
+		return
+	end
+	local effectReplicator = ReplicatedStorage:FindFirstChild("EffectReplicator")
+	if not effectReplicator then
+		return
+	end
+	local ok, module = pcall(require, effectReplicator)
+	if not ok or type(module) ~= "table" or typeof(module.HasAny) ~= "function" then
+		return
+	end
+	if table.isfrozen and table.isfrozen(module) then
+		warnRelay("EffectReplicator is read-only; noclip effect spoof unavailable")
+		return
+	end
+	local relay = self
+	local originalHasAny = module.HasAny
+	local ok2 = pcall(function()
+		module.HasAny = function(replicatorSelf, ...)
+			if relay:_wantsNoclip() then
+				for _, class in next, { ... } do
+					if NOCLIP_SPOOF_CLASSES[class] then
+						return true
+					end
+				end
+			end
+			return originalHasAny(replicatorSelf, ...)
+		end
+	end)
+	if not ok2 then
+		warnRelay("could not install noclip effect spoof")
+		return
+	end
+	self.EffectModule = module
+	self.OriginalHasAny = originalHasAny
+	self.NoclipHooked = true
+	log("noclip effect spoof installed")
+end
+
+function Relay:_removeNoclipSpoof()
+	if not self.NoclipHooked then
+		return
+	end
+	if self.EffectModule and self.OriginalHasAny then
+		pcall(function()
+			self.EffectModule.HasAny = self.OriginalHasAny
+		end)
+	end
+	self.EffectModule = nil
+	self.OriginalHasAny = nil
+	self.NoclipHooked = false
+end
+
 function Relay:_applyNoclip()
+	self:_installNoclipSpoof()
 	local character = LocalPlayer.Character
 	if not character then
 		return
@@ -673,6 +737,7 @@ function Relay:Destroy(reason)
 	self:cancelMovement()
 	self.PhaseEnabled = false
 	self:_restoreCollision()
+	self:_removeNoclipSpoof()
 	if self.ControllerChat then
 		self.ControllerChat:Disconnect()
 		self.ControllerChat = nil
